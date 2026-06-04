@@ -24,7 +24,7 @@ async function getOrCreateBalance(connection, warehouseId, itemVariantId, storeI
   return balance;
 }
 
-async function normalizeStockInput(connection, itemVariantId, quantity, unitCost = null) {
+async function normalizeStockInput(connection, itemVariantId, quantity, unitCost = null, options = {}) {
   const variant = await inventoryModel.findVariantById(itemVariantId, connection);
   if (variant?.base_unit_type === 'quantity' && !decimal(quantity).isInteger()) {
     throw ApiError.badRequest('Validation failed', [
@@ -36,6 +36,10 @@ async function normalizeStockInput(connection, itemVariantId, quantity, unitCost
   }
 
   if (variant?.base_unit_type !== 'weight') {
+    return { quantity, unitCost, variant };
+  }
+
+  if (options.quantityAlreadyNormalized) {
     return { quantity, unitCost, variant };
   }
 
@@ -68,7 +72,7 @@ function calculateWeightedAverageCost(balance, quantity, unitCost) {
 
 async function increaseStock(connection, input) {
   assertPositiveQuantity(input.quantity);
-  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost, input);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -116,7 +120,7 @@ async function increaseStock(connection, input) {
 
 async function decreaseStock(connection, input) {
   assertPositiveQuantity(input.quantity);
-  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost, input);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -170,7 +174,7 @@ async function decreaseStock(connection, input) {
 
 async function reserveStock(connection, input) {
   assertPositiveQuantity(input.quantity);
-  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, null, input);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -223,7 +227,7 @@ async function reserveStock(connection, input) {
 
 async function releaseReservedStock(connection, input) {
   assertPositiveQuantity(input.quantity);
-  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, null, input);
 
   const balance = await getOrCreateBalance(
     connection,

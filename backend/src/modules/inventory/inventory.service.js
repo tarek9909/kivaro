@@ -37,18 +37,20 @@ function assertPackagingUnitPc(unit, field = 'base_unit_id') {
 function normalizeCatalogQuantity(source, quantity, field = 'initial_quantity') {
   if (quantity === undefined || quantity === null || quantity === '') return decimal(0);
   const value = decimal(quantity);
+  const unitType = source?.base_unit_type || source?.unit_type;
+  const conversionToBase = source?.base_unit_conversion_to_base || source?.conversion_to_base || 1;
   if (value.lt(0)) {
     throw ApiError.badRequest('Validation failed', [
       { field, message: 'Quantity cannot be negative' }
     ]);
   }
-  if (source?.base_unit_type === 'quantity' && !value.isInteger()) {
+  if (unitType === 'quantity' && !value.isInteger()) {
     throw ApiError.badRequest('Validation failed', [
       { field, message: 'Piece-based quantities must be whole numbers' }
     ]);
   }
-  if (source?.base_unit_type === 'weight') {
-    return value.mul(source.base_unit_conversion_to_base || 1);
+  if (unitType === 'weight') {
+    return value.mul(conversionToBase);
   }
   return value;
 }
@@ -386,8 +388,8 @@ async function deleteItem(id, actor = {}) {
 async function hardDeleteItem(id, actor = {}) {
   await getItem(id, actor);
   await runHardDelete(
-    () => inventoryModel.hardDeleteItem(id),
-    'Item cannot be hard-deleted while variants, packaging materials, or history reference it'
+    () => withTransaction((connection) => inventoryModel.hardDeleteItemCascade(id, connection)),
+    'Item cannot be hard-deleted because related records could not be removed'
   );
 }
 
@@ -487,22 +489,154 @@ async function listStockMovements(query, actor = {}) {
   return pagedResult('stock_movements', result.rows, result.total, pagination);
 }
 
-async function adjustStock(data, userId, audit, actor = {}) {
+async function listStockAdjustments(query, actor = {}) {
+  const pagination = getPagination(query);
+  const result = await inventoryModel.listStockAdjustments({
+    filters: scopedQuery(query, actor),
+    pagination
+  });
+
+  return pagedResult('stock_adjustments', result.rows, result.total, pagination);
+}
+
+async function adjustItemPool(data, userId, audit, actor = {}) {
+  const warehouse = await getWarehouse(data.warehouse_id, actor);
+  const item = await getItem(data.item_id, actor);
+  assertSameStore(item, warehouse.store_id, 'item_id', 'Item does not belong to this store');
+
+  if (item.tracking_type !== 'stocked') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'item_id', message: 'Only stocked items can be adjusted' }
+    ]);
+  }
+
+  const direction = decimal(data.quantity_change).gte(0) ? 1 : -1;
+  const normalizedQuantity = normalizeCatalogQuantity(item, decimal(data.quantity_change).abs());
+
+  return withTransaction(async (connection) => {
+    const balance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
+      store_id: warehouse.store_id,
+      warehouse_id: data.warehouse_id,
+      item_id: data.item_id
+    });
+    const currentQuantity = decimal(balance.quantity_on_hand || 0);
+    const nextQuantity = direction > 0
+      ? currentQuantity.plus(normalizedQuantity)
+      : currentQuantity.minus(normalizedQuantity);
+
+    if (nextQuantity.lt(0)) {
+      throw ApiError.conflict('Insufficient item quantity available');
+    }
+
+    await inventoryModel.updateItemStockBalance(connection, balance.id, {
+      quantity_on_hand: toMoney(nextQuantity)
+    });
+    await inventoryModel.createItemStockAdjustment(connection, {
+      store_id: warehouse.store_id,
+      warehouse_id: data.warehouse_id,
+      item_id: data.item_id,
+      quantity_change: toMoney(normalizedQuantity.mul(direction)),
+      quantity_before: toMoney(currentQuantity),
+      quantity_after: toMoney(nextQuantity),
+      unit_cost: data.unit_cost,
+      notes: data.reason,
+      created_by: userId
+    });
+
+    return {
+      target_type: 'item',
+      item_id: data.item_id,
+      warehouse_id: data.warehouse_id,
+      quantity_before: toMoney(currentQuantity),
+      quantity_after: toMoney(nextQuantity),
+      quantity_change: toMoney(normalizedQuantity.mul(direction)),
+      reason: data.reason,
+      audit
+    };
+  });
+}
+
+async function adjustVariantFromItemPool(data, userId, audit, actor = {}) {
   const warehouse = await getWarehouse(data.warehouse_id, actor);
   const variant = await getVariant(data.item_variant_id, actor);
   assertSameStore(variant, warehouse.store_id, 'item_variant_id', 'Item variant does not belong to this store');
   assertStockedVariant(variant);
+  if (variant.item_type === 'packaging') {
+    return stockService.adjustStock({
+      storeId: warehouse.store_id,
+      warehouseId: data.warehouse_id,
+      itemVariantId: data.item_variant_id,
+      quantityChange: data.quantity_change,
+      unitCost: data.unit_cost,
+      reason: data.reason,
+      createdBy: userId,
+      audit
+    });
+  }
 
-  return stockService.adjustStock({
-    storeId: warehouse.store_id,
-    warehouseId: data.warehouse_id,
-    itemVariantId: data.item_variant_id,
-    quantityChange: data.quantity_change,
-    unitCost: data.unit_cost,
-    reason: data.reason,
-    createdBy: userId,
-    audit
+  const item = await getItem(variant.item_id, actor);
+  const direction = decimal(data.quantity_change).gte(0) ? 1 : -1;
+  const entryQuantity = decimal(data.quantity_change).abs();
+  const normalizedQuantity = normalizeCatalogQuantity(item, entryQuantity);
+
+  return withTransaction(async (connection) => {
+    const itemBalance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
+      store_id: warehouse.store_id,
+      warehouse_id: data.warehouse_id,
+      item_id: item.id
+    });
+    const currentItemQuantity = decimal(itemBalance.quantity_on_hand || 0);
+
+    if (direction > 0) {
+      if (currentItemQuantity.lt(normalizedQuantity)) {
+        throw ApiError.conflict('Insufficient item quantity available');
+      }
+
+      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
+        quantity_on_hand: toMoney(currentItemQuantity.minus(normalizedQuantity))
+      });
+
+      return stockService.increaseStock(connection, {
+        storeId: warehouse.store_id,
+        warehouseId: data.warehouse_id,
+        itemVariantId: data.item_variant_id,
+        quantity: entryQuantity,
+        unitCost: data.unit_cost,
+        movementType: 'adjustment',
+        referenceType: 'stock_adjustment',
+        referenceId: null,
+        notes: data.reason,
+        createdBy: userId
+      });
+    }
+
+    const movement = await stockService.decreaseStock(connection, {
+      storeId: warehouse.store_id,
+      warehouseId: data.warehouse_id,
+      itemVariantId: data.item_variant_id,
+      quantity: entryQuantity,
+      unitCost: data.unit_cost,
+      movementType: 'adjustment',
+      referenceType: 'stock_adjustment',
+      referenceId: null,
+      notes: data.reason,
+      createdBy: userId
+    });
+
+    await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
+      quantity_on_hand: toMoney(currentItemQuantity.plus(normalizedQuantity))
+    });
+
+    return movement;
   });
+}
+
+async function adjustStock(data, userId, audit, actor = {}) {
+  if (data.target_type === 'item') {
+    return adjustItemPool(data, userId, audit, actor);
+  }
+
+  return adjustVariantFromItemPool(data, userId, audit, actor);
 }
 
 module.exports = {
@@ -528,6 +662,7 @@ module.exports = {
   listCategories,
   listItems,
   listStockBalances,
+  listStockAdjustments,
   listStockMovements,
   listUnits,
   listVariants,

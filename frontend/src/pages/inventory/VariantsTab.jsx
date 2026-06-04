@@ -20,7 +20,7 @@ import {
 import { formatNumber } from '@/lib/formatters.js';
 import { STATUSES, INVENTORY_PERMISSIONS } from './inventory.config.js';
 import { useItemsOptions, useWarehousesOptions } from './useInventoryOptions.js';
-import { formatStockQuantity } from './stockUnits.js';
+import { formatStockQuantity, getEntryUnitLabel } from './stockUnits.js';
 
 const STATUS_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUSES];
 
@@ -39,6 +39,22 @@ function attributesToString(attributes) {
     }
   }
   return JSON.stringify(attributes, null, 2);
+}
+
+function toStockQuantity(value, row = {}) {
+  if (value === undefined || value === null || value === '') return 0;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+  if ((row.base_unit_type || row.unit_type) === 'weight') {
+    return numericValue * Number(row.base_unit_conversion_to_base || row.conversion_to_base || 1);
+  }
+  return numericValue;
+}
+
+function formatEntryQuantity(value, row = {}) {
+  const unit = getEntryUnitLabel(row);
+  const formatted = formatNumber(value, row.base_unit_type === 'quantity' ? { maximumFractionDigits: 0 } : { maximumFractionDigits: 4 });
+  return unit ? `${formatted} ${unit}` : formatted;
 }
 
 function emptyForm(variant) {
@@ -60,6 +76,10 @@ function VariantFormModal({ open, onClose, variant, items, warehouses }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyForm(variant));
   const [errors, setErrors] = useState({});
+  const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
+  const entryUnit = getEntryUnitLabel(selectedItem || {}) || 'unit';
+  const isPieceBasedItem = selectedItem?.base_unit_type === 'quantity';
+  const enteredStockQuantity = toStockQuantity(form.initial_quantity, selectedItem || {});
 
   useEffect(() => {
     if (!open) return;
@@ -77,6 +97,7 @@ function VariantFormModal({ open, onClose, variant, items, warehouses }) {
       queryClient.invalidateQueries({ queryKey: ['inventory', 'variants'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'variants'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'stock'] });
       onClose?.();
     },
@@ -93,7 +114,6 @@ function VariantFormModal({ open, onClose, variant, items, warehouses }) {
 
   function validate() {
     const next = {};
-    const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
     if (!form.item_id) next.item_id = 'Item is required.';
     if (!form.variant_name?.trim()) next.variant_name = 'Variant name is required.';
     if (!form.sku?.trim()) next.sku = 'SKU is required.';
@@ -106,11 +126,14 @@ function VariantFormModal({ open, onClose, variant, items, warehouses }) {
     if (!isEdit && form.initial_quantity !== '' && Number(form.initial_quantity) < 0) {
       next.initial_quantity = 'Quantity cannot be negative.';
     }
+    if (!isEdit && form.initial_quantity !== '' && isPieceBasedItem && !Number.isInteger(Number(form.initial_quantity))) {
+      next.initial_quantity = 'Piece-based quantities must be whole numbers.';
+    }
     if (!isEdit && Number(form.initial_quantity || 0) > 0 && !form.warehouse_id) {
       next.warehouse_id = 'Warehouse is required when quantity is greater than zero.';
     }
-    if (!isEdit && selectedItem && Number(form.initial_quantity || 0) > Number(selectedItem.item_quantity_on_hand || 0)) {
-      next.initial_quantity = `Only ${formatStockQuantity(selectedItem.item_quantity_on_hand || 0, selectedItem)} is available on the item.`;
+    if (!isEdit && selectedItem && enteredStockQuantity > Number(selectedItem.item_quantity_on_hand || 0)) {
+      next.initial_quantity = `Only ${formatEntryQuantity(Number(selectedItem.item_quantity_on_hand || 0) / Number(selectedItem.base_unit_conversion_to_base || 1), selectedItem)} is available on the item.`;
     }
     if (form.attributes && form.attributes.trim()) {
       try {
@@ -253,16 +276,16 @@ function VariantFormModal({ open, onClose, variant, items, warehouses }) {
               ))}
             </Select>
             <Input
-              label="Variant quantity"
+              label={`Variant quantity (${entryUnit})`}
               type="number"
               min="0"
-              step="0.0001"
+              step={isPieceBasedItem ? '1' : '0.0001'}
               value={form.initial_quantity}
               onChange={(event) => handleChange('initial_quantity', event.target.value)}
               error={errors.initial_quantity}
               description={
-                form.item_id
-                  ? `Item available: ${formatStockQuantity(items.find((item) => String(item.id) === String(form.item_id))?.item_quantity_on_hand || 0, items.find((item) => String(item.id) === String(form.item_id)) || {})}`
+                selectedItem
+                  ? `Item available: ${formatEntryQuantity(Number(selectedItem.item_quantity_on_hand || 0) / Number(selectedItem.base_unit_conversion_to_base || 1), selectedItem)} (${formatStockQuantity(selectedItem.item_quantity_on_hand || 0, selectedItem)} stored)`
                   : 'Select an item first.'
               }
             />
@@ -340,6 +363,7 @@ export default function VariantsTab() {
       queryClient.invalidateQueries({ queryKey: ['inventory', 'variants'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'variants'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
     },
     onError: (error) => toast.error(getErrorMessage(error, 'Could not hard-delete variant.'))
   });

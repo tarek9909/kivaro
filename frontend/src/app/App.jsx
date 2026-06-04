@@ -55,7 +55,6 @@ import { CUSTOMERS_PARENT_PERMISSIONS } from '@/pages/customers/customers.config
 import ProductionLayout from '@/pages/production/ProductionLayout.jsx';
 import ConfigurationsTab from '@/pages/production/ConfigurationsTab.jsx';
 import BatchesTab from '@/pages/production/BatchesTab.jsx';
-import CostHistoryTab from '@/pages/production/CostHistoryTab.jsx';
 import {
   PRODUCTION_PARENT_PERMISSIONS,
   PRODUCTION_PERMISSIONS,
@@ -533,14 +532,6 @@ export default function App() {
                 moduleKey="production.batches"
               >
                 <BatchesTab />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="cost-history"
-            element={
-              <ProtectedRoute anyOfPermissions={[PRODUCTION_PERMISSIONS.view]} moduleKey="production.cost-history">
-                <CostHistoryTab />
               </ProtectedRoute>
             }
           />

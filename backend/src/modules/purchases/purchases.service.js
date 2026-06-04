@@ -107,9 +107,12 @@ async function listPurchaseOrderReceipts(id, actor = {}) {
 
 async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
   const scoped = scopedData(data, actor);
-  if (scoped.supplier_id) {
-    assertActive(await getSupplier(scoped.supplier_id, actor), 'supplier_id', 'Supplier');
+  if (!scoped.supplier_id) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'supplier_id', message: 'Supplier is required for automatic supplier payment' }
+    ]);
   }
+  assertActive(await getSupplier(scoped.supplier_id, actor), 'supplier_id', 'Supplier');
 
   const warehouse = await inventoryModel.findWarehouseById(scoped.warehouse_id);
 
@@ -123,6 +126,15 @@ async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
   }
   assertSameStore(warehouse, scoped.store_id, 'warehouse_id', 'Warehouse does not belong to this store');
   assertActive(warehouse, 'warehouse_id', 'Warehouse');
+
+  const cashAccount = await accountingModel.findCashAccountById(scoped.cash_account_id);
+  if (!cashAccount) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'cash_account_id', message: 'Cash account not found' }
+    ]);
+  }
+  assertSameStore(cashAccount, scoped.store_id, 'cash_account_id', 'Cash account does not belong to this store');
+  assertActive(cashAccount, 'cash_account_id', 'Cash account');
 
   for (const item of scoped.items) {
     const variant = await inventoryModel.findVariantById(item.item_variant_id);
@@ -151,6 +163,9 @@ async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
     const id = await purchaseModel.createPurchaseOrder(connection, {
       ...data,
       store_id: scoped.store_id,
+      supplier_id: scoped.supplier_id,
+      cash_account_id: scoped.cash_account_id,
+      payment_method: scoped.payment_method || 'cash',
       po_number: poNumber,
       subtotal: totals.subtotal,
       total_amount: totals.total_amount,
@@ -200,6 +215,17 @@ async function updatePurchaseOrder(id, data, actor = {}) {
     assertSameStore(supplier, purchaseOrder.store_id, 'supplier_id', 'Supplier does not belong to this store');
   }
 
+  if (data.cash_account_id) {
+    const cashAccount = await accountingModel.findCashAccountById(data.cash_account_id);
+    if (!cashAccount) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'cash_account_id', message: 'Cash account not found' }
+      ]);
+    }
+    assertSameStore(cashAccount, purchaseOrder.store_id, 'cash_account_id', 'Cash account does not belong to this store');
+    assertActive(cashAccount, 'cash_account_id', 'Cash account');
+  }
+
   const { store_id, warehouse_id, ...updates } = data;
   return purchaseModel.updatePurchaseOrder(id, updates);
 }
@@ -223,7 +249,58 @@ async function approvePurchaseOrder(id, userId, actor = {}) {
   if (purchaseOrder.approved_at) {
     throw ApiError.conflict('Purchase order is already approved');
   }
-  await purchaseModel.approvePurchaseOrder(id, userId);
+  if (!purchaseOrder.supplier_id) {
+    throw ApiError.conflict('Purchase order must have a supplier before automatic payment can be recorded');
+  }
+  if (!purchaseOrder.cash_account_id) {
+    throw ApiError.conflict('Purchase order must have a cash account before automatic payment can be recorded');
+  }
+
+  const cashAccount = await accountingModel.findCashAccountById(purchaseOrder.cash_account_id);
+  if (!cashAccount) {
+    throw ApiError.conflict('Purchase order cash account no longer exists');
+  }
+  assertSameStore(cashAccount, purchaseOrder.store_id, 'cash_account_id', 'Cash account does not belong to this store');
+  assertActive(cashAccount, 'cash_account_id', 'Cash account');
+
+  await withTransaction(async (connection) => {
+    const lockedPurchaseOrder = await purchaseModel.lockPurchaseOrder(connection, id);
+    assertRowInScope(lockedPurchaseOrder, actor, 'Purchase order not found');
+    if (!['draft', 'pending'].includes(lockedPurchaseOrder.status)) {
+      throw ApiError.conflict('Only draft or pending purchase orders can be approved');
+    }
+    if (lockedPurchaseOrder.approved_at) {
+      throw ApiError.conflict('Purchase order is already approved');
+    }
+
+    await purchaseModel.approvePurchaseOrder(connection, id, userId);
+    const amount = decimal(lockedPurchaseOrder.total_amount || 0).minus(lockedPurchaseOrder.amount_paid || 0);
+    if (amount.gt(0)) {
+      const paymentId = await purchaseModel.createSupplierPaymentRecord(connection, {
+        store_id: lockedPurchaseOrder.store_id,
+        supplier_id: lockedPurchaseOrder.supplier_id,
+        purchase_order_id: lockedPurchaseOrder.id,
+        payment_date: new Date().toISOString().slice(0, 10),
+        amount: toMoney(amount),
+        payment_method: lockedPurchaseOrder.payment_method || 'cash',
+        reference_number: lockedPurchaseOrder.po_number,
+        notes: `Auto payment for approved purchase order ${lockedPurchaseOrder.po_number}`,
+        created_by: userId
+      });
+      await purchaseModel.incrementPurchaseOrderPaid(connection, lockedPurchaseOrder.id, toMoney(amount));
+      await accountingModel.createFinancialTransaction(connection, {
+        store_id: lockedPurchaseOrder.store_id,
+        cash_account_id: lockedPurchaseOrder.cash_account_id,
+        transaction_type: 'supplier_payment',
+        direction: 'out',
+        amount: toMoney(amount),
+        reference_type: 'supplier_payment',
+        reference_id: paymentId,
+        description: `Auto payment for approved purchase order ${lockedPurchaseOrder.po_number}`,
+        created_by: userId
+      });
+    }
+  });
   return getPurchaseOrder(id, actor);
 }
 

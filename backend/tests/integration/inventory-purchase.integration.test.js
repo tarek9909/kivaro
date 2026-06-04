@@ -25,7 +25,7 @@ describe('inventory and purchase integration', () => {
     await closeIntegrationPool();
   });
 
-  test('stock adjustment and partial purchase receiving create stock movements', async () => {
+  test('purchase approval records a supplier payment and partial receiving creates stock movements', async () => {
     if (!dbReady) return;
 
     const fixture = await createInventoryFixture(token, 'inventory_purchase');
@@ -39,17 +39,6 @@ describe('inventory and purchase integration', () => {
       .expect(201);
     const cashAccountId = cashAccountResponse.body.data.cash_account.id;
 
-    await authRequest(token)
-      .post('/api/stock-adjustments')
-      .send({
-        warehouse_id: fixture.warehouse.id,
-        item_variant_id: fixture.variant.id,
-        quantity_change: 10,
-        unit_cost: 2,
-        reason: 'Integration opening stock'
-      })
-      .expect(201);
-
     const supplierResponse = await authRequest(token)
       .post('/api/suppliers')
       .send({ name: 'Integration Supplier' })
@@ -60,6 +49,8 @@ describe('inventory and purchase integration', () => {
       .send({
         supplier_id: supplierResponse.body.data.supplier.id,
         warehouse_id: fixture.warehouse.id,
+        cash_account_id: cashAccountId,
+        payment_method: 'cash',
         order_date: '2026-05-26',
         items: [
           {
@@ -91,6 +82,8 @@ describe('inventory and purchase integration', () => {
       .send({
         supplier_id: supplierResponse.body.data.supplier.id,
         warehouse_id: fixture.warehouse.id,
+        cash_account_id: cashAccountId,
+        payment_method: 'cash',
         order_date: '2026-05-26',
         items: [
           {
@@ -117,7 +110,17 @@ describe('inventory and purchase integration', () => {
       .expect(409);
 
     await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/submit`).expect(200);
-    await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/approve`).expect(200);
+    const approvedResponse = await authRequest(token)
+      .post(`/api/purchase-orders/${purchaseOrder.id}/approve`)
+      .expect(200);
+    expect(Number(approvedResponse.body.data.purchase_order.amount_paid)).toBe(15);
+    expect(Number(approvedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
+
+    const automaticPaymentsResponse = await authRequest(token)
+      .get(`/api/supplier-payments?purchase_order_id=${purchaseOrder.id}`)
+      .expect(200);
+    expect(automaticPaymentsResponse.body.data.supplier_payments).toHaveLength(1);
+    expect(Number(automaticPaymentsResponse.body.data.supplier_payments[0].amount)).toBe(15);
 
     await authRequest(token)
       .post(`/api/purchase-orders/${purchaseOrder.id}/receipts`)
@@ -145,7 +148,7 @@ describe('inventory and purchase integration', () => {
       .expect(200);
     expect(closedResponse.body.data.purchase_order.status).toBe('closed');
     expect(Number(closedResponse.body.data.purchase_order.payable_amount)).toBe(6);
-    expect(Number(closedResponse.body.data.purchase_order.outstanding_amount)).toBe(6);
+    expect(Number(closedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
 
     await authRequest(token)
       .post('/api/supplier-payments')
@@ -169,7 +172,7 @@ describe('inventory and purchase integration', () => {
         payment_method: 'cash',
         cash_account_id: cashAccountId
       })
-      .expect(201);
+      .expect(409);
 
     const paidClosedResponse = await authRequest(token)
       .get(`/api/purchase-orders/${purchaseOrder.id}`)
@@ -186,7 +189,7 @@ describe('inventory and purchase integration', () => {
     );
 
     expect(movements.map((movement) => movement.movement_type)).toEqual(
-      expect.arrayContaining(['adjustment', 'purchase_receive'])
+      expect.arrayContaining(['purchase_receive'])
     );
   });
 
@@ -241,12 +244,22 @@ describe('inventory and purchase integration', () => {
       .post('/api/suppliers')
       .send({ name: `Non Stocked Supplier ${Date.now()}` })
       .expect(201);
+    const cashAccountResponse = await authRequest(token)
+      .post('/api/cash-accounts')
+      .send({
+        account_name: `Non Stocked Purchase Cash ${Date.now()}`,
+        account_type: 'cash',
+        opening_balance: 100
+      })
+      .expect(201);
 
     await authRequest(token)
       .post('/api/purchase-orders')
       .send({
         supplier_id: supplierResponse.body.data.supplier.id,
         warehouse_id: fixture.warehouse.id,
+        cash_account_id: cashAccountResponse.body.data.cash_account.id,
+        payment_method: 'cash',
         order_date: '2026-05-26',
         items: [
           {

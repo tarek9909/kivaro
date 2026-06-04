@@ -100,6 +100,7 @@ module.exports = {
   getWarehouse: getHandler(inventoryService.getWarehouse, 'warehouse', 'Warehouse fetched'),
   listCategories: listHandler(inventoryService.listCategories, 'categories', 'Categories fetched'),
   listItems: listHandler(inventoryService.listItems, 'items', 'Items fetched'),
+  listStockAdjustments: listHandler(inventoryService.listStockAdjustments, 'stock_adjustments', 'Stock adjustments fetched'),
   listStockBalances: listHandler(inventoryService.listStockBalances, 'stock_balances', 'Stock balances fetched'),
   listStockMovements: listHandler(inventoryService.listStockMovements, 'stock_movements', 'Stock movements fetched'),
   listUnits: listHandler(inventoryService.listUnits, 'units', 'Units fetched'),

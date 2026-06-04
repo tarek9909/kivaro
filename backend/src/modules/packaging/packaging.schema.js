@@ -6,6 +6,8 @@ const idParam = z.object({
 
 const status = z.enum(['active', 'inactive']);
 const packagingLevel = z.enum(['category', 'item', 'sub_item', 'sub_sub_item']);
+const packagingUnit = z.enum(['g', 'kg', 'ton', 'pc']);
+const weightUnit = z.enum(['g', 'kg', 'ton']);
 const optionalText = z.string().trim().optional().nullable();
 const positiveNumber = z.coerce.number().positive();
 const nonNegativeNumber = z.coerce.number().min(0);
@@ -52,7 +54,7 @@ const componentBody = z.object({
   parent_component_id: z.coerce.number().int().positive().optional().nullable(),
   level_key: packagingLevel,
   item_variant_id: z.coerce.number().int().positive(),
-  unit_symbol: z.literal('pc').default('pc'),
+  unit_symbol: packagingUnit.default('pc'),
   quantity_per_parent: positiveNumber.optional().nullable(),
   capacity_kg: nonNegativeNumber.optional().nullable(),
   sort_order: z.coerce.number().int().min(0).default(0),
@@ -75,6 +77,8 @@ const calculateSchema = z.object({
   params: idParam,
   body: z.object({
     charcoal_quantity_kg: positiveNumber,
+    charcoal_quantity_unit: weightUnit.default('kg'),
+    charcoal_variant_id: z.coerce.number().int().positive().optional().nullable(),
     warehouse_id: z.coerce.number().int().positive().optional().nullable()
   })
 });
@@ -82,7 +86,7 @@ const calculateSchema = z.object({
 const listAssignmentSchema = z.object({
   query: z.object({
     ...paginationQuery,
-    status: z.enum(['calculated', 'consumed', 'cancelled']).optional(),
+    status: z.enum(['calculated', 'batched', 'consumed', 'cancelled']).optional(),
     packaging_group_id: z.coerce.number().int().positive().optional(),
     warehouse_id: z.coerce.number().int().positive().optional(),
     charcoal_variant_id: z.coerce.number().int().positive().optional(),
@@ -98,6 +102,7 @@ const createAssignmentSchema = z.object({
     charcoal_variant_id: z.coerce.number().int().positive(),
     output_item_variant_id: z.coerce.number().int().positive().optional().nullable(),
     charcoal_quantity_kg: positiveNumber,
+    charcoal_quantity_unit: weightUnit.default('kg'),
     production_batch_id: z.coerce.number().int().positive().optional().nullable(),
     notes: optionalText,
     store_id: z.coerce.number().int().positive().optional()

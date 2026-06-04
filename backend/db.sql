@@ -506,6 +506,8 @@ CREATE TABLE purchase_orders (
     po_number VARCHAR(100) NOT NULL UNIQUE,
     supplier_id BIGINT UNSIGNED NULL,
     warehouse_id BIGINT UNSIGNED NOT NULL,
+    cash_account_id BIGINT UNSIGNED NULL,
+    payment_method ENUM('cash','bank_transfer','cheque','other') NOT NULL DEFAULT 'cash',
     order_date DATE NOT NULL,
     expected_date DATE NULL,
     status ENUM('draft','pending','approved','partially_received','received','closed','cancelled') NOT NULL DEFAULT 'draft',
@@ -1697,6 +1699,7 @@ ALTER TABLE items ADD UNIQUE KEY uq_items_store_code (store_id, code);
 ALTER TABLE item_variants ADD UNIQUE KEY uq_item_variants_store_sku (store_id, sku);
 ALTER TABLE warehouses ADD UNIQUE KEY uq_warehouses_store_code (store_id, code);
 ALTER TABLE purchase_orders ADD UNIQUE KEY uq_purchase_orders_store_number (store_id, po_number);
+ALTER TABLE purchase_orders ADD INDEX idx_purchase_orders_cash_account (cash_account_id);
 ALTER TABLE purchase_receipts ADD UNIQUE KEY uq_purchase_receipts_store_number (store_id, receipt_number);
 ALTER TABLE customers ADD UNIQUE KEY uq_customers_store_code (store_id, customer_code);
 ALTER TABLE dispatch_requests ADD UNIQUE KEY uq_dispatch_requests_store_number (store_id, dispatch_number);

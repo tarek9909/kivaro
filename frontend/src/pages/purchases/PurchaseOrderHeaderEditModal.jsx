@@ -11,8 +11,8 @@ import {
   Select,
   Textarea
 } from '@/components/ui/index.js';
-import { PURCHASES_PERMISSIONS, getAvailableActions } from './purchases.config.js';
-import { useSuppliersOptions } from './usePurchasesOptions.js';
+import { PAYMENT_METHODS, PURCHASES_PERMISSIONS, getAvailableActions } from './purchases.config.js';
+import { useCashAccountsOptions, useSuppliersOptions } from './usePurchasesOptions.js';
 
 function toDateInputValue(value) {
   if (!value) return '';
@@ -32,21 +32,25 @@ function emptyForm(purchaseOrder) {
       purchaseOrder?.supplier_id !== null && purchaseOrder?.supplier_id !== undefined
         ? String(purchaseOrder.supplier_id)
         : '',
+    cash_account_id:
+      purchaseOrder?.cash_account_id !== null && purchaseOrder?.cash_account_id !== undefined
+        ? String(purchaseOrder.cash_account_id)
+        : '',
+    payment_method: purchaseOrder?.payment_method || 'cash',
     expected_date: toDateInputValue(purchaseOrder?.expected_date),
     notes: purchaseOrder?.notes ?? ''
   };
 }
 
 /**
- * Header-only edit modal for a purchase order. The backend update schema
- * accepts exactly three fields - supplier_id, expected_date, notes - so the
- * UI exposes only those. Items, totals, dates, status, approval, and paid
- * amounts are not editable here.
+ * Header-only edit modal for a purchase order. Items, totals, dates, status,
+ * approval, and paid amounts are not editable here.
  */
 export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canCreate = hasPermission(PURCHASES_PERMISSIONS.create);
   const canSeeSuppliers = hasPermission(PURCHASES_PERMISSIONS.view);
+  const canSeeCashAccounts = hasPermission(PURCHASES_PERMISSIONS.accountingView);
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState(() => emptyForm(purchaseOrder));
@@ -60,7 +64,9 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
 
   // Only load supplier options while the modal is open and the user can.
   const suppliersQuery = useSuppliersOptions(open && canSeeSuppliers);
+  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
+  const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   const editAllowed =
     canCreate && getAvailableActions(purchaseOrder).has('edit');
@@ -98,6 +104,12 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
         next.supplier_id = 'Supplier ID must be a positive number.';
       }
     }
+    if (form.cash_account_id) {
+      const cashAccountId = Number(form.cash_account_id);
+      if (!Number.isInteger(cashAccountId) || cashAccountId <= 0) {
+        next.cash_account_id = 'Cash account ID must be a positive number.';
+      }
+    }
     if (form.expected_date) {
       // The Date input already constrains to YYYY-MM-DD; this is just a
       // belt-and-braces guard for users who paste invalid text on browsers
@@ -119,6 +131,10 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
     if (!validate()) return;
     const payload = {};
     payload.supplier_id = form.supplier_id ? Number(form.supplier_id) : null;
+    if (form.cash_account_id) {
+      payload.cash_account_id = Number(form.cash_account_id);
+    }
+    payload.payment_method = form.payment_method || 'cash';
     payload.expected_date = form.expected_date ? form.expected_date : null;
     const trimmedNotes = form.notes?.trim();
     payload.notes = trimmedNotes ? trimmedNotes : null;
@@ -135,7 +151,7 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
           ? `Edit header - ${purchaseOrder.po_number || `PO #${purchaseOrder.id}`}`
           : 'Edit purchase order'
       }
-      description="Update the supplier link, expected delivery date, or notes. Other fields stay locked once the order has been created."
+      description="Update supplier, payment details, expected delivery date, or notes. Other fields stay locked once the order has been created."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -190,6 +206,45 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
               description="Numeric only. Ask an administrator for catalog access if you need a supplier picker."
             />
           )}
+
+          {canSeeCashAccounts ? (
+            <Select
+              label="Payment cash account"
+              value={form.cash_account_id}
+              onChange={(event) => handleChange('cash_account_id', event.target.value)}
+              error={errors.cash_account_id}
+              description="Used for the automatic supplier payment on approval."
+            >
+              <option value="">Select cash account</option>
+              {cashAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.account_name || account.name || `Account #${account.id}`}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input
+              label="Payment cash account ID"
+              type="number"
+              min="1"
+              value={form.cash_account_id}
+              onChange={(event) => handleChange('cash_account_id', event.target.value)}
+              error={errors.cash_account_id}
+              description="Numeric only. accounting.view is needed for a picker."
+            />
+          )}
+
+          <Select
+            label="Payment method"
+            value={form.payment_method}
+            onChange={(event) => handleChange('payment_method', event.target.value)}
+          >
+            {PAYMENT_METHODS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
 
           <Input
             label="Expected date"

@@ -90,7 +90,9 @@ export default function StockBalancesTab() {
         id: 'item_type',
         header: 'Type',
         cell: (row) =>
-          row.item_type ? <Badge tone="brand">{row.item_type}</Badge> : <span>-</span>
+          row.source_type === 'packaging_batch'
+            ? <Badge tone="success">Packaging batch</Badge>
+            : row.item_type ? <Badge tone="brand">{row.item_type}</Badge> : <span>-</span>
       },
       {
         id: 'quantity_on_hand',
@@ -238,7 +240,7 @@ export default function StockBalancesTab() {
       <DataTable
         columns={columns}
         rows={rows}
-        rowKey={(row) => `${row.warehouse_id}-${row.item_variant_id}`}
+        rowKey={(row) => row.row_key || `${row.warehouse_id}-${row.item_variant_id}`}
         isLoading={balancesQuery.isPending}
         isError={balancesQuery.isError}
         error={balancesQuery.error}

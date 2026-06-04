@@ -51,6 +51,7 @@ export function createInventoryApi(client) {
     },
     stockMovements: createReadOnlyResourceApi(client, '/stock-movements', { only: ['list'] }),
     stockAdjustments: {
+      list: (params, options) => client.get('/stock-adjustments', { ...options, params }),
       create: (payload, options) => client.post('/stock-adjustments', payload, options)
     }
   };

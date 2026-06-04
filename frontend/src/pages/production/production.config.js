@@ -43,6 +43,8 @@ export const ACTIVE_FILTER_OPTIONS = [
 export const BATCH_STATUSES = [
   { value: 'draft', label: 'Draft', tone: 'neutral' },
   { value: 'in_progress', label: 'In progress', tone: 'info' },
+  { value: 'batched', label: 'Batched', tone: 'success' },
+  { value: 'consumed', label: 'Consumed', tone: 'success' },
   { value: 'completed', label: 'Completed', tone: 'success' },
   { value: 'cancelled', label: 'Cancelled', tone: 'danger' }
 ];
@@ -83,13 +85,6 @@ export const PRODUCTION_TABS = [
       PRODUCTION_PERMISSIONS.create,
       PRODUCTION_PERMISSIONS.complete
     ]
-  },
-  {
-    id: 'cost-history',
-    featureKey: 'production.cost-history',
-    label: 'Cost history',
-    to: '/production/cost-history',
-    anyOfPermissions: [PRODUCTION_PERMISSIONS.view]
   }
 ];
 

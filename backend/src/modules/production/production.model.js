@@ -1,5 +1,6 @@
 const { query } = require('../../bootstrap/db');
 const { findById, insertRecord, listRecords, nullable, updateRecord } = require('../../utils/crud');
+const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 
 async function listPackagingConfigurations(input) {
   return listRecords({
@@ -82,32 +83,109 @@ async function deletePackagingComponent(id) {
 }
 
 async function listProductionBatches(input) {
-  return listRecords({
-    select: `SELECT
-      pb.id, pb.store_id, pb.batch_number, pb.packaging_configuration_id, pc.config_name,
-      pb.packaging_group_id, pg.name AS packaging_group_name,
-      pb.warehouse_id, w.name AS warehouse_name, pb.charcoal_variant_id,
-      cv.variant_name AS charcoal_variant_name, pb.output_item_variant_id,
-      iv.variant_name AS output_variant_name, pb.planned_quantity, pb.produced_quantity,
+  const pagination = getPagination(input);
+  const productionConditions = [];
+  const productionParams = [];
+  const packagingConditions = ["pga.status IN ('batched', 'consumed')"];
+  const packagingParams = [];
+
+  function addCondition(condition, value, production = true, packaging = true) {
+    if (value === undefined || value === null || value === '') return;
+    if (production) {
+      productionConditions.push(condition.production);
+      productionParams.push(value);
+    }
+    if (packaging) {
+      packagingConditions.push(condition.packaging);
+      packagingParams.push(value);
+    }
+  }
+
+  addCondition({ production: 'pb.status = ?', packaging: 'pga.status = ?' }, input.status);
+  addCondition({ production: 'pb.store_id = ?', packaging: 'pga.store_id = ?' }, input.store_id);
+  addCondition({ production: 'pb.warehouse_id = ?', packaging: 'pga.warehouse_id = ?' }, input.warehouse_id);
+  addCondition({ production: 'pb.packaging_group_id = ?', packaging: 'pga.packaging_group_id = ?' }, input.packaging_group_id);
+
+  if (input.packaging_configuration_id) {
+    productionConditions.push('pb.packaging_configuration_id = ?');
+    productionParams.push(input.packaging_configuration_id);
+    packagingConditions.push('1 = 0');
+  }
+
+  if (input.search) {
+    const term = `%${input.search}%`;
+    productionConditions.push('(pb.batch_number LIKE ? OR pc.config_name LIKE ? OR pg.name LIKE ?)');
+    productionParams.push(term, term, term);
+    packagingConditions.push(`(CONCAT('PA-', pga.id) LIKE ? OR pg.name LIKE ? OR w.name LIKE ? OR cv.variant_name LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_name')) LIKE ?)`);
+    packagingParams.push(term, term, term, term, term);
+  }
+
+  const productionWhere = productionConditions.length ? `WHERE ${productionConditions.join(' AND ')}` : '';
+  const packagingWhere = packagingConditions.length ? `WHERE ${packagingConditions.join(' AND ')}` : '';
+  const productionSelect = `SELECT
+      pb.id, CONCAT('production-', pb.id) AS row_key, 'production' AS source_type,
+      NULL AS packaging_assignment_id, pb.store_id, pb.batch_number,
+      pb.packaging_configuration_id, pc.config_name, pb.packaging_group_id,
+      pg.name AS packaging_group_name, pb.warehouse_id, w.name AS warehouse_name,
+      pb.charcoal_variant_id, cv.variant_name AS charcoal_variant_name,
+      pb.output_item_variant_id, iv.variant_name AS output_variant_name,
+      pb.planned_quantity, pb.produced_quantity, NULL AS available_quantity,
       pb.total_component_cost, pb.cost_per_output, pb.status, pb.started_at,
-      pb.completed_at, pb.notes, pb.created_by, pb.created_at, pb.updated_at`,
-    from: 'production_batches pb',
-    joins: `
-      LEFT JOIN packaging_configurations pc ON pc.id = pb.packaging_configuration_id
-      LEFT JOIN packaging_groups pg ON pg.id = pb.packaging_group_id
-      JOIN warehouses w ON w.id = pb.warehouse_id
-      LEFT JOIN item_variants cv ON cv.id = pb.charcoal_variant_id
-      JOIN item_variants iv ON iv.id = pb.output_item_variant_id`,
-    filters: [
-      { key: 'status', column: 'pb.status' },
-      { key: 'store_id', column: 'pb.store_id' },
-      { key: 'warehouse_id', column: 'pb.warehouse_id' },
-      { key: 'packaging_configuration_id', column: 'pb.packaging_configuration_id' },
-      { key: 'packaging_group_id', column: 'pb.packaging_group_id' },
-      { key: 'search', type: 'search', fields: ['pb.batch_number', 'pc.config_name', 'pg.name'] }
-    ],
-    orderBy: 'ORDER BY pb.created_at DESC, pb.id DESC'
-  }, input);
+      pb.completed_at, pb.notes, pb.created_by, pb.created_at, pb.updated_at
+    FROM production_batches pb
+    LEFT JOIN packaging_configurations pc ON pc.id = pb.packaging_configuration_id
+    LEFT JOIN packaging_groups pg ON pg.id = pb.packaging_group_id
+    JOIN warehouses w ON w.id = pb.warehouse_id
+    LEFT JOIN item_variants cv ON cv.id = pb.charcoal_variant_id
+    JOIN item_variants iv ON iv.id = pb.output_item_variant_id
+    ${productionWhere}`;
+  const packagingSelect = `SELECT
+      pga.id, CONCAT('packaging-', pga.id) AS row_key, 'packaging_assignment' AS source_type,
+      pga.id AS packaging_assignment_id, pga.store_id, CONCAT('PA-', pga.id) AS batch_number,
+      NULL AS packaging_configuration_id, NULL AS config_name, pga.packaging_group_id,
+      pg.name AS packaging_group_name, pga.warehouse_id, w.name AS warehouse_name,
+      pga.charcoal_variant_id, cv.variant_name AS charcoal_variant_name,
+      pga.output_item_variant_id,
+      COALESCE(ov.variant_name, JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_name'))) AS output_variant_name,
+      pga.charcoal_quantity_kg AS planned_quantity, pga.produced_quantity,
+      GREATEST(pga.produced_quantity - COALESCE(allocated.allocated_quantity, 0), 0) AS available_quantity,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.total_cost')), pga.total_packaging_cost) AS total_component_cost,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_primary_container')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_packaging_group')), pga.cost_per_kg) AS cost_per_output,
+      pga.status, pga.created_at AS started_at, NULL AS completed_at, pga.notes, pga.created_by, pga.created_at, NULL AS updated_at
+    FROM packaging_group_assignments pga
+    JOIN packaging_groups pg ON pg.id = pga.packaging_group_id
+    JOIN warehouses w ON w.id = pga.warehouse_id
+    JOIN item_variants cv ON cv.id = pga.charcoal_variant_id
+    LEFT JOIN item_variants ov ON ov.id = pga.output_item_variant_id
+    LEFT JOIN (
+      SELECT di.packaging_assignment_id,
+        SUM(di.quantity - di.returned_quantity) AS allocated_quantity
+      FROM dispatch_items di
+      JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
+      WHERE di.packaging_assignment_id IS NOT NULL
+        AND dr.status <> 'cancelled'
+      GROUP BY di.packaging_assignment_id
+    ) allocated ON allocated.packaging_assignment_id = pga.id
+    ${packagingWhere}`;
+  const params = [...productionParams, ...packagingParams];
+  const countRows = await query(
+    `SELECT COUNT(*) AS total FROM (${productionSelect} UNION ALL ${packagingSelect}) batches`,
+    params
+  );
+  const rows = await query(
+    `SELECT * FROM (${productionSelect} UNION ALL ${packagingSelect}) batches
+     ORDER BY created_at DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, pagination.limit, pagination.offset]
+  );
+
+  return {
+    rows,
+    meta: getPaginationMeta({
+      ...pagination,
+      total: Number(countRows[0]?.total || 0)
+    })
+  };
 }
 
 async function findProductionBatchById(id) {
@@ -201,7 +279,7 @@ async function createProductionBatchComponent(connection, data) {
 
 async function getVariantCost(itemVariantId, warehouseId) {
   const rows = await query(
-    `SELECT COALESCE(sb.average_cost, iv.cost, 0) AS cost
+    `SELECT COALESCE(NULLIF(sb.average_cost, 0), iv.cost, 0) AS cost
      FROM item_variants iv
      LEFT JOIN stock_balances sb
        ON sb.item_variant_id = iv.id AND sb.warehouse_id = ?

@@ -35,13 +35,15 @@ async function listPurchaseOrders(input) {
   return listRecords({
     select: `SELECT
       po.id, po.store_id, po.po_number, po.supplier_id, s.name AS supplier_name, po.warehouse_id,
-      w.name AS warehouse_name, po.order_date, po.expected_date, po.status, po.subtotal,
+      w.name AS warehouse_name, po.cash_account_id, ca.account_name AS cash_account_name,
+      po.payment_method, po.order_date, po.expected_date, po.status, po.subtotal,
       po.discount_amount, po.tax_amount, po.total_amount, po.amount_paid, po.notes,
       po.created_by, po.approved_by, po.approved_at, po.created_at, po.updated_at`,
     from: 'purchase_orders po',
     joins: `
       LEFT JOIN suppliers s ON s.id = po.supplier_id
-      JOIN warehouses w ON w.id = po.warehouse_id`,
+      JOIN warehouses w ON w.id = po.warehouse_id
+      LEFT JOIN cash_accounts ca ON ca.id = po.cash_account_id`,
     filters: [
       { key: 'status', column: 'po.status' },
       { key: 'store_id', column: 'po.store_id' },
@@ -56,7 +58,18 @@ async function listPurchaseOrders(input) {
 }
 
 async function findPurchaseOrderById(id) {
-  return findById('purchase_orders', id);
+  const rows = await query(
+    `SELECT po.*, s.name AS supplier_name, w.name AS warehouse_name, ca.account_name AS cash_account_name
+     FROM purchase_orders po
+     LEFT JOIN suppliers s ON s.id = po.supplier_id
+     JOIN warehouses w ON w.id = po.warehouse_id
+     LEFT JOIN cash_accounts ca ON ca.id = po.cash_account_id
+     WHERE po.id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] || null;
 }
 
 async function getPurchaseOrderItems(id) {
@@ -100,14 +113,17 @@ async function getPurchaseOrderReceivedValue(id, connection = null) {
 async function createPurchaseOrder(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO purchase_orders (
-      store_id, po_number, supplier_id, warehouse_id, order_date, expected_date, status,
+      store_id, po_number, supplier_id, warehouse_id, cash_account_id, payment_method,
+      order_date, expected_date, status,
       subtotal, discount_amount, tax_amount, total_amount, notes, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.store_id,
       data.po_number,
       nullable(data.supplier_id),
       data.warehouse_id,
+      nullable(data.cash_account_id),
+      data.payment_method || 'cash',
       data.order_date,
       nullable(data.expected_date),
       data.status || 'draft',
@@ -152,8 +168,8 @@ async function setPurchaseOrderStatus(connection, id, status) {
   );
 }
 
-async function approvePurchaseOrder(id, userId) {
-  await query(
+async function approvePurchaseOrder(connection, id, userId) {
+  await connection.execute(
     `UPDATE purchase_orders
      SET status = 'approved', approved_by = ?, approved_at = NOW()
      WHERE id = ? AND status IN ('draft','pending')`,

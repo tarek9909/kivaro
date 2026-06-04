@@ -204,13 +204,39 @@ const listStockMovementSchema = z.object({
 
 const stockAdjustmentSchema = z.object({
   body: z.object({
+    target_type: z.enum(['item', 'variant']).default('variant'),
     warehouse_id: z.coerce.number().int().positive(),
-    item_variant_id: z.coerce.number().int().positive(),
+    item_id: z.coerce.number().int().positive().optional(),
+    item_variant_id: z.coerce.number().int().positive().optional(),
     quantity_change: z.coerce.number().refine((value) => value !== 0, {
       message: 'Quantity change cannot be zero'
     }),
     unit_cost: nonNegativeNumber.optional().nullable(),
     reason: z.string().trim().min(1).max(500)
+  }).superRefine((body, ctx) => {
+    if (body.target_type === 'item' && !body.item_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['item_id'],
+        message: 'Item is required.'
+      });
+    }
+
+    if (body.target_type === 'variant' && !body.item_variant_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['item_variant_id'],
+        message: 'Variant is required.'
+      });
+    }
+  })
+});
+
+const listStockAdjustmentSchema = z.object({
+  query: z.object({
+    ...paginationQuery,
+    warehouse_id: z.coerce.number().int().positive().optional(),
+    item_type: itemType.optional()
   })
 });
 
@@ -224,6 +250,7 @@ module.exports = {
   listCategorySchema,
   listItemSchema,
   listStockBalanceSchema,
+  listStockAdjustmentSchema,
   listStockMovementSchema,
   listUnitSchema,
   listVariantSchema,

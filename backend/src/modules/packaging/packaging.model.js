@@ -243,6 +243,20 @@ async function getWarehouseVariantBalances(warehouseId, variantIds) {
   );
 }
 
+async function getVariantCost(itemVariantId, warehouseId = null) {
+  const rows = await query(
+    `SELECT COALESCE(NULLIF(sb.average_cost, 0), iv.cost, 0) AS cost
+     FROM item_variants iv
+     LEFT JOIN stock_balances sb
+       ON sb.item_variant_id = iv.id AND sb.warehouse_id = ?
+     WHERE iv.id = ?
+     LIMIT 1`,
+    [warehouseId, itemVariantId]
+  );
+
+  return rows[0] ? Number(rows[0].cost) : 0;
+}
+
 async function getAssignmentAllocatedQuantity(id, connection = null) {
   const sql = `SELECT COALESCE(SUM(di.quantity - di.returned_quantity), 0) AS allocated_quantity
      FROM dispatch_items di
@@ -269,6 +283,7 @@ module.exports = {
   findGroupById,
   getGroupComponents,
   getAssignmentAllocatedQuantity,
+  getVariantCost,
   getWarehouseVariantBalances,
   hardDeleteGroup,
   listAssignments,

@@ -32,7 +32,6 @@ export function CompleteBatchModal({ open, onClose, batch }) {
       toast.success('Production batch completed');
       queryClient.invalidateQueries({ queryKey: ['production', 'batches'] });
       queryClient.invalidateQueries({ queryKey: ['production', 'batch', batch.id] });
-      queryClient.invalidateQueries({ queryKey: ['production', 'cost-history'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'movements'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'balances'] });
       onClose?.();

@@ -207,6 +207,12 @@ router.get(
   validate(inventorySchemas.listStockMovementSchema),
   asyncHandler(inventoryController.listStockMovements)
 );
+router.get(
+  '/stock-adjustments',
+  requirePermission('stock.movements'),
+  validate(inventorySchemas.listStockAdjustmentSchema),
+  asyncHandler(inventoryController.listStockAdjustments)
+);
 router.post(
   '/stock-adjustments',
   requirePermission('stock.adjust'),

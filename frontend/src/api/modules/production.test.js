@@ -53,12 +53,6 @@ describe('production API module', () => {
     ]);
   });
 
-  it('exposes only list on productCostHistory', () => {
-    const client = buildClientStub();
-    const api = createProductionApi(client);
-    expect(Object.keys(api.productCostHistory)).toEqual(['list']);
-  });
-
   it('routes batch workflow actions to the correct endpoints', async () => {
     const client = buildClientStub();
     const api = createProductionApi(client);

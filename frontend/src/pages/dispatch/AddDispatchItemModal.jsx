@@ -43,12 +43,13 @@ export function AddDispatchItemModal({
     queryFn: () => api.inventory.packagingAssignments.list({
       page: 1,
       limit: 100,
-      status: 'consumed',
       warehouse_id: dispatchRequest?.warehouse_id
     }),
     enabled: Boolean(open && canPickInventory && dispatchRequest?.warehouse_id)
   });
-  const assignments = assignmentsQuery.data?.data?.packaging_assignments || [];
+  const assignments = (assignmentsQuery.data?.data?.packaging_assignments || []).filter((assignment) =>
+    ['batched', 'consumed'].includes(assignment.status)
+  );
   const selectedAssignment = useMemo(
     () => assignments.find((assignment) => String(assignment.id) === String(form.packaging_assignment_id)),
     [assignments, form.packaging_assignment_id]
@@ -157,7 +158,7 @@ export function AddDispatchItemModal({
               }));
               setErrors((prev) => ({ ...prev, packaging_assignment_id: undefined, item_variant_id: undefined, quantity: undefined }));
             }}
-            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} primary containers available` : undefined}
+            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} primary containers available / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : undefined}
           >
             <option value="">No packaging batch</option>
             {assignments.map((assignment) => (
@@ -166,7 +167,7 @@ export function AddDispatchItemModal({
                 value={assignment.id}
                 disabled={Number(assignment.available_quantity || 0) <= 0}
               >
-                Batch #{assignment.id} - {assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available)
+                Batch #{assignment.id} - {assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available / cost {formatNumber(assignment.calculation_json?.cost_per_primary_container ?? assignment.cost_per_kg, { maximumFractionDigits: 4 })})
               </option>
             ))}
           </Select>
@@ -235,7 +236,7 @@ export function AddDispatchItemModal({
               setForm((prev) => ({ ...prev, unit_cost: event.target.value }))
             }
             error={errors.unit_cost}
-            description="Optional. Defaults to the variant cost."
+            description={selectedAssignment ? 'Optional. Defaults to the selected batch cost.' : 'Optional. Defaults to the variant cost.'}
           />
         </div>
         {vatEnabled && (

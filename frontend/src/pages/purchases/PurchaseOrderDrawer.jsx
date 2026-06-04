@@ -89,8 +89,9 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
   const approveMutation = useMutation({
     mutationFn: () => api.purchases.purchaseOrders.approve(purchaseOrderId),
     onSuccess: () => {
-      toast.success('Purchase order approved');
+      toast.success('Purchase order approved and supplier payment recorded');
       setConfirmTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['purchases', 'payments'] });
       invalidatePOQueries();
     },
     onError: (error) => toast.error(getErrorMessage(error, 'Could not approve order.'))
@@ -116,7 +117,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
     },
     approve: {
       label: 'Approve',
-      description: 'Mark this purchase order as approved. Receiving can begin after approval.',
+      description: 'Approve this purchase order and automatically record the supplier payment for the order total.',
       tone: 'primary',
       mutation: approveMutation,
       confirmLabel: 'Approve'
@@ -245,6 +246,8 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
             <Field label="PO number" value={purchaseOrder.po_number} />
             <Field label="Supplier" value={purchaseOrder.supplier_name} />
             <Field label="Warehouse" value={purchaseOrder.warehouse_name} />
+            <Field label="Payment account" value={purchaseOrder.cash_account_name || purchaseOrder.cash_account_id} />
+            <Field label="Payment method" value={purchaseOrder.payment_method} />
             <Field label="Order date" value={formatDate(purchaseOrder.order_date)} />
             <Field label="Expected date" value={formatDate(purchaseOrder.expected_date)} />
             <Field

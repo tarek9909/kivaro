@@ -13,7 +13,8 @@ import {
   Textarea
 } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
-import { useSuppliersOptions } from './usePurchasesOptions.js';
+import { useCashAccountsOptions, useSuppliersOptions } from './usePurchasesOptions.js';
+import { PAYMENT_METHODS, PURCHASES_PERMISSIONS } from './purchases.config.js';
 import {
   useVariantsOptions,
   useWarehousesOptions
@@ -42,6 +43,8 @@ function emptyForm() {
     po_number: '',
     supplier_id: '',
     warehouse_id: '',
+    cash_account_id: '',
+    payment_method: 'cash',
     order_date: todayString(),
     expected_date: '',
     discount_amount: 0,
@@ -60,6 +63,7 @@ function parseLineTotal(item) {
 export function PurchaseOrderFormModal({ open, onClose }) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canLoadInventoryOptions = hasPermission(INVENTORY_VIEW);
+  const canSeeCashAccounts = hasPermission(PURCHASES_PERMISSIONS.accountingView);
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState(emptyForm);
@@ -74,10 +78,12 @@ export function PurchaseOrderFormModal({ open, onClose }) {
   const suppliersQuery = useSuppliersOptions(open);
   const warehousesQuery = useWarehousesOptions(open && canLoadInventoryOptions);
   const variantsQuery = useVariantsOptions(open && canLoadInventoryOptions, { tracking_type: 'stocked' });
+  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
 
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
   const warehouses = warehousesQuery.data?.data?.warehouses || [];
   const variants = variantsQuery.data?.data?.item_variants || [];
+  const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   const subtotal = useMemo(
     () => form.items.reduce((sum, item) => sum + parseLineTotal(item), 0),
@@ -136,6 +142,13 @@ export function PurchaseOrderFormModal({ open, onClose }) {
     if (!form.warehouse_id || Number.isNaN(warehouseId) || warehouseId <= 0) {
       next.warehouse_id = 'Warehouse is required.';
     }
+    if (!form.supplier_id) {
+      next.supplier_id = 'Supplier is required.';
+    }
+    const cashAccountId = Number(form.cash_account_id);
+    if (!form.cash_account_id || Number.isNaN(cashAccountId) || cashAccountId <= 0) {
+      next.cash_account_id = 'Cash account is required.';
+    }
     if (!form.order_date) {
       next.order_date = 'Order date is required.';
     }
@@ -171,6 +184,8 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       po_number: form.po_number?.trim() || undefined,
       supplier_id: form.supplier_id ? Number(form.supplier_id) : null,
       warehouse_id: Number(form.warehouse_id),
+      cash_account_id: Number(form.cash_account_id),
+      payment_method: form.payment_method,
       order_date: form.order_date,
       expected_date: form.expected_date || null,
       discount_amount: Number(form.discount_amount) || 0,
@@ -217,9 +232,10 @@ export function PurchaseOrderFormModal({ open, onClose }) {
             value={form.supplier_id}
             onChange={(event) => handleField('supplier_id', event.target.value)}
             error={errors.supplier_id}
-            description="Optional. Required for supplier payments later."
+            required
+            description="Used for the automatic supplier payment on approval."
           >
-            <option value="">No supplier</option>
+            <option value="">Select supplier</option>
             {suppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id}>
                 {supplier.name}
@@ -261,6 +277,47 @@ export function PurchaseOrderFormModal({ open, onClose }) {
             error={errors.order_date}
             required
           />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          {canSeeCashAccounts ? (
+            <Select
+              label="Payment cash account"
+              value={form.cash_account_id}
+              onChange={(event) => handleField('cash_account_id', event.target.value)}
+              error={errors.cash_account_id}
+              required
+            >
+              <option value="">Select cash account</option>
+              {cashAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.account_name || account.name || `Account #${account.id}`}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input
+              label="Payment cash account ID"
+              type="number"
+              min="1"
+              value={form.cash_account_id}
+              onChange={(event) => handleField('cash_account_id', event.target.value)}
+              error={errors.cash_account_id}
+              required
+              description="Numeric only. accounting.view is needed for a picker."
+            />
+          )}
+          <Select
+            label="Payment method"
+            value={form.payment_method}
+            onChange={(event) => handleField('payment_method', event.target.value)}
+          >
+            {PAYMENT_METHODS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">

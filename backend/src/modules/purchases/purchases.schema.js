@@ -39,6 +39,8 @@ const createPurchaseOrderSchema = z.object({
     po_number: z.string().trim().optional(),
     supplier_id: z.coerce.number().int().positive().optional().nullable(),
     warehouse_id: z.coerce.number().int().positive(),
+    cash_account_id: z.coerce.number().int().positive(),
+    payment_method: paymentMethod.default('cash'),
     order_date: z.string().trim().min(1),
     expected_date: z.string().trim().optional().nullable(),
     discount_amount: z.coerce.number().min(0).default(0),
@@ -53,6 +55,8 @@ const updatePurchaseOrderSchema = z.object({
   params: idParam,
   body: z.object({
     supplier_id: z.coerce.number().int().positive().optional().nullable(),
+    cash_account_id: z.coerce.number().int().positive().optional(),
+    payment_method: paymentMethod.optional(),
     expected_date: z.string().trim().optional().nullable(),
     notes: z.string().trim().optional().nullable()
     , store_id: z.coerce.number().int().positive().optional()

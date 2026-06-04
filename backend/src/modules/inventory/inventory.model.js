@@ -317,6 +317,178 @@ async function hardDeleteItem(id) {
   return result.affectedRows;
 }
 
+function placeholders(values) {
+  return values.map(() => '?').join(', ');
+}
+
+async function execute(connection, sql, params = []) {
+  if (connection) {
+    const [result] = await connection.execute(sql, params);
+    return result;
+  }
+
+  return query(sql, params);
+}
+
+async function selectColumn(connection, sql, params = [], column = 'id') {
+  const rows = connection
+    ? (await connection.execute(sql, params))[0]
+    : await query(sql, params);
+
+  return rows.map((row) => row[column]);
+}
+
+async function deleteWhereIn(connection, tableName, columnName, values) {
+  if (!values.length) return 0;
+  const result = await execute(
+    connection,
+    `DELETE FROM ${tableName} WHERE ${columnName} IN (${placeholders(values)})`,
+    values
+  );
+  return result.affectedRows || 0;
+}
+
+async function hardDeleteItemCascade(id, connection = null) {
+  const variantIds = await selectColumn(
+    connection,
+    'SELECT id FROM item_variants WHERE item_id = ?',
+    [id]
+  );
+
+  if (!variantIds.length) {
+    await execute(connection, 'DELETE FROM item_stock_balances WHERE item_id = ?', [id]);
+    const result = await execute(connection, 'DELETE FROM items WHERE id = ?', [id]);
+    return { itemDeleted: result.affectedRows || 0, variantCount: 0 };
+  }
+
+  const variantList = placeholders(variantIds);
+  const packagingAssignmentIds = await selectColumn(
+    connection,
+    `SELECT id
+     FROM packaging_group_assignments
+     WHERE charcoal_variant_id IN (${variantList})
+        OR output_item_variant_id IN (${variantList})`,
+    [...variantIds, ...variantIds]
+  );
+  const dispatchItemIds = await selectColumn(
+    connection,
+    `SELECT id
+     FROM dispatch_items
+     WHERE item_variant_id IN (${variantList})
+        ${packagingAssignmentIds.length ? `OR packaging_assignment_id IN (${placeholders(packagingAssignmentIds)})` : ''}`,
+    packagingAssignmentIds.length ? [...variantIds, ...packagingAssignmentIds] : variantIds
+  );
+  const purchaseOrderItemIds = await selectColumn(
+    connection,
+    `SELECT id FROM purchase_order_items WHERE item_variant_id IN (${variantList})`,
+    variantIds
+  );
+  const outputConfigIds = await selectColumn(
+    connection,
+    `SELECT id FROM packaging_configurations WHERE output_item_variant_id IN (${variantList})`,
+    variantIds
+  );
+  const productionBatchIds = await selectColumn(
+    connection,
+    `SELECT id
+     FROM production_batches
+     WHERE output_item_variant_id IN (${variantList})
+        OR charcoal_variant_id IN (${variantList})
+        ${outputConfigIds.length ? `OR packaging_configuration_id IN (${placeholders(outputConfigIds)})` : ''}`,
+    outputConfigIds.length ? [...variantIds, ...variantIds, ...outputConfigIds] : [...variantIds, ...variantIds]
+  );
+  const packagingGroupIds = await selectColumn(
+    connection,
+    `SELECT DISTINCT packaging_group_id
+     FROM packaging_group_components
+     WHERE item_variant_id IN (${variantList})`,
+    variantIds,
+    'packaging_group_id'
+  );
+
+  if (dispatchItemIds.length) {
+    await execute(
+      connection,
+      `DELETE FROM dispatch_returns
+       WHERE dispatch_item_id IN (${placeholders(dispatchItemIds)})
+          OR item_variant_id IN (${variantList})`,
+      [...dispatchItemIds, ...variantIds]
+    );
+  } else {
+    await execute(
+      connection,
+      `DELETE FROM dispatch_returns WHERE item_variant_id IN (${variantList})`,
+      variantIds
+    );
+  }
+  await deleteWhereIn(connection, 'dispatch_items', 'id', dispatchItemIds);
+
+  if (purchaseOrderItemIds.length) {
+    await execute(
+      connection,
+      `DELETE FROM purchase_receipt_items
+       WHERE purchase_order_item_id IN (${placeholders(purchaseOrderItemIds)})
+          OR item_variant_id IN (${variantList})`,
+      [...purchaseOrderItemIds, ...variantIds]
+    );
+  } else {
+    await execute(
+      connection,
+      `DELETE FROM purchase_receipt_items WHERE item_variant_id IN (${variantList})`,
+      variantIds
+    );
+  }
+  await deleteWhereIn(connection, 'purchase_order_items', 'id', purchaseOrderItemIds);
+
+  await deleteWhereIn(connection, 'production_batches', 'id', productionBatchIds);
+  await execute(
+    connection,
+    `DELETE FROM production_batch_components WHERE component_item_variant_id IN (${variantList})`,
+    variantIds
+  );
+  await execute(
+    connection,
+    `DELETE FROM packaging_configuration_components WHERE component_item_variant_id IN (${variantList})`,
+    variantIds
+  );
+  await deleteWhereIn(connection, 'packaging_configurations', 'id', outputConfigIds);
+  await execute(
+    connection,
+    `DELETE FROM product_cost_history WHERE item_variant_id IN (${variantList})`,
+    variantIds
+  );
+
+  if (packagingGroupIds.length) {
+    await execute(
+      connection,
+      `UPDATE packaging_group_components
+       SET parent_component_id = NULL
+       WHERE packaging_group_id IN (${placeholders(packagingGroupIds)})`,
+      packagingGroupIds
+    );
+    await execute(
+      connection,
+      `DELETE FROM packaging_group_components
+       WHERE packaging_group_id IN (${placeholders(packagingGroupIds)})`,
+      packagingGroupIds
+    );
+  }
+
+  await deleteWhereIn(connection, 'packaging_group_assignments', 'id', packagingAssignmentIds);
+  await execute(
+    connection,
+    `UPDATE packaging_groups SET charcoal_variant_id = NULL WHERE charcoal_variant_id IN (${variantList})`,
+    variantIds
+  );
+  await execute(connection, `DELETE FROM stock_movements WHERE item_variant_id IN (${variantList})`, variantIds);
+  await execute(connection, `DELETE FROM stock_balances WHERE item_variant_id IN (${variantList})`, variantIds);
+  await execute(connection, 'DELETE FROM item_stock_balances WHERE item_id = ?', [id]);
+  await execute(connection, `DELETE FROM item_variants WHERE id IN (${variantList})`, variantIds);
+  const result = await execute(connection, 'DELETE FROM items WHERE id = ?', [id]);
+
+  return { itemDeleted: result.affectedRows || 0, variantCount: variantIds.length };
+}
+
 async function listVariants({ filters, pagination }) {
   const conditions = [];
   const params = [];
@@ -531,43 +703,128 @@ async function deactivateWarehouse(id) {
 }
 
 async function listStockBalances({ filters, pagination }) {
-  const conditions = [];
-  const params = [];
+  const stockConditions = [];
+  const stockParams = [];
+  const batchConditions = ["pga.status IN ('batched', 'consumed')"];
+  const batchParams = [];
 
   if (filters.warehouse_id) {
-    conditions.push('warehouse_id = ?');
-    params.push(filters.warehouse_id);
+    stockConditions.push('warehouse_id = ?');
+    stockParams.push(filters.warehouse_id);
+    batchConditions.push('pga.warehouse_id = ?');
+    batchParams.push(filters.warehouse_id);
   }
 
   if (filters.item_id) {
-    conditions.push('item_id = ?');
-    params.push(filters.item_id);
+    stockConditions.push('item_id = ?');
+    stockParams.push(filters.item_id);
+    batchConditions.push('1 = 0');
   }
 
   if (filters.item_variant_id) {
-    conditions.push('item_variant_id = ?');
-    params.push(filters.item_variant_id);
+    stockConditions.push('item_variant_id = ?');
+    stockParams.push(filters.item_variant_id);
+    batchConditions.push('pga.output_item_variant_id = ?');
+    batchParams.push(filters.item_variant_id);
   }
 
   if (filters.item_type) {
-    conditions.push('item_type = ?');
-    params.push(filters.item_type);
+    stockConditions.push('item_type = ?');
+    stockParams.push(filters.item_type);
+    batchConditions.push('1 = 0');
   }
   if (filters.store_id) {
-    conditions.push('store_id = ?');
-    params.push(filters.store_id);
+    stockConditions.push('store_id = ?');
+    stockParams.push(filters.store_id);
+    batchConditions.push('pga.store_id = ?');
+    batchParams.push(filters.store_id);
   }
 
-  return listWithCount({
-    select: 'SELECT *',
-    from: 'v_current_stock',
-    conditions,
-    params,
-    search: filters.search,
-    searchFields: ['item_name', 'variant_name', 'sku', 'warehouse_name'],
-    orderBy: 'ORDER BY warehouse_name ASC, item_name ASC, variant_name ASC',
-    pagination
-  });
+  if (filters.search) {
+    const term = `%${filters.search}%`;
+    stockConditions.push('(item_name LIKE ? OR variant_name LIKE ? OR sku LIKE ? OR warehouse_name LIKE ?)');
+    stockParams.push(term, term, term, term);
+    batchConditions.push(`(pg.name LIKE ? OR w.name LIKE ? OR cv.variant_name LIKE ? OR CONCAT('PA-', pga.id) LIKE ? OR JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_name')) LIKE ?)`);
+    batchParams.push(term, term, term, term, term);
+  }
+
+  const stockWhere = stockConditions.length ? `WHERE ${stockConditions.join(' AND ')}` : '';
+  const batchWhere = batchConditions.length ? `WHERE ${batchConditions.join(' AND ')}` : '';
+  const stockSelect = `SELECT
+      stock_balance_id,
+      CONCAT('stock-', stock_balance_id) AS row_key,
+      'stock_balance' AS source_type,
+      NULL AS packaging_assignment_id,
+      store_id,
+      warehouse_id,
+      warehouse_name,
+      item_id,
+      item_name,
+      item_type,
+      unit_type,
+      item_variant_id,
+      variant_name,
+      sku,
+      unit_symbol,
+      quantity_on_hand,
+      quantity_reserved,
+      quantity_available,
+      average_cost,
+      stock_value
+    FROM v_current_stock
+    ${stockWhere}`;
+  const batchSelect = `SELECT
+      NULL AS stock_balance_id,
+      CONCAT('packaging-', pga.id) AS row_key,
+      'packaging_batch' AS source_type,
+      pga.id AS packaging_assignment_id,
+      pga.store_id,
+      pga.warehouse_id,
+      w.name AS warehouse_name,
+      NULL AS item_id,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_item_name')), pg.name) AS item_name,
+      'packaged' AS item_type,
+      'quantity' AS unit_type,
+      pga.output_item_variant_id AS item_variant_id,
+      COALESCE(ov.variant_name, JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_variant_name')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_name'))) AS variant_name,
+      CONCAT('PA-', pga.id) AS sku,
+      'pc' AS unit_symbol,
+      pga.produced_quantity AS quantity_on_hand,
+      COALESCE(allocated.allocated_quantity, 0) AS quantity_reserved,
+      GREATEST(pga.produced_quantity - COALESCE(allocated.allocated_quantity, 0), 0) AS quantity_available,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_primary_container')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_packaging_group')), pga.cost_per_kg) AS average_cost,
+      pga.produced_quantity * COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_primary_container')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_packaging_group')), pga.cost_per_kg) AS stock_value
+    FROM packaging_group_assignments pga
+    JOIN packaging_groups pg ON pg.id = pga.packaging_group_id
+    JOIN warehouses w ON w.id = pga.warehouse_id
+    JOIN item_variants cv ON cv.id = pga.charcoal_variant_id
+    LEFT JOIN item_variants ov ON ov.id = pga.output_item_variant_id
+    LEFT JOIN (
+      SELECT di.packaging_assignment_id,
+        SUM(di.quantity - di.returned_quantity) AS allocated_quantity
+      FROM dispatch_items di
+      JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
+      WHERE di.packaging_assignment_id IS NOT NULL
+        AND dr.status <> 'cancelled'
+      GROUP BY di.packaging_assignment_id
+    ) allocated ON allocated.packaging_assignment_id = pga.id
+    ${batchWhere}`;
+  const params = [...stockParams, ...batchParams];
+  const countRows = await query(
+    `SELECT COUNT(*) AS total FROM (${stockSelect} UNION ALL ${batchSelect}) stock`,
+    params
+  );
+  const rows = await query(
+    `SELECT * FROM (${stockSelect} UNION ALL ${batchSelect}) stock
+     ORDER BY warehouse_name ASC, item_name ASC, variant_name ASC
+     LIMIT ? OFFSET ?`,
+    [...params, pagination.limit, pagination.offset]
+  );
+
+  return {
+    rows,
+    total: Number(countRows[0]?.total || 0)
+  };
 }
 
 async function listStockMovements({ filters, pagination }) {
@@ -631,6 +888,99 @@ async function listStockMovements({ filters, pagination }) {
   });
 }
 
+async function listStockAdjustments({ filters, pagination }) {
+  const conditions = [];
+  const params = [];
+
+  if (filters.warehouse_id) {
+    conditions.push('warehouse_id = ?');
+    params.push(filters.warehouse_id);
+  }
+  if (filters.store_id) {
+    conditions.push('store_id = ?');
+    params.push(filters.store_id);
+  }
+  if (filters.item_type) {
+    conditions.push('item_type = ?');
+    params.push(filters.item_type);
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const baseSql = `
+    SELECT *
+    FROM (
+      SELECT
+        CONCAT('variant-', sm.id) AS id,
+        'variant' AS target_type,
+        sm.store_id,
+        sm.warehouse_id,
+        w.name AS warehouse_name,
+        i.id AS item_id,
+        i.name AS item_name,
+        i.item_type,
+        sm.item_variant_id,
+        iv.variant_name,
+        iv.sku,
+        sm.quantity_change,
+        sm.quantity_before,
+        sm.quantity_after,
+        sm.unit_cost,
+        sm.notes,
+        CASE WHEN u.unit_type = 'weight' THEN 'kg' ELSE u.symbol END AS base_unit_symbol,
+        u.unit_type AS base_unit_type,
+        sm.created_by,
+        sm.created_at
+      FROM stock_movements sm
+      JOIN warehouses w ON w.id = sm.warehouse_id
+      JOIN item_variants iv ON iv.id = sm.item_variant_id
+      JOIN items i ON i.id = iv.item_id
+      JOIN units u ON u.id = i.base_unit_id
+      WHERE sm.movement_type = 'adjustment'
+      UNION ALL
+      SELECT
+        CONCAT('item-', isa.id) AS id,
+        'item' AS target_type,
+        isa.store_id,
+        isa.warehouse_id,
+        w.name AS warehouse_name,
+        i.id AS item_id,
+        i.name AS item_name,
+        i.item_type,
+        NULL AS item_variant_id,
+        'Item pool' AS variant_name,
+        i.code AS sku,
+        isa.quantity_change,
+        isa.quantity_before,
+        isa.quantity_after,
+        isa.unit_cost,
+        isa.notes,
+        CASE WHEN u.unit_type = 'weight' THEN 'kg' ELSE u.symbol END AS base_unit_symbol,
+        u.unit_type AS base_unit_type,
+        isa.created_by,
+        isa.created_at
+      FROM item_stock_adjustments isa
+      JOIN warehouses w ON w.id = isa.warehouse_id
+      JOIN items i ON i.id = isa.item_id
+      JOIN units u ON u.id = i.base_unit_id
+    ) adjustments`;
+  const countRows = await query(
+    `SELECT COUNT(*) AS total FROM (${baseSql}) counted ${whereClause}`,
+    params
+  );
+  const rows = await query(
+    `${baseSql}
+     ${whereClause}
+     ORDER BY created_at DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, pagination.limit, pagination.offset]
+  );
+
+  return {
+    rows,
+    total: Number(countRows[0].total)
+  };
+}
+
 async function getStockBalanceForUpdate(connection, warehouseId, itemVariantId) {
   const [rows] = await connection.execute(
     `SELECT id, warehouse_id, item_variant_id, quantity_on_hand, quantity_reserved, average_cost
@@ -681,6 +1031,21 @@ async function createItemStockBalance(connection, data) {
   return getItemStockBalanceForUpdate(connection, data.warehouse_id, data.item_id);
 }
 
+async function getOrCreateItemStockBalanceForUpdate(connection, data) {
+  const existing = await getItemStockBalanceForUpdate(connection, data.warehouse_id, data.item_id);
+  if (existing) return existing;
+
+  await createItemStockBalance(connection, {
+    store_id: data.store_id,
+    warehouse_id: data.warehouse_id,
+    item_id: data.item_id,
+    quantity_on_hand: 0,
+    quantity_allocated: 0
+  });
+
+  return getItemStockBalanceForUpdate(connection, data.warehouse_id, data.item_id);
+}
+
 async function updateItemStockBalance(connection, id, data) {
   const fields = [];
   const params = [];
@@ -702,6 +1067,35 @@ async function updateItemStockBalance(connection, id, data) {
      WHERE id = ?`,
     [...params, id]
   );
+}
+
+async function createItemStockAdjustment(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO item_stock_adjustments (
+      store_id,
+      warehouse_id,
+      item_id,
+      quantity_change,
+      quantity_before,
+      quantity_after,
+      unit_cost,
+      notes,
+      created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      nullable(data.store_id),
+      data.warehouse_id,
+      data.item_id,
+      data.quantity_change,
+      data.quantity_before,
+      data.quantity_after,
+      nullable(data.unit_cost),
+      nullable(data.notes),
+      nullable(data.created_by)
+    ]
+  );
+
+  return result.insertId;
 }
 
 async function createStockBalance(connection, warehouseId, itemVariantId, storeId = null) {
@@ -802,6 +1196,7 @@ module.exports = {
   createItem,
   createStockBalance,
   createItemStockBalance,
+  createItemStockAdjustment,
   createStockMovement,
   createUnit,
   createVariant,
@@ -813,6 +1208,7 @@ module.exports = {
   deleteUnit,
   hardDeleteCategory,
   hardDeleteItem,
+  hardDeleteItemCascade,
   hardDeleteVariant,
   findCategoryById,
   findItemById,
@@ -820,10 +1216,12 @@ module.exports = {
   findVariantById,
   findWarehouseById,
   getItemStockBalanceForUpdate,
+  getOrCreateItemStockBalanceForUpdate,
   getStockBalanceForUpdate,
   listCategories,
   listItems,
   listStockBalances,
+  listStockAdjustments,
   listStockMovements,
   listUnits,
   listVariants,

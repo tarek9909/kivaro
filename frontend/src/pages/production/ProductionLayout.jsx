@@ -17,14 +17,14 @@ export default function ProductionLayout() {
       <PageHeader
         eyebrow="Operations"
         title="Production"
-        description="Production batches and product cost history."
+        description="Production and packaging batches."
       />
 
       <nav
         aria-label="Production sections"
         className="glass-panel scrollbar-glass overflow-x-auto lg:overflow-visible"
       >
-        <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:flex lg:min-w-0 lg:items-center gap-1 p-1">
+        <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:flex lg:min-w-0 lg:items-center gap-1 p-1">
           {visibleTabs.map((tab) => (
             <li key={tab.id} className="w-full lg:w-auto">
               <NavLink

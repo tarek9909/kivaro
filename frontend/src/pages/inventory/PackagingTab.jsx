@@ -26,6 +26,7 @@ import {
   INVENTORY_PERMISSIONS,
   PACKAGING_LEVELS,
   PACKAGING_LEVEL_PARENT,
+  PACKAGING_UNITS,
   STATUSES
 } from './inventory.config.js';
 import {
@@ -44,6 +45,7 @@ const VIEW_OPTIONS = [
 const ASSIGNMENT_STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'calculated', label: 'Calculated' },
+  { value: 'batched', label: 'Batched' },
   { value: 'consumed', label: 'Consumed' },
   { value: 'cancelled', label: 'Cancelled' }
 ];
@@ -52,6 +54,17 @@ const PACKAGING_UNIT_SPECS = {
   kg: { name: 'Kilogram', unit_type: 'weight', conversion_to_base: 1 },
   ton: { name: 'Ton', unit_type: 'weight', conversion_to_base: 1000 },
   pc: { name: 'Piece', unit_type: 'quantity', conversion_to_base: 1 }
+};
+const WEIGHT_UNITS = [
+  { value: 'g', label: 'g' },
+  { value: 'kg', label: 'kg' },
+  { value: 'ton', label: 'ton' }
+];
+const CAPACITY_UNIT_TO_KG = {
+  g: 0.001,
+  kg: 1,
+  ton: 1000,
+  pc: 1
 };
 
 function optionLabelForVariant(variant) {
@@ -83,6 +96,20 @@ function variantAttributes(variant) {
 function packagingCapacityKg(variant) {
   const value = variantAttributes(variant).capacity_kg;
   return value === undefined || value === null || value === '' ? null : Number(value);
+}
+
+function capacityToKg(value, unitSymbol = 'kg') {
+  if (value === undefined || value === null || value === '') return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return null;
+  return numericValue * (CAPACITY_UNIT_TO_KG[unitSymbol] || 1);
+}
+
+function capacityFromKg(value, unitSymbol = 'kg') {
+  if (value === undefined || value === null || value === '') return '';
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '';
+  return String(numericValue / (CAPACITY_UNIT_TO_KG[unitSymbol] || 1));
 }
 
 function emptyMaterialForm(material, item) {
@@ -232,7 +259,7 @@ function MaterialFormModal({ open, onClose, categories, material }) {
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="packaging-material-form" isLoading={mutation.isPending || itemQuery.isPending}>
+          <Button type="submit" form="packaging-material-form" isLoading={mutation.isPending || (isEdit && itemQuery.isPending)}>
             {isEdit ? 'Save changes' : 'Create material'}
           </Button>
         </>
@@ -368,18 +395,19 @@ function GroupFormModal({ open, onClose, group, charcoalVariants, warehouses }) 
 }
 
 function emptyComponentForm(component) {
+  const unitSymbol = component?.unit_symbol ?? 'kg';
   return {
     level_key: component?.level_key ?? 'category',
     parent_component_id: component?.parent_component_id ? String(component.parent_component_id) : '',
     item_variant_id: component?.item_variant_id ? String(component.item_variant_id) : '',
-    unit_symbol: component?.unit_symbol ?? 'pc',
+    unit_symbol: unitSymbol,
     quantity_per_parent:
       component?.quantity_per_parent !== null && component?.quantity_per_parent !== undefined
         ? String(component.quantity_per_parent)
         : '',
     capacity_kg:
       component?.capacity_kg !== null && component?.capacity_kg !== undefined
-        ? String(component.capacity_kg)
+        ? capacityFromKg(component.capacity_kg, unitSymbol)
         : '',
     sort_order: component?.sort_order ?? 0,
     notes: component?.notes ?? ''
@@ -403,7 +431,7 @@ function ComponentFormModal({ open, onClose, group, component, packagingVariants
   const selectedParent = parentOptions.find((parent) => String(parent.id) === String(form.parent_component_id));
   const selectedVariant = packagingVariants.find((variant) => String(variant.id) === String(form.item_variant_id));
   const parentCapacityKg = selectedParent?.capacity_kg ? Number(selectedParent.capacity_kg) : null;
-  const childCapacityKg = form.capacity_kg !== '' ? Number(form.capacity_kg) : packagingCapacityKg(selectedVariant);
+  const childCapacityKg = form.capacity_kg !== '' ? capacityToKg(form.capacity_kg, form.unit_symbol) : packagingCapacityKg(selectedVariant);
   const maxQuantityInsideParent = parentCapacityKg && childCapacityKg ? Math.floor(parentCapacityKg / childCapacityKg) : null;
 
   const mutation = useMutation({
@@ -431,7 +459,13 @@ function ComponentFormModal({ open, onClose, group, component, packagingVariants
         const variant = packagingVariants.find((entry) => String(entry.id) === String(value));
         const defaultCapacity = packagingCapacityKg(variant);
         if (defaultCapacity !== null && (prev.capacity_kg === '' || prev.item_variant_id !== value)) {
-          next.capacity_kg = String(defaultCapacity);
+          next.capacity_kg = capacityFromKg(defaultCapacity, next.unit_symbol);
+        }
+      }
+      if (field === 'unit_symbol') {
+        const currentCapacityKg = capacityToKg(prev.capacity_kg, prev.unit_symbol);
+        if (currentCapacityKg !== null) {
+          next.capacity_kg = capacityFromKg(currentCapacityKg, value);
         }
       }
       return next;
@@ -464,7 +498,7 @@ function ComponentFormModal({ open, onClose, group, component, packagingVariants
       level_key: form.level_key,
       parent_component_id: form.parent_component_id ? Number(form.parent_component_id) : null,
       item_variant_id: Number(form.item_variant_id),
-      unit_symbol: 'pc',
+      unit_symbol: form.unit_symbol,
       quantity_per_parent: form.quantity_per_parent ? Number(form.quantity_per_parent) : null,
       capacity_kg: form.capacity_kg === '' ? null : Number(form.capacity_kg),
       sort_order: Number(form.sort_order) || 0,
@@ -513,7 +547,11 @@ function ComponentFormModal({ open, onClose, group, component, packagingVariants
           ))}
         </Select>
         <div className="grid gap-4 md:grid-cols-4">
-          <Input label="Stock unit" value="pc" disabled description="Each material is counted as pieces." />
+          <Select label="Capacity unit" value={form.unit_symbol} onChange={(event) => handleChange('unit_symbol', event.target.value)}>
+            {PACKAGING_UNITS.map((unit) => (
+              <option key={unit.value} value={unit.value}>{unit.label}</option>
+            ))}
+          </Select>
           <Input
             label="Qty inside parent"
             type="number"
@@ -528,7 +566,7 @@ function ComponentFormModal({ open, onClose, group, component, packagingVariants
                 : 'Blank auto-calculates from parent and child capacity.'
             }
           />
-          <Input label="Max kg per pc" type="number" min="0" step="0.0001" value={form.capacity_kg} onChange={(event) => handleChange('capacity_kg', event.target.value)} error={errors.capacity_kg} description="Maximum charcoal weight one piece can hold." />
+          <Input label={`Max ${form.unit_symbol} per pc`} type="number" min="0" step="0.0001" value={form.capacity_kg} onChange={(event) => handleChange('capacity_kg', event.target.value)} error={errors.capacity_kg} description="Maximum charcoal weight one piece can hold." />
           <Input label="Sort" type="number" min="0" step="1" value={form.sort_order} onChange={(event) => handleChange('sort_order', event.target.value)} />
         </div>
         <Textarea label="Notes" value={form.notes} onChange={(event) => handleChange('notes', event.target.value)} rows={2} />
@@ -910,6 +948,7 @@ function AssignmentsView({
     warehouse_id: '',
     charcoal_variant_id: '',
     charcoal_quantity_kg: '',
+    charcoal_quantity_unit: 'kg',
     notes: ''
   });
   const [calculation, setCalculation] = useState(null);
@@ -920,6 +959,8 @@ function AssignmentsView({
   const calculateMutation = useMutation({
     mutationFn: (payload) => api.inventory.packagingGroups.calculate(payload.packaging_group_id, {
       charcoal_quantity_kg: payload.charcoal_quantity_kg,
+      charcoal_quantity_unit: payload.charcoal_quantity_unit,
+      charcoal_variant_id: payload.charcoal_variant_id,
       warehouse_id: payload.warehouse_id || null
     }),
     onSuccess: (response) => {
@@ -935,7 +976,7 @@ function AssignmentsView({
   const saveMutation = useMutation({
     mutationFn: (payload) => api.inventory.packagingAssignments.create(payload),
     onSuccess: (response) => {
-      toast.success('Packaging assignment saved');
+      toast.success('Packaging batch saved');
       setCalculation(response?.data?.packaging_assignment?.calculation_json || calculation);
       queryClient.invalidateQueries({ queryKey: ['inventory', 'packaging', 'assignments'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
@@ -1000,7 +1041,7 @@ function AssignmentsView({
     if (!form.warehouse_id) next.warehouse_id = 'Warehouse is required.';
     if (!form.charcoal_variant_id) next.charcoal_variant_id = 'Charcoal variant is required.';
     if (!form.charcoal_quantity_kg || Number(form.charcoal_quantity_kg) <= 0) {
-      next.charcoal_quantity_kg = 'Enter a positive kg quantity.';
+      next.charcoal_quantity_kg = 'Enter a positive quantity.';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -1012,6 +1053,7 @@ function AssignmentsView({
       warehouse_id: Number(form.warehouse_id),
       charcoal_variant_id: Number(form.charcoal_variant_id),
       charcoal_quantity_kg: Number(form.charcoal_quantity_kg),
+      charcoal_quantity_unit: form.charcoal_quantity_unit,
       notes: form.notes?.trim() || null
     };
   }
@@ -1025,21 +1067,21 @@ function AssignmentsView({
         id: 'status',
         header: 'Status',
         cell: (row) => (
-          <Badge tone={row.status === 'consumed' ? 'success' : row.status === 'cancelled' ? 'danger' : 'neutral'}>
+          <Badge tone={['batched', 'consumed'].includes(row.status) ? 'success' : row.status === 'cancelled' ? 'danger' : 'neutral'}>
             {row.status || 'calculated'}
           </Badge>
         )
       },
       { id: 'qty', header: 'Kg', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.charcoal_quantity_kg)}</span> },
       { id: 'containers', header: 'Primary containers', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.primary_container_count)}</span> },
-      { id: 'available_batch', header: 'Available', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{row.status === 'consumed' ? formatNumber(row.available_quantity) : '-'}</span> },
+      { id: 'available_batch', header: 'Available', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{['batched', 'consumed'].includes(row.status) ? formatNumber(row.available_quantity) : '-'}</span> },
       {
         id: 'shortage',
         header: 'Shortage',
         cell: (row) => assignmentHasShortage(row) ? <Badge tone="danger">Short</Badge> : <Badge tone="success">OK</Badge>
       },
-      { id: 'batch', header: 'Batch', cell: (row) => <span className="font-mono text-xs text-ink-300">{row.status === 'consumed' ? `Assignment #${row.id}` : '-'}</span> },
-      { id: 'cost', header: 'Cost', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.total_packaging_cost, { maximumFractionDigits: 4 })}</span> },
+      { id: 'batch', header: 'Batch', cell: (row) => <span className="font-mono text-xs text-ink-300">{['batched', 'consumed'].includes(row.status) ? `Batch #${row.id}` : '-'}</span> },
+      { id: 'cost', header: 'Cost', align: 'right', cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.calculation_json?.total_cost ?? row.total_packaging_cost, { maximumFractionDigits: 4 })}</span> },
       {
         id: 'actions',
         header: '',
@@ -1054,7 +1096,7 @@ function AssignmentsView({
                 onClick={() => setConsumeTarget(row)}
                 disabled={assignmentHasShortage(row)}
               >
-                Consume
+                Consume inputs
               </Button>
             ) : null}
             {canDelete && (
@@ -1111,7 +1153,23 @@ function AssignmentsView({
                 <option key={variant.id} value={variant.id}>{optionLabelForVariant(variant)}</option>
               ))}
             </Select>
-            <Input label="Charcoal kg" type="number" min="0" step="0.0001" value={form.charcoal_quantity_kg} onChange={(event) => handleChange('charcoal_quantity_kg', event.target.value)} error={errors.charcoal_quantity_kg} />
+            <div className="grid gap-2 sm:grid-cols-[1fr_96px]">
+              <Input
+                label={`Charcoal (${form.charcoal_quantity_unit})`}
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.charcoal_quantity_kg}
+                onChange={(event) => handleChange('charcoal_quantity_kg', event.target.value)}
+                error={errors.charcoal_quantity_kg}
+                description="Converted to kg for calculation and stock."
+              />
+              <Select label="Unit" value={form.charcoal_quantity_unit} onChange={(event) => handleChange('charcoal_quantity_unit', event.target.value)}>
+                {WEIGHT_UNITS.map((unit) => (
+                  <option key={unit.value} value={unit.value}>{unit.label}</option>
+                ))}
+              </Select>
+            </div>
             <div className="flex items-end gap-2">
               <Button
                 className="flex-1"
@@ -1139,11 +1197,41 @@ function AssignmentsView({
       {calculation && (
         <GlassPanel>
           <GlassPanelHeader
-            title={`${formatNumber(calculation.primary_container_count)} primary containers`}
-            subtitle={`Total packaging cost ${formatNumber(calculation.total_packaging_cost, { maximumFractionDigits: 4 })} / cost per kg ${formatNumber(calculation.cost_per_kg, { maximumFractionDigits: 4 })}`}
+            title={`${formatNumber(calculation.primary_container_count)} containers`}
+            subtitle={`${formatNumber(calculation.charcoal_quantity_kg)} kg assigned / total cost ${formatNumber(calculation.total_cost ?? calculation.total_packaging_cost, { maximumFractionDigits: 4 })}`}
             actions={hasRequirementShortage(calculation.requirements || []) ? <Badge tone="danger">Shortage</Badge> : <Badge tone="success">Ready</Badge>}
           />
-          <GlassPanelBody>
+          <GlassPanelBody className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-4">
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Item</p>
+                <p className="mt-1 text-sm font-medium text-ink-100">{calculation.primary_container_item_name || '-'}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Packaging</p>
+                <p className="mt-1 text-sm font-medium text-ink-100">{calculation.primary_container_variant_name || calculation.primary_container_name || '-'}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Kg / container</p>
+                <p className="mt-1 font-mono text-sm text-ink-100">{formatNumber(calculation.primary_container_capacity_kg)}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Cost / 1 group</p>
+                <p className="mt-1 font-mono text-sm text-ink-100">{formatNumber(calculation.cost_per_primary_container || calculation.cost_per_packaging_group, { maximumFractionDigits: 4 })}</p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 md:col-span-2">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Charcoal cost</p>
+                <p className="mt-1 font-mono text-sm text-ink-100">
+                  {formatNumber(calculation.total_charcoal_cost || 0, { maximumFractionDigits: 4 })} total / {formatNumber(calculation.charcoal_unit_cost || 0, { maximumFractionDigits: 4 })} per kg
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 md:col-span-2">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Packaging cost</p>
+                <p className="mt-1 font-mono text-sm text-ink-100">
+                  {formatNumber(calculation.total_packaging_cost || 0, { maximumFractionDigits: 4 })} total / {formatNumber(calculation.packaging_cost_per_kg || 0, { maximumFractionDigits: 4 })} per kg
+                </p>
+              </div>
+            </div>
             <DataTable columns={requirementColumns} rows={calculation.requirements || []} rowKey={(row) => row.component_id} empty={{ title: 'No requirements calculated' }} />
           </GlassPanelBody>
         </GlassPanel>

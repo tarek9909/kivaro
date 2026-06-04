@@ -50,6 +50,8 @@ describe('production config', () => {
     expect(BATCH_STATUSES.map((entry) => entry.value)).toEqual([
       'draft',
       'in_progress',
+      'batched',
+      'consumed',
       'completed',
       'cancelled'
     ]);
@@ -65,15 +67,11 @@ describe('production config', () => {
 
   it('declares production tabs with stable IDs and per-tab permission gates', () => {
     expect(PRODUCTION_TABS.map((tab) => tab.id)).toEqual([
-      'batches',
-      'cost-history'
+      'batches'
     ]);
     expect(
       PRODUCTION_TABS.find((tab) => tab.id === 'batches').anyOfPermissions
     ).toEqual(['production.view', 'production.create', 'production.complete']);
-    expect(
-      PRODUCTION_TABS.find((tab) => tab.id === 'cost-history').anyOfPermissions
-    ).toEqual(['production.view']);
   });
 });
 

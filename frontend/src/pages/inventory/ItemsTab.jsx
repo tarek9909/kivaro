@@ -53,6 +53,10 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyForm(item));
   const [errors, setErrors] = useState({});
+  const selectedBaseUnit = units.find((unit) => String(unit.id) === String(form.base_unit_id));
+  const initialQuantityUnit = selectedBaseUnit?.symbol || 'unit';
+  const isPieceBasedUnit = selectedBaseUnit?.unit_type === 'quantity';
+  const isWeightUnit = selectedBaseUnit?.unit_type === 'weight';
 
   useEffect(() => {
     if (!open) return;
@@ -98,6 +102,9 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     }
     if (!isEdit && form.initial_quantity !== '' && Number(form.initial_quantity) < 0) {
       next.initial_quantity = 'Quantity cannot be negative.';
+    }
+    if (!isEdit && form.initial_quantity !== '' && isPieceBasedUnit && !Number.isInteger(Number(form.initial_quantity))) {
+      next.initial_quantity = 'Piece-based quantities must be whole numbers.';
     }
     if (!isEdit && Number(form.initial_quantity || 0) > 0 && !form.warehouse_id) {
       next.warehouse_id = 'Warehouse is required when quantity is greater than zero.';
@@ -285,14 +292,18 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
               ))}
             </Select>
             <Input
-              label="Initial item quantity"
+              label={`Initial item quantity (${initialQuantityUnit})`}
               type="number"
               min="0"
-              step="0.0001"
+              step={isPieceBasedUnit ? '1' : '0.0001'}
               value={form.initial_quantity}
               onChange={(event) => handleChange('initial_quantity', event.target.value)}
               error={errors.initial_quantity}
-              description="This becomes the item pool available for variants."
+              description={
+                isWeightUnit
+                  ? 'Stored in kg after conversion and available for variants.'
+                  : 'This becomes the item pool available for variants.'
+              }
             />
           </div>
         )}

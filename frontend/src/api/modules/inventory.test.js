@@ -39,10 +39,10 @@ describe('inventory API module', () => {
     expect(Object.keys(api.stockMovements)).toEqual(['list']);
   });
 
-  it('exposes only stock-adjustments create', () => {
+  it('exposes stock-adjustments list and create', () => {
     const client = buildClientStub();
     const api = createInventoryApi(client);
-    expect(Object.keys(api.stockAdjustments)).toEqual(['create']);
+    expect(Object.keys(api.stockAdjustments).sort()).toEqual(['create', 'list']);
   });
 
   it('exposes packaging group, component, and assignment operations', async () => {

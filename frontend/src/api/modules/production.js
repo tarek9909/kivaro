@@ -29,9 +29,6 @@ export function createProductionApi(client) {
       start: (id, options) => client.post(`/production-batches/${id}/start`, undefined, options),
       complete: (id, payload, options) => client.post(`/production-batches/${id}/complete`, payload, options),
       cancel: (id, options) => client.post(`/production-batches/${id}/cancel`, undefined, options)
-    },
-    productCostHistory: {
-      list: (params, options) => client.get('/product-cost-history', { ...options, params })
     }
   };
 }

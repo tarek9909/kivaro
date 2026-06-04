@@ -161,6 +161,7 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
   assertActive(variant, 'item_variant_id', 'Item variant');
   assertStockedVariant(variant);
 
+  let assignmentCost = null;
   if (data.packaging_assignment_id) {
     const assignment = await packagingModel.findAssignmentById(data.packaging_assignment_id);
     if (!assignment) {
@@ -169,9 +170,9 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
       ]);
     }
     assertSameStore(assignment, dispatch.store_id, 'packaging_assignment_id', 'Packaging assignment does not belong to this store');
-    if (assignment.status !== 'consumed') {
+    if (!['batched', 'consumed'].includes(assignment.status)) {
       throw ApiError.badRequest('Validation failed', [
-        { field: 'packaging_assignment_id', message: 'Packaging assignment must be consumed before dispatch' }
+        { field: 'packaging_assignment_id', message: 'Packaging assignment must be batched before dispatch' }
       ]);
     }
     if (Number(assignment.warehouse_id) !== Number(dispatch.warehouse_id)) {
@@ -184,9 +185,15 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
     if (decimal(data.quantity).gt(availableQuantity)) {
       throw ApiError.conflict(`Only ${toMoney(availableQuantity)} primary containers are available from this assignment`);
     }
+    const calculation = typeof assignment.calculation_json === 'string'
+      ? JSON.parse(assignment.calculation_json || '{}')
+      : assignment.calculation_json || {};
+    assignmentCost = calculation.cost_per_primary_container
+      || calculation.cost_per_packaging_group
+      || assignment.cost_per_kg;
   }
 
-  const unitCost = data.unit_cost ?? variant.cost;
+  const unitCost = data.unit_cost ?? assignmentCost ?? variant.cost;
   const vatSettings = await settingsService.getVatSettings({ ...actor, query: { store_id: dispatch.store_id } });
   const vatRate = vatSettings.enabled ? decimal(vatSettings.rate) : decimal(0);
   const subtotal = decimal(data.quantity).mul(data.unit_price);

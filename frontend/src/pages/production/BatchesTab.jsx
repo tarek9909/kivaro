@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, Search , SlidersHorizontal } from 'lucide-react';
+import { Search, SlidersHorizontal } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { useDebouncedValue } from '@/lib/useDebouncedValue.js';
@@ -25,7 +25,6 @@ import {
   getBatchStatusTone
 } from './production.config.js';
 import { usePackagingConfigurationsList } from './useProductionOptions.js';
-import { ProductionBatchFormModal } from './ProductionBatchFormModal.jsx';
 import { ProductionBatchDrawer } from './ProductionBatchDrawer.jsx';
 
 const INVENTORY_VIEW = 'inventory.view';
@@ -39,7 +38,6 @@ function StatusBadge({ status }) {
 export default function BatchesTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(PRODUCTION_PERMISSIONS.view);
-  const canCreate = hasPermission(PRODUCTION_PERMISSIONS.create);
   const canComplete = hasPermission(PRODUCTION_PERMISSIONS.complete);
   const canBrowseBatches = PRODUCTION_PARENT_PERMISSIONS.some((permission) => hasPermission(permission));
   const canPickInventory = hasPermission(INVENTORY_VIEW);
@@ -51,7 +49,6 @@ export default function BatchesTab() {
   const [packagingConfigurationId, setPackagingConfigurationId] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
-  const [creating, setCreating] = useState(false);
   const [openBatchId, setOpenBatchId] = useState(null);
 
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -130,7 +127,19 @@ export default function BatchesTab() {
         cell: (row) => (
           <span className="font-mono text-sm text-ink-200">
             {row.produced_quantity
-              ? `${formatNumber(row.produced_quantity, { maximumFractionDigits: 4 })}${row.packaging_group_id ? ' kg' : ''}`
+              ? `${formatNumber(row.produced_quantity, { maximumFractionDigits: 4 })}${row.source_type === 'packaging_assignment' ? ' containers' : row.packaging_group_id ? ' kg' : ''}`
+              : '-'}
+          </span>
+        )
+      },
+      {
+        id: 'available_quantity',
+        header: 'Available',
+        align: 'right',
+        cell: (row) => (
+          <span className="font-mono text-sm text-ink-200">
+            {row.source_type === 'packaging_assignment'
+              ? `${formatNumber(row.available_quantity, { maximumFractionDigits: 4 })} containers`
               : '-'}
           </span>
         )
@@ -145,9 +154,13 @@ export default function BatchesTab() {
         header: '',
         align: 'right',
         cell: (row) => (
-          <Button variant="secondary" size="sm" onClick={() => setOpenBatchId(row.id)}>
-            View
-          </Button>
+          row.source_type === 'packaging_assignment' ? (
+            <Badge tone="success">Packaging batch</Badge>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => setOpenBatchId(row.id)}>
+              View
+            </Button>
+          )
         )
       }
     ],
@@ -156,21 +169,13 @@ export default function BatchesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
-          New batch
-        </Button>
-      </div>
-
       {!canBrowseBatches ? (
         <GlassPanel>
           <GlassPanelBody>
             <EmptyState
               title="Batch browsing is restricted"
               description={
-                canCreate
-                  ? 'Use New batch above to plan a batch.'
-                  : canComplete
+                canComplete
                   ? 'You can browse batches ready for completion.'
                   : 'Ask an administrator for production permissions to access batches.'
               }
@@ -272,16 +277,14 @@ export default function BatchesTab() {
           <DataTable
             columns={columns}
             rows={rows}
-            rowKey={(row) => row.id}
+            rowKey={(row) => row.row_key || row.id}
             isLoading={listQuery.isPending}
             isError={listQuery.isError}
             error={listQuery.error}
             onRetry={() => listQuery.refetch()}
             empty={{
               title: 'No batches match the filters',
-              description: canCreate
-                ? 'Adjust your filters or plan a new production batch.'
-                : 'Adjust your filters to find existing batches.'
+              description: 'Adjust your filters to find existing batches.'
             }}
             footer={
               meta?.totalPages ? (
@@ -298,7 +301,6 @@ export default function BatchesTab() {
         </>
       )}
 
-      <ProductionBatchFormModal open={creating} onClose={() => setCreating(false)} />
       {canBrowseBatches && (
         <ProductionBatchDrawer
           open={Boolean(openBatchId)}

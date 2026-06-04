@@ -9,6 +9,17 @@ const productionModel = require('../production/production.model');
 const model = require('./packaging.model');
 
 const LEVELS = ['category', 'item', 'sub_item', 'sub_sub_item'];
+const CAPACITY_UNIT_TO_KG = {
+  g: 0.001,
+  kg: 1,
+  ton: 1000,
+  pc: 1
+};
+const WEIGHT_UNIT_TO_KG = {
+  g: 0.001,
+  kg: 1,
+  ton: 1000
+};
 const PREVIOUS_LEVEL = {
   category: null,
   item: 'category',
@@ -66,6 +77,18 @@ function componentCapacityKg(component = {}) {
 
   const attributes = componentAttributes(source);
   return toPositiveNumber(attributes.capacity_kg_per_pc ?? attributes.capacity_kg);
+}
+
+function normalizeCapacityKg(value, unitSymbol = 'pc') {
+  if (value === undefined || value === null || value === '') return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return null;
+  return numericValue * (CAPACITY_UNIT_TO_KG[unitSymbol] || 1);
+}
+
+function normalizeWeightToKg(value, unitSymbol = 'kg') {
+  if (value === undefined || value === null || value === '') return decimal(0);
+  return decimal(value).mul(WEIGHT_UNIT_TO_KG[unitSymbol] || 1);
 }
 
 function withNormalizedComponentCapacity(component) {
@@ -176,6 +199,7 @@ function maxQuantityFromCapacity(parent, child) {
 
 async function validateComponentPayload(group, data, current = null) {
   const next = { ...current, ...data };
+  const hasCapacityInput = Object.prototype.hasOwnProperty.call(data, 'capacity_kg');
   const level = next.level_key;
 
   if (!LEVELS.includes(level)) {
@@ -185,10 +209,15 @@ async function validateComponentPayload(group, data, current = null) {
   const variant = await validateVariant(next.item_variant_id, 'item_variant_id', group.store_id, { itemType: 'packaging' });
   next.variant_attributes_json = variant.attributes_json;
 
-  if (next.unit_symbol && next.unit_symbol !== 'pc') {
+  if (next.unit_symbol && !CAPACITY_UNIT_TO_KG[next.unit_symbol]) {
     throw ApiError.badRequest('Validation failed', [
-      { field: 'unit_symbol', message: 'Packaging materials are stocked in pc only' }
+      { field: 'unit_symbol', message: 'Unit must be g, kg, ton, or pc' }
     ]);
+  }
+
+  const unitSymbol = next.unit_symbol || 'pc';
+  if (hasCapacityInput) {
+    next.capacity_kg = normalizeCapacityKg(next.capacity_kg, unitSymbol);
   }
 
   if (level === 'category' && next.parent_component_id) {
@@ -258,7 +287,7 @@ async function validateComponentPayload(group, data, current = null) {
     ...next,
     parent_component_id: level === 'category' ? null : next.parent_component_id,
     quantity_per_parent: level === 'category' ? null : quantity,
-    unit_symbol: 'pc',
+    unit_symbol: unitSymbol,
     capacity_kg: next.capacity_kg === undefined || next.capacity_kg === '' ? null : next.capacity_kg
   };
 }
@@ -357,7 +386,7 @@ function findPrimaryContainer(components, effectiveCapacityById) {
     || components.find((component) => toPositiveNumber(effectiveCapacityById.get(Number(component.id))));
 }
 
-function calculateRequirements(group, charcoalQuantityKg, balances = []) {
+function calculateRequirements(group, charcoalQuantityKg, balances = [], options = {}) {
   const components = [...(group.components || [])].sort((a, b) => {
     const byLevel = LEVELS.indexOf(a.level_key) - LEVELS.indexOf(b.level_key);
     if (byLevel !== 0) return byLevel;
@@ -441,17 +470,31 @@ function calculateRequirements(group, charcoalQuantityKg, balances = []) {
       total_cost: toMoney(total)
     };
   });
+  const packagingCost = totalCost;
+  const charcoalUnitCost = decimal(options.charcoalUnitCost || 0);
+  const charcoalCost = decimal(charcoalQuantityKg).mul(charcoalUnitCost);
+  const totalMaterialCost = packagingCost.plus(charcoalCost);
+  const costPerPrimaryContainer = totalMaterialCost.div(primaryCount);
 
   return {
     packaging_group_id: group.id,
     packaging_group_name: group.name,
     charcoal_quantity_kg: toMoney(charcoalQuantityKg),
     primary_container_component_id: primary.id,
+    primary_container_item_name: primary.item_name,
+    primary_container_variant_name: primary.variant_name,
+    primary_container_sku: primary.sku,
     primary_container_name: `${primary.item_name} - ${primary.variant_name}`,
     primary_container_capacity_kg: toMoney(primaryEffectiveCapacity),
     primary_container_count: Number(primaryCount.toFixed(0)),
-    total_packaging_cost: toMoney(totalCost),
-    cost_per_kg: toMoney(totalCost.div(charcoalQuantityKg)),
+    charcoal_unit_cost: toMoney(charcoalUnitCost),
+    total_charcoal_cost: toMoney(charcoalCost),
+    total_packaging_cost: toMoney(packagingCost),
+    total_cost: toMoney(totalMaterialCost),
+    packaging_cost_per_kg: toMoney(packagingCost.div(charcoalQuantityKg)),
+    cost_per_kg: toMoney(totalMaterialCost.div(charcoalQuantityKg)),
+    cost_per_primary_container: toMoney(costPerPrimaryContainer),
+    cost_per_packaging_group: toMoney(costPerPrimaryContainer),
     requirements
   };
 }
@@ -473,12 +516,18 @@ async function calculateGroup(groupId, data, actor = {}, warehouseId = null) {
   if (warehouseId) {
     await validateWarehouse(warehouseId, 'warehouse_id', group.store_id);
   }
+  const charcoalVariantId = data.charcoal_variant_id || group.charcoal_variant_id || null;
+  if (charcoalVariantId) {
+    await validateVariant(charcoalVariantId, 'charcoal_variant_id', group.store_id);
+  }
   const variantIds = group.components.map((component) => Number(component.item_variant_id));
   const balances = warehouseId
     ? await model.getWarehouseVariantBalances(warehouseId, [...new Set(variantIds)])
     : [];
 
-  return calculateRequirements(group, data.charcoal_quantity_kg, balances);
+  const charcoalQuantityKg = normalizeWeightToKg(data.charcoal_quantity_kg, data.charcoal_quantity_unit || 'kg');
+  const charcoalUnitCost = charcoalVariantId ? await model.getVariantCost(charcoalVariantId, warehouseId) : 0;
+  return calculateRequirements(group, charcoalQuantityKg, balances, { charcoalUnitCost });
 }
 
 async function createAssignment(data, userId, actor = {}) {
@@ -497,7 +546,12 @@ async function createAssignment(data, userId, actor = {}) {
     ]);
   }
 
-  const calculation = await calculateGroup(group.id, scoped, actor, scoped.warehouse_id);
+  const charcoalQuantityKg = normalizeWeightToKg(scoped.charcoal_quantity_kg, scoped.charcoal_quantity_unit || 'kg');
+  const calculation = await calculateGroup(group.id, {
+    ...scoped,
+    charcoal_quantity_kg: charcoalQuantityKg,
+    charcoal_quantity_unit: 'kg'
+  }, actor, scoped.warehouse_id);
   assertNoRequirementShortages(calculation);
 
   const assignment = await model.createAssignment({
@@ -506,18 +560,19 @@ async function createAssignment(data, userId, actor = {}) {
     warehouse_id: scoped.warehouse_id,
     charcoal_variant_id: scoped.charcoal_variant_id,
     output_item_variant_id: scoped.output_item_variant_id || null,
-    charcoal_quantity_kg: toMoney(scoped.charcoal_quantity_kg),
+    charcoal_quantity_kg: toMoney(charcoalQuantityKg),
     primary_container_count: calculation.primary_container_count,
     total_packaging_cost: calculation.total_packaging_cost,
     cost_per_kg: calculation.cost_per_kg,
-    status: 'calculated',
+    status: 'batched',
+    produced_quantity: toMoney(calculation.primary_container_count),
     production_batch_id: scoped.production_batch_id || null,
     calculation_json: calculation,
     notes: scoped.notes,
     created_by: userId
   });
 
-  return consumeAssignment(assignment.id, { notes: scoped.notes }, userId, actor);
+  return getAssignment(assignment.id, actor);
 }
 
 async function getAssignment(id, actor = {}) {
@@ -534,8 +589,8 @@ async function getAssignment(id, actor = {}) {
 async function consumeAssignment(id, data = {}, userId, actor = {}) {
   const assignment = await getAssignment(id, actor);
 
-  if (assignment.status !== 'calculated') {
-    throw ApiError.conflict('Only calculated packaging assignments can be consumed');
+  if (!['calculated', 'batched'].includes(assignment.status)) {
+    throw ApiError.conflict('Only calculated or batched packaging assignments can be consumed');
   }
 
   const calculation = assignment.calculation_json;
@@ -552,6 +607,7 @@ async function consumeAssignment(id, data = {}, userId, actor = {}) {
       warehouseId: assignment.warehouse_id,
       itemVariantId: assignment.charcoal_variant_id,
       quantity: assignment.charcoal_quantity_kg,
+      quantityAlreadyNormalized: true,
       unitCost: null,
       movementType: 'production_consume',
       referenceType: 'packaging_assignment_raw',

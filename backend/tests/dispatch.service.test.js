@@ -57,14 +57,17 @@ describe('dispatch service packaging batches', () => {
     model.recalculateDispatchTotals.mockResolvedValue(undefined);
   });
 
-  test('adds items from a consumed packaging batch without requiring an output variant match', async () => {
+  test('adds items from a batched packaging assignment with the batch cost', async () => {
     packagingModel.findAssignmentById.mockResolvedValue({
       id: 11,
       store_id: 1,
       warehouse_id: 2,
-      status: 'consumed',
+      status: 'batched',
       output_item_variant_id: null,
-      produced_quantity: '100.0000'
+      produced_quantity: '100.0000',
+      calculation_json: JSON.stringify({
+        cost_per_primary_container: '9.5000'
+      })
     });
     packagingModel.getAssignmentAllocatedQuantity.mockResolvedValue('20.0000');
 
@@ -79,7 +82,8 @@ describe('dispatch service packaging batches', () => {
     expect(model.createDispatchItem).toHaveBeenCalledWith(expect.objectContaining({
       packaging_assignment_id: 11,
       item_variant_id: 9,
-      quantity: 10
+      quantity: 10,
+      unit_cost: '9.5000'
     }));
   });
 });

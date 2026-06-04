@@ -23,13 +23,17 @@ import { formatDateTime } from '@/lib/formatters.js';
 import { INVENTORY_PERMISSIONS } from './inventory.config.js';
 import { formatStockQuantity, getEntryUnitLabel } from './stockUnits.js';
 import {
+  useItemsOptions,
   useVariantsOptions,
   useWarehousesOptions
 } from './useInventoryOptions.js';
 
 function emptyForm() {
   return {
+    catalog_type: 'product',
+    target_type: 'item',
     warehouse_id: '',
+    item_id: '',
     item_variant_id: '',
     direction: 'increase',
     quantity: '',
@@ -43,11 +47,19 @@ function variantOptionLabel(variant) {
   return `${variant.item_name} - ${variant.variant_name} (${variant.sku})${unit ? ` - ${unit}` : ''}`;
 }
 
+function itemOptionLabel(item) {
+  const unit = getEntryUnitLabel(item);
+  return `${item.name} (${item.code})${unit ? ` - ${unit}` : ''}`;
+}
+
 function AdjustmentFormModal({
   open,
   onClose,
   warehouses,
-  variants,
+  productItems,
+  packagingItems,
+  productVariants,
+  packagingVariants,
   canLoadInventoryOptions
 }) {
   const [form, setForm] = useState(emptyForm);
@@ -67,6 +79,10 @@ function AdjustmentFormModal({
       queryClient.invalidateQueries({ queryKey: ['inventory', 'movements'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'balances'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'adjustments'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'variants'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'variants'] });
       onClose?.();
     },
     onError: (error) => {
@@ -76,23 +92,42 @@ function AdjustmentFormModal({
   });
 
   function handleChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+      ...(['target_type', 'catalog_type'].includes(field) ? { item_id: '', item_variant_id: '', quantity: '' } : {})
+    }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
   function validate() {
     const next = {};
+    const items = form.catalog_type === 'packaging' ? packagingItems : productItems;
+    const variants = form.catalog_type === 'packaging' ? packagingVariants : productVariants;
     const warehouseId = Number(form.warehouse_id);
     if (!form.warehouse_id || Number.isNaN(warehouseId) || warehouseId <= 0) {
       next.warehouse_id = 'Warehouse is required.';
     }
-    const variantId = Number(form.item_variant_id);
-    if (!form.item_variant_id || Number.isNaN(variantId) || variantId <= 0) {
-      next.item_variant_id = 'Variant is required.';
+    if (form.target_type === 'item') {
+      const itemId = Number(form.item_id);
+      if (!form.item_id || Number.isNaN(itemId) || itemId <= 0) {
+        next.item_id = 'Item is required.';
+      }
+    } else {
+      const variantId = Number(form.item_variant_id);
+      if (!form.item_variant_id || Number.isNaN(variantId) || variantId <= 0) {
+        next.item_variant_id = 'Variant is required.';
+      }
     }
     const quantity = Number(form.quantity);
+    const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
+    const selectedVariant = variants.find((variant) => String(variant.id) === String(form.item_variant_id));
+    const selectedTarget = form.target_type === 'item' ? selectedItem : selectedVariant;
     if (!form.quantity || Number.isNaN(quantity) || quantity <= 0) {
       next.quantity = 'Enter a positive quantity. Use direction to add or remove.';
+    }
+    if (form.quantity && selectedTarget?.base_unit_type === 'quantity' && !Number.isInteger(quantity)) {
+      next.quantity = 'Piece-based quantities must be whole numbers.';
     }
     if (form.unit_cost !== '' && form.unit_cost !== null && Number(form.unit_cost) < 0) {
       next.unit_cost = 'Unit cost cannot be negative.';
@@ -109,17 +144,28 @@ function AdjustmentFormModal({
     const quantity = Number(form.quantity);
     const quantity_change = form.direction === 'decrease' ? -quantity : quantity;
     mutation.mutate({
+      target_type: form.target_type,
       warehouse_id: Number(form.warehouse_id),
-      item_variant_id: Number(form.item_variant_id),
+      ...(form.target_type === 'item'
+        ? { item_id: Number(form.item_id) }
+        : { item_variant_id: Number(form.item_variant_id) }),
       quantity_change,
       unit_cost: form.unit_cost === '' ? null : Number(form.unit_cost),
       reason: form.reason.trim()
     });
   }
 
+  const items = form.catalog_type === 'packaging' ? packagingItems : productItems;
+  const variants = form.catalog_type === 'packaging' ? packagingVariants : productVariants;
+  const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
   const selectedVariant = variants.find((variant) => String(variant.id) === String(form.item_variant_id));
-  const stockUnitLabel = getEntryUnitLabel(selectedVariant);
+  const selectedVariantItem = selectedVariant
+    ? items.find((item) => String(item.id) === String(selectedVariant.item_id))
+    : null;
+  const selectedTarget = form.target_type === 'item' ? selectedItem : selectedVariant;
+  const stockUnitLabel = getEntryUnitLabel(selectedTarget);
   const quantityLabel = stockUnitLabel ? `Quantity (${stockUnitLabel})` : 'Quantity';
+  const isPackagingVariantAdjustment = form.catalog_type === 'packaging' && form.target_type === 'variant';
 
   return (
     <Modal
@@ -127,7 +173,7 @@ function AdjustmentFormModal({
       onClose={onClose}
       size="md"
       title="Post stock adjustment"
-      description="Increase or decrease stock for a single warehouse + variant. Quantity is stored in the selected item unit."
+      description="Adjust the item pool, or move quantity between the item pool and one of its variants."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -148,6 +194,22 @@ function AdjustmentFormModal({
           <Badge tone="warn">inventory.view is needed to select warehouse and variant.</Badge>
         )}
         <Select
+          label="Adjustment catalog"
+          value={form.catalog_type}
+          onChange={(event) => handleChange('catalog_type', event.target.value)}
+        >
+          <option value="product">Normal items</option>
+          <option value="packaging">Packaging items</option>
+        </Select>
+        <Select
+          label="Target"
+          value={form.target_type}
+          onChange={(event) => handleChange('target_type', event.target.value)}
+        >
+          <option value="item">Item pool</option>
+          <option value="variant">Variant stock</option>
+        </Select>
+        <Select
           label="Warehouse"
           value={form.warehouse_id}
           onChange={(event) => handleChange('warehouse_id', event.target.value)}
@@ -162,21 +224,39 @@ function AdjustmentFormModal({
             </option>
           ))}
         </Select>
-        <Select
-          label="Variant"
-          value={form.item_variant_id}
-          onChange={(event) => handleChange('item_variant_id', event.target.value)}
-          error={errors.item_variant_id}
-          disabled={!canLoadInventoryOptions}
-          required
-        >
-          <option value="">Select variant</option>
-          {variants.map((variant) => (
-            <option key={variant.id} value={variant.id}>
-              {variantOptionLabel(variant)}
-            </option>
-          ))}
-        </Select>
+        {form.target_type === 'item' ? (
+          <Select
+            label="Item"
+            value={form.item_id}
+            onChange={(event) => handleChange('item_id', event.target.value)}
+            error={errors.item_id}
+            disabled={!canLoadInventoryOptions}
+            required
+          >
+            <option value="">Select item</option>
+            {items.map((item) => (
+              <option key={item.id} value={item.id}>
+                {itemOptionLabel(item)}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <Select
+            label="Variant"
+            value={form.item_variant_id}
+            onChange={(event) => handleChange('item_variant_id', event.target.value)}
+            error={errors.item_variant_id}
+            disabled={!canLoadInventoryOptions}
+            required
+          >
+            <option value="">Select variant</option>
+            {variants.map((variant) => (
+              <option key={variant.id} value={variant.id}>
+                {variantOptionLabel(variant)}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="grid gap-4 sm:grid-cols-3">
           <Select
             label="Direction"
@@ -195,6 +275,15 @@ function AdjustmentFormModal({
             onChange={(event) => handleChange('quantity', event.target.value)}
             error={errors.quantity}
             required
+            description={
+              isPackagingVariantAdjustment
+                ? 'Directly adjusts packaging variant stock.'
+                : form.target_type === 'variant' && selectedVariantItem
+                ? form.direction === 'increase'
+                  ? `Increase subtracts from item pool. Available: ${formatStockQuantity(selectedVariantItem.item_quantity_on_hand || 0, selectedVariantItem)}`
+                  : 'Decrease returns quantity to the item pool.'
+                : undefined
+            }
           />
           <Input
             label="Unit cost"
@@ -235,25 +324,30 @@ export default function AdjustmentsTab() {
   const [limit] = useState(20);
 
   const warehousesQuery = useWarehousesOptions(canLoadInventoryOptions);
-  const variantsQuery = useVariantsOptions(canLoadInventoryOptions, { tracking_type: 'stocked' });
+  const productItemsQuery = useItemsOptions(canLoadInventoryOptions, { exclude_item_type: 'packaging' });
+  const packagingItemsQuery = useItemsOptions(canLoadInventoryOptions, { item_type: 'packaging' });
+  const productVariantsQuery = useVariantsOptions(canLoadInventoryOptions, { tracking_type: 'stocked', exclude_item_type: 'packaging' });
+  const packagingVariantsQuery = useVariantsOptions(canLoadInventoryOptions, { tracking_type: 'stocked', item_type: 'packaging' });
 
   const warehouses = warehousesQuery.data?.data?.warehouses || [];
-  const variants = variantsQuery.data?.data?.item_variants || [];
+  const productItems = productItemsQuery.data?.data?.items || [];
+  const packagingItems = packagingItemsQuery.data?.data?.items || [];
+  const productVariants = productVariantsQuery.data?.data?.item_variants || [];
+  const packagingVariants = packagingVariantsQuery.data?.data?.item_variants || [];
 
-  // Recent adjustment history pulled from /stock-movements filtered to
-  // movement_type=adjustment. Backend has no dedicated /stock-adjustments list,
-  // so we read it via the movements endpoint when the operator can.
+  // Recent adjustment history combines variant stock movements and item-pool
+  // adjustment ledger entries from /stock-adjustments.
   const queryParams = useMemo(
-    () => ({ page, limit, movement_type: 'adjustment' }),
+    () => ({ page, limit }),
     [page, limit]
   );
   const historyQuery = useQuery({
     queryKey: ['inventory', 'adjustments', queryParams],
-    queryFn: () => api.inventory.stockMovements.list(queryParams),
+    queryFn: () => api.inventory.stockAdjustments.list(queryParams),
     enabled: canViewMovements
   });
 
-  const rows = historyQuery.data?.data?.stock_movements || [];
+  const rows = historyQuery.data?.data?.stock_adjustments || [];
   const meta = historyQuery.data?.meta || {};
 
   const columns = useMemo(
@@ -282,6 +376,7 @@ export default function AdjustmentsTab() {
             <p className="truncate text-sm text-ink-50">{row.item_name}</p>
             <p className="truncate font-mono text-xs text-ink-400">
               {row.variant_name} - {row.sku}
+              {row.item_type === 'packaging' ? ' - packaging' : ''}
             </p>
           </div>
         )
@@ -350,7 +445,7 @@ export default function AdjustmentsTab() {
       <GlassPanel>
         <GlassPanelHeader
           title="Recent adjustments"
-          subtitle="Adjustment-type entries from the stock movements ledger."
+          subtitle="Item-pool and variant adjustments for normal and packaging stock."
         />
         <GlassPanelBody>
           {!canViewMovements ? (
@@ -393,7 +488,10 @@ export default function AdjustmentsTab() {
         open={creating}
         onClose={() => setCreating(false)}
         warehouses={warehouses}
-        variants={variants}
+        productItems={productItems}
+        packagingItems={packagingItems}
+        productVariants={productVariants}
+        packagingVariants={packagingVariants}
         canLoadInventoryOptions={canLoadInventoryOptions}
       />
     </div>
