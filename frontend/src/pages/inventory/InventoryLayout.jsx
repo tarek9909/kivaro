@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom';
-import { Boxes, Package } from 'lucide-react';
+import { Boxes } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader.jsx';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { INVENTORY_TABS } from './inventory.config.js';
@@ -17,8 +17,8 @@ export default function InventoryLayout() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Operations"
-        title="Catalog, packaging, and stock"
-        description="Manage items, packaging groups, warehouses, balances, and stock activity from separate tabs."
+        title="Catalog and stock"
+        description="Manage items, variants, categories, warehouses, balances, and stock activity from separate tabs."
       />
 
       <nav
@@ -41,7 +41,6 @@ export default function InventoryLayout() {
                 }
               >
                 {tab.id === 'items' && <Boxes className="h-4 w-4" aria-hidden="true" />}
-                {tab.id === 'packaging' && <Package className="h-4 w-4" aria-hidden="true" />}
                 <span>{tab.label}</span>
               </NavLink>
             </li>

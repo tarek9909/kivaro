@@ -216,13 +216,23 @@ async function listItems({ filters, pagination }) {
 
   return listWithCount({
     select: `SELECT
-      i.id, i.store_id, i.category_id, c.name AS category_name, i.base_unit_id, u.symbol AS base_unit_symbol,
+      i.id, i.store_id, i.category_id, c.name AS category_name, i.base_unit_id,
+      u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
+      u.conversion_to_base AS base_unit_conversion_to_base,
       i.name, i.code, i.item_type, i.tracking_type, i.description, i.default_cost,
-      i.default_selling_price, i.reorder_level, i.status, i.created_by, i.created_at, i.updated_at`,
+      i.default_selling_price, i.reorder_level, i.status,
+      COALESCE(item_stock.quantity_on_hand, 0) AS item_quantity_on_hand,
+      COALESCE(item_stock.quantity_allocated, 0) AS item_quantity_allocated,
+      i.created_by, i.created_at, i.updated_at`,
     from: 'items i',
     joins: `
       JOIN item_categories c ON c.id = i.category_id
-      JOIN units u ON u.id = i.base_unit_id`,
+      JOIN units u ON u.id = i.base_unit_id
+      LEFT JOIN (
+        SELECT item_id, SUM(quantity_on_hand) AS quantity_on_hand, SUM(quantity_allocated) AS quantity_allocated
+        FROM item_stock_balances
+        GROUP BY item_id
+      ) item_stock ON item_stock.item_id = i.id`,
     conditions,
     params,
     search: filters.search,
@@ -232,21 +242,25 @@ async function listItems({ filters, pagination }) {
   });
 }
 
-async function findItemById(id) {
-  const rows = await query(
-    `SELECT id, store_id, category_id, base_unit_id, name, code, item_type, tracking_type, description,
-      default_cost, default_selling_price, reorder_level, status, created_by, created_at, updated_at
-     FROM items
-     WHERE id = ?
-     LIMIT 1`,
-    [id]
-  );
+async function findItemById(id, connection = null) {
+  const sql = `SELECT i.id, i.store_id, i.category_id, i.base_unit_id, u.symbol AS base_unit_symbol,
+      u.unit_type AS base_unit_type, u.conversion_to_base AS base_unit_conversion_to_base,
+      i.name, i.code, i.item_type, i.tracking_type, i.description,
+      i.default_cost, i.default_selling_price, i.reorder_level, i.status, i.created_by, i.created_at, i.updated_at
+     FROM items i
+     JOIN units u ON u.id = i.base_unit_id
+     WHERE i.id = ?
+     LIMIT 1`;
+  const rows = connection
+    ? (await connection.execute(sql, [id]))[0]
+    : await query(sql, [id]);
 
   return rows[0] || null;
 }
 
-async function createItem(data) {
-  const result = await query(
+async function createItem(data, connection = null) {
+  const executor = connection || { execute: (sql, params) => query(sql, params).then((result) => [result]) };
+  const [result] = await executor.execute(
     `INSERT INTO items (
       store_id, category_id, base_unit_id, name, code, item_type, tracking_type, description,
       default_cost, default_selling_price, reorder_level, status, created_by
@@ -268,7 +282,7 @@ async function createItem(data) {
     ]
   );
 
-  return findItemById(result.insertId);
+  return findItemById(result.insertId, connection);
 }
 
 async function updateItem(id, data) {
@@ -341,9 +355,21 @@ async function listVariants({ filters, pagination }) {
     select: `SELECT
       iv.id, iv.store_id, iv.item_id, i.name AS item_name, iv.variant_name, iv.sku, iv.attributes_json,
       iv.cost, iv.selling_price, iv.status, i.item_type, i.tracking_type, i.base_unit_id,
-      u.symbol AS base_unit_symbol, iv.created_at, iv.updated_at`,
+      u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
+      u.conversion_to_base AS base_unit_conversion_to_base,
+      COALESCE(variant_stock.quantity_on_hand, 0) AS quantity_on_hand,
+      COALESCE(variant_stock.quantity_available, 0) AS quantity_available,
+      iv.created_at, iv.updated_at`,
     from: 'item_variants iv',
-    joins: 'JOIN items i ON i.id = iv.item_id JOIN units u ON u.id = i.base_unit_id',
+    joins: `JOIN items i ON i.id = iv.item_id
+      JOIN units u ON u.id = i.base_unit_id
+      LEFT JOIN (
+        SELECT item_variant_id,
+          SUM(quantity_on_hand) AS quantity_on_hand,
+          SUM(quantity_on_hand - quantity_reserved) AS quantity_available
+        FROM stock_balances
+        GROUP BY item_variant_id
+      ) variant_stock ON variant_stock.item_variant_id = iv.id`,
     conditions,
     params,
     search: filters.search,
@@ -353,24 +379,26 @@ async function listVariants({ filters, pagination }) {
   });
 }
 
-async function findVariantById(id) {
-  const rows = await query(
-    `SELECT iv.id, iv.store_id, iv.item_id, iv.variant_name, iv.sku, iv.attributes_json,
+async function findVariantById(id, connection = null) {
+  const sql = `SELECT iv.id, iv.store_id, iv.item_id, iv.variant_name, iv.sku, iv.attributes_json,
        iv.cost, iv.selling_price, iv.status, i.name AS item_name, i.item_type, i.tracking_type, i.base_unit_id,
-       u.symbol AS base_unit_symbol, iv.created_at, iv.updated_at
+       u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
+       u.conversion_to_base AS base_unit_conversion_to_base, iv.created_at, iv.updated_at
      FROM item_variants iv
      JOIN items i ON i.id = iv.item_id
      JOIN units u ON u.id = i.base_unit_id
      WHERE iv.id = ?
-     LIMIT 1`,
-    [id]
-  );
+     LIMIT 1`;
+  const rows = connection
+    ? (await connection.execute(sql, [id]))[0]
+    : await query(sql, [id]);
 
   return rows[0] || null;
 }
 
-async function createVariant(data) {
-  const result = await query(
+async function createVariant(data, connection = null) {
+  const executor = connection || { execute: (sql, params) => query(sql, params).then((result) => [result]) };
+  const [result] = await executor.execute(
     `INSERT INTO item_variants (store_id, item_id, variant_name, sku, attributes_json, cost, selling_price, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
@@ -385,7 +413,7 @@ async function createVariant(data) {
     ]
   );
 
-  return findVariantById(result.insertId);
+  return findVariantById(result.insertId, connection);
 }
 
 async function updateVariant(id, data) {
@@ -586,12 +614,14 @@ async function listStockMovements({ filters, pagination }) {
       iv.sku, i.name AS item_name, sm.movement_type, sm.quantity_change, sm.quantity_before,
       sm.quantity_after, sm.reserved_quantity_change, sm.reserved_quantity_before,
       sm.reserved_quantity_after, sm.unit_cost, sm.reference_type, sm.reference_id, sm.notes,
-      sm.created_by, sm.created_at`,
+      CASE WHEN u.unit_type = 'weight' THEN 'kg' ELSE u.symbol END AS base_unit_symbol,
+      u.unit_type AS base_unit_type, sm.created_by, sm.created_at`,
     from: 'stock_movements sm',
     joins: `
       JOIN warehouses w ON w.id = sm.warehouse_id
       JOIN item_variants iv ON iv.id = sm.item_variant_id
-      JOIN items i ON i.id = iv.item_id`,
+      JOIN items i ON i.id = iv.item_id
+      JOIN units u ON u.id = i.base_unit_id`,
     conditions,
     params,
     search: filters.search,
@@ -612,6 +642,66 @@ async function getStockBalanceForUpdate(connection, warehouseId, itemVariantId) 
   );
 
   return rows[0] || null;
+}
+
+async function getItemStockBalanceForUpdate(connection, warehouseId, itemId) {
+  const [rows] = await connection.execute(
+    `SELECT id, store_id, warehouse_id, item_id, quantity_on_hand, quantity_allocated
+     FROM item_stock_balances
+     WHERE warehouse_id = ? AND item_id = ?
+     LIMIT 1
+     FOR UPDATE`,
+    [warehouseId, itemId]
+  );
+
+  return rows[0] || null;
+}
+
+async function createItemStockBalance(connection, data) {
+  await connection.execute(
+    `INSERT INTO item_stock_balances (
+      store_id,
+      warehouse_id,
+      item_id,
+      quantity_on_hand,
+      quantity_allocated
+    ) VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      quantity_on_hand = quantity_on_hand + VALUES(quantity_on_hand),
+      quantity_allocated = quantity_allocated + VALUES(quantity_allocated)`,
+    [
+      nullable(data.store_id),
+      data.warehouse_id,
+      data.item_id,
+      data.quantity_on_hand || 0,
+      data.quantity_allocated || 0
+    ]
+  );
+
+  return getItemStockBalanceForUpdate(connection, data.warehouse_id, data.item_id);
+}
+
+async function updateItemStockBalance(connection, id, data) {
+  const fields = [];
+  const params = [];
+
+  for (const [column, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      fields.push(`${column} = ?`);
+      params.push(value);
+    }
+  }
+
+  if (fields.length === 0) {
+    return;
+  }
+
+  await connection.execute(
+    `UPDATE item_stock_balances
+     SET ${fields.join(', ')}
+     WHERE id = ?`,
+    [...params, id]
+  );
 }
 
 async function createStockBalance(connection, warehouseId, itemVariantId, storeId = null) {
@@ -711,6 +801,7 @@ module.exports = {
   createCategory,
   createItem,
   createStockBalance,
+  createItemStockBalance,
   createStockMovement,
   createUnit,
   createVariant,
@@ -728,6 +819,7 @@ module.exports = {
   findUnitById,
   findVariantById,
   findWarehouseById,
+  getItemStockBalanceForUpdate,
   getStockBalanceForUpdate,
   listCategories,
   listItems,
@@ -738,6 +830,7 @@ module.exports = {
   listWarehouses,
   updateCategory,
   updateItem,
+  updateItemStockBalance,
   updateStockBalance,
   updateUnit,
   updateVariant,

@@ -19,8 +19,9 @@ import {
   Select,
   Textarea
 } from '@/components/ui/index.js';
-import { formatDateTime, formatNumber } from '@/lib/formatters.js';
+import { formatDateTime } from '@/lib/formatters.js';
 import { INVENTORY_PERMISSIONS } from './inventory.config.js';
+import { formatStockQuantity, getEntryUnitLabel } from './stockUnits.js';
 import {
   useVariantsOptions,
   useWarehousesOptions
@@ -35,6 +36,11 @@ function emptyForm() {
     unit_cost: '',
     reason: ''
   };
+}
+
+function variantOptionLabel(variant) {
+  const unit = getEntryUnitLabel(variant);
+  return `${variant.item_name} - ${variant.variant_name} (${variant.sku})${unit ? ` - ${unit}` : ''}`;
 }
 
 function AdjustmentFormModal({
@@ -111,13 +117,17 @@ function AdjustmentFormModal({
     });
   }
 
+  const selectedVariant = variants.find((variant) => String(variant.id) === String(form.item_variant_id));
+  const stockUnitLabel = getEntryUnitLabel(selectedVariant);
+  const quantityLabel = stockUnitLabel ? `Quantity (${stockUnitLabel})` : 'Quantity';
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       size="md"
       title="Post stock adjustment"
-      description="Increase or decrease stock for a single warehouse + variant. Quantity is entered in the variant's base unit."
+      description="Increase or decrease stock for a single warehouse + variant. Quantity is stored in the selected item unit."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -163,7 +173,7 @@ function AdjustmentFormModal({
           <option value="">Select variant</option>
           {variants.map((variant) => (
             <option key={variant.id} value={variant.id}>
-              {variant.item_name} - {variant.variant_name} ({variant.sku})
+              {variantOptionLabel(variant)}
             </option>
           ))}
         </Select>
@@ -177,7 +187,7 @@ function AdjustmentFormModal({
             <option value="decrease">Decrease</option>
           </Select>
           <Input
-            label="Quantity (base unit)"
+            label={quantityLabel}
             type="number"
             min="0"
             step="0.0001"
@@ -291,7 +301,7 @@ export default function AdjustmentsTab() {
               }`}
             >
               <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-              {formatNumber(Math.abs(value), { maximumFractionDigits: 4 })}
+              {formatStockQuantity(Math.abs(value), row)}
             </span>
           );
         }
@@ -302,7 +312,7 @@ export default function AdjustmentsTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatNumber(row.quantity_after, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.quantity_after, row)}
           </span>
         )
       },

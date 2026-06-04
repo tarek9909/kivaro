@@ -1,6 +1,8 @@
 const ApiError = require('../../utils/ApiError');
+const { decimal, toMoney } = require('../../utils/money');
 const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 const { assertRowInScope, assertSameStore, scopedData, scopedQuery } = require('../../utils/storeScope');
+const { withTransaction } = require('../../utils/transaction');
 const inventoryModel = require('./inventory.model');
 const locationModel = require('../locations/locations.model');
 const stockService = require('./stock.service');
@@ -30,6 +32,40 @@ function assertPackagingUnitPc(unit, field = 'base_unit_id') {
   }
 
   return unit;
+}
+
+function normalizeCatalogQuantity(source, quantity, field = 'initial_quantity') {
+  if (quantity === undefined || quantity === null || quantity === '') return decimal(0);
+  const value = decimal(quantity);
+  if (value.lt(0)) {
+    throw ApiError.badRequest('Validation failed', [
+      { field, message: 'Quantity cannot be negative' }
+    ]);
+  }
+  if (source?.base_unit_type === 'quantity' && !value.isInteger()) {
+    throw ApiError.badRequest('Validation failed', [
+      { field, message: 'Piece-based quantities must be whole numbers' }
+    ]);
+  }
+  if (source?.base_unit_type === 'weight') {
+    return value.mul(source.base_unit_conversion_to_base || 1);
+  }
+  return value;
+}
+
+async function validateInitialStockWarehouse(warehouseId, storeId, field = 'warehouse_id') {
+  if (!warehouseId) {
+    throw ApiError.badRequest('Validation failed', [
+      { field, message: 'Warehouse is required when quantity is greater than zero' }
+    ]);
+  }
+  const warehouse = await getWarehouse(warehouseId, { store_id: storeId });
+  if (warehouse.status !== 'active') {
+    throw ApiError.badRequest('Validation failed', [
+      { field, message: 'Warehouse must be active' }
+    ]);
+  }
+  return warehouse;
 }
 
 function isConstraintError(error) {
@@ -208,6 +244,7 @@ async function getItem(id, actor = {}) {
 
 async function createItem(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
+  const { warehouse_id: warehouseId, initial_quantity: initialQuantity, ...itemData } = scoped;
   const category = await getCategory(scoped.category_id, actor);
   const unit = await getUnit(scoped.base_unit_id, actor);
   assertSameStore(category, scoped.store_id, 'category_id', 'Category does not belong to this store');
@@ -215,16 +252,39 @@ async function createItem(data, userId, actor = {}) {
   if (scoped.item_type === 'packaging') {
     assertPackagingUnitPc(unit);
   }
+  const normalizedInitialQuantity = normalizeCatalogQuantity(unit, initialQuantity);
+  if (normalizedInitialQuantity.gt(0) && scoped.tracking_type === 'non_stocked') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'initial_quantity', message: 'Only stocked items can receive quantity' }
+    ]);
+  }
+  if (normalizedInitialQuantity.gt(0)) {
+    await validateInitialStockWarehouse(warehouseId, scoped.store_id);
+  }
 
-  return inventoryModel.createItem({
-    ...scoped,
-    created_by: userId
+  return withTransaction(async (connection) => {
+    const item = await inventoryModel.createItem({
+      ...itemData,
+      store_id: scoped.store_id,
+      created_by: userId
+    }, connection);
+
+    if (normalizedInitialQuantity.gt(0)) {
+      await inventoryModel.createItemStockBalance(connection, {
+        store_id: item.store_id,
+        warehouse_id: warehouseId,
+        item_id: item.id,
+        quantity_on_hand: toMoney(normalizedInitialQuantity)
+      });
+    }
+
+    return item;
   });
 }
 
 async function updateItem(id, data, actor = {}) {
   const current = await getItem(id, actor);
-  const { store_id, ...updates } = data;
+  const { store_id, warehouse_id, initial_quantity, ...updates } = data;
   const nextItemType = updates.item_type || current.item_type;
 
   if (updates.category_id) {
@@ -245,6 +305,70 @@ async function updateItem(id, data, actor = {}) {
   }
 
   return inventoryModel.updateItem(id, updates);
+}
+
+async function createVariant(data, userId, actor = {}) {
+  const scoped = scopedData(data, actor);
+  const { warehouse_id: warehouseId, initial_quantity: initialQuantity, ...variantData } = scoped;
+  const item = await getItem(scoped.item_id, actor);
+  assertSameStore(item, scoped.store_id, 'item_id', 'Item does not belong to this store');
+
+  const normalizedInitialQuantity = normalizeCatalogQuantity(item, initialQuantity);
+  if (normalizedInitialQuantity.gt(0) && item.tracking_type !== 'stocked') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'initial_quantity', message: 'Only stocked items can allocate quantity to variants' }
+    ]);
+  }
+  if (normalizedInitialQuantity.gt(0)) {
+    await validateInitialStockWarehouse(warehouseId, scoped.store_id);
+  }
+
+  return withTransaction(async (connection) => {
+    let itemBalance = null;
+    if (normalizedInitialQuantity.gt(0)) {
+      itemBalance = await inventoryModel.getItemStockBalanceForUpdate(connection, warehouseId, item.id);
+      if (!itemBalance || decimal(itemBalance.quantity_on_hand || 0).lt(normalizedInitialQuantity)) {
+        throw ApiError.conflict('Insufficient item quantity available');
+      }
+    }
+
+    const variant = await inventoryModel.createVariant({
+      ...variantData,
+      store_id: scoped.store_id
+    }, connection);
+
+    if (normalizedInitialQuantity.gt(0)) {
+      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
+        quantity_on_hand: toMoney(decimal(itemBalance.quantity_on_hand).minus(normalizedInitialQuantity))
+      });
+      await stockService.increaseStock(connection, {
+        storeId: scoped.store_id,
+        warehouseId,
+        itemVariantId: variant.id,
+        quantity: initialQuantity,
+        unitCost: scoped.cost ?? item.default_cost ?? null,
+        movementType: 'adjustment',
+        referenceType: 'item_variant_allocation',
+        referenceId: variant.id,
+        notes: 'Allocate item quantity to variant',
+        createdBy: userId
+      });
+    }
+
+    return variant;
+  });
+}
+
+async function updateVariant(id, data, actor = {}) {
+  const current = await getVariant(id, actor);
+  const { store_id, warehouse_id, initial_quantity, ...updates } = data;
+
+  if (updates.item_id) {
+    const item = await getItem(updates.item_id, actor);
+    assertSameStore(item, current.store_id, 'item_id', 'Item does not belong to this store');
+  }
+
+  return inventoryModel.updateVariant(id, updates);
 }
 
 async function deleteItem(id, actor = {}) {
@@ -281,25 +405,6 @@ async function getVariant(id, actor = {}) {
   const variant = await inventoryModel.findVariantById(id);
 
   return assertRowInScope(variant, actor, 'Item variant not found');
-}
-
-async function createVariant(data, userId, actor = {}) {
-  const scoped = scopedData(data, actor);
-  const item = await getItem(scoped.item_id, actor);
-  assertSameStore(item, scoped.store_id, 'item_id', 'Item does not belong to this store');
-  return inventoryModel.createVariant(scoped);
-}
-
-async function updateVariant(id, data, actor = {}) {
-  const current = await getVariant(id, actor);
-  const { store_id, ...updates } = data;
-
-  if (updates.item_id) {
-    const item = await getItem(updates.item_id, actor);
-    assertSameStore(item, current.store_id, 'item_id', 'Item does not belong to this store');
-  }
-
-  return inventoryModel.updateVariant(id, updates);
 }
 
 async function deleteVariant(id, actor = {}) {

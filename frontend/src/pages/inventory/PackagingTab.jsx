@@ -902,15 +902,13 @@ function AssignmentsView({
   setAssignmentFilters,
   groups,
   warehouses,
-  charcoalVariants,
-  finishedVariants
+  charcoalVariants
 }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState({
     packaging_group_id: '',
     warehouse_id: '',
     charcoal_variant_id: '',
-    output_item_variant_id: '',
     charcoal_quantity_kg: '',
     notes: ''
   });
@@ -940,6 +938,12 @@ function AssignmentsView({
       toast.success('Packaging assignment saved');
       setCalculation(response?.data?.packaging_assignment?.calculation_json || calculation);
       queryClient.invalidateQueries({ queryKey: ['inventory', 'packaging', 'assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'variants'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'variants'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'balances'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'movements'] });
     },
     onError: (error) => {
       setErrors(mapFieldErrors(error));
@@ -995,7 +999,6 @@ function AssignmentsView({
     if (!form.packaging_group_id) next.packaging_group_id = 'Packaging group is required.';
     if (!form.warehouse_id) next.warehouse_id = 'Warehouse is required.';
     if (!form.charcoal_variant_id) next.charcoal_variant_id = 'Charcoal variant is required.';
-    if (!form.output_item_variant_id) next.output_item_variant_id = 'Finished output variant is required.';
     if (!form.charcoal_quantity_kg || Number(form.charcoal_quantity_kg) <= 0) {
       next.charcoal_quantity_kg = 'Enter a positive kg quantity.';
     }
@@ -1008,7 +1011,6 @@ function AssignmentsView({
       packaging_group_id: Number(form.packaging_group_id),
       warehouse_id: Number(form.warehouse_id),
       charcoal_variant_id: Number(form.charcoal_variant_id),
-      output_item_variant_id: Number(form.output_item_variant_id),
       charcoal_quantity_kg: Number(form.charcoal_quantity_kg),
       notes: form.notes?.trim() || null
     };
@@ -1019,7 +1021,6 @@ function AssignmentsView({
       { id: 'group', header: 'Group', cell: (row) => <span className="text-sm text-ink-100">{row.packaging_group_name}</span> },
       { id: 'warehouse', header: 'Warehouse', cell: (row) => <span className="text-sm text-ink-200">{row.warehouse_name}</span> },
       { id: 'charcoal', header: 'Charcoal', cell: (row) => <span className="text-sm text-ink-200">{row.charcoal_variant_name}</span> },
-      { id: 'output', header: 'Output', cell: (row) => <span className="text-sm text-ink-200">{row.output_item_name ? `${row.output_item_name} - ${row.output_variant_name}` : row.output_variant_name || '-'}</span> },
       {
         id: 'status',
         header: 'Status',
@@ -1091,7 +1092,7 @@ function AssignmentsView({
       <GlassPanel>
         <GlassPanelHeader title="Assign charcoal to packaging" subtitle="Calculate packaging requirements before saving the assignment." />
         <GlassPanelBody>
-          <div className="grid gap-4 lg:grid-cols-6">
+          <div className="grid gap-4 lg:grid-cols-5">
             <Select label="Packaging group" value={form.packaging_group_id} onChange={(event) => handleGroupChange(event.target.value)} error={errors.packaging_group_id}>
               <option value="">Select group</option>
               {groups.map((group) => (
@@ -1107,12 +1108,6 @@ function AssignmentsView({
             <Select label="Charcoal variant" value={form.charcoal_variant_id} onChange={(event) => handleChange('charcoal_variant_id', event.target.value)} error={errors.charcoal_variant_id}>
               <option value="">Select charcoal</option>
               {charcoalVariants.map((variant) => (
-                <option key={variant.id} value={variant.id}>{optionLabelForVariant(variant)}</option>
-              ))}
-            </Select>
-            <Select label="Finished output" value={form.output_item_variant_id} onChange={(event) => handleChange('output_item_variant_id', event.target.value)} error={errors.output_item_variant_id}>
-              <option value="">Select output</option>
-              {finishedVariants.map((variant) => (
                 <option key={variant.id} value={variant.id}>{optionLabelForVariant(variant)}</option>
               ))}
             </Select>
@@ -1309,9 +1304,6 @@ export default function PackagingTab() {
   const charcoalVariants = (charcoalVariantsQuery.data?.data?.item_variants || []).filter(
     (variant) => !packagingItemIds.has(Number(variant.item_id))
   );
-  const finishedVariants = charcoalVariants.filter(
-    (variant) => variant.item_type === 'finished_product' && variant.base_unit_symbol === 'pc'
-  );
   const categories = categoriesQuery.data?.data?.categories || [];
   const warehouses = warehousesQuery.data?.data?.warehouses || [];
   const groups = groupsQuery.data?.data?.packaging_groups || [];
@@ -1396,7 +1388,6 @@ export default function PackagingTab() {
           groups={groups}
           warehouses={warehouses}
           charcoalVariants={charcoalVariants}
-          finishedVariants={finishedVariants}
         />
       )}
     </div>

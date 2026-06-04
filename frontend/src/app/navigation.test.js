@@ -27,6 +27,15 @@ describe('navigation config', () => {
     ]);
   });
 
+  it('exposes packaging as its own operations nav item', () => {
+    const items = flattenNavItems();
+    const packaging = items.find((item) => item.id === 'packaging');
+    expect(packaging).toBeDefined();
+    expect(packaging.to).toBe('/packaging');
+    expect(packaging.moduleKey).toBe('inventory.packaging');
+    expect(packaging.anyOfPermissions).toEqual(['inventory.view']);
+  });
+
   it('exposes the purchases nav item to purchase_orders.view, accounting.view, or accounting.manage users', () => {
     const items = flattenNavItems();
     const purchases = items.find((item) => item.id === 'purchases');
@@ -143,10 +152,12 @@ describe('navigation config', () => {
   it('adds module keys for store app modules and gates superadmin separately', () => {
     const items = flattenNavItems();
     const inventory = items.find((item) => item.id === 'inventory');
+    const packaging = items.find((item) => item.id === 'packaging');
     const reports = items.find((item) => item.id === 'reports');
     const superadmin = items.find((item) => item.id === 'superadmin');
 
     expect(inventory.moduleKey).toBe('inventory');
+    expect(packaging.moduleKey).toBe('inventory.packaging');
     expect(reports.moduleKey).toBe('reports');
     expect(superadmin.to).toBe('/superadmin');
     expect(superadmin.anyOfPermissions).toEqual(['superadmin.manage']);

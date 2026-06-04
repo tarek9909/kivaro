@@ -18,7 +18,7 @@ import AuditLogsPage from '@/pages/admin/AuditLogsPage.jsx';
 import NotificationsPage from '@/pages/admin/NotificationsPage.jsx';
 import InventoryLayout from '@/pages/inventory/InventoryLayout.jsx';
 import ItemsTab from '@/pages/inventory/ItemsTab.jsx';
-import PackagingTab from '@/pages/inventory/PackagingTab.jsx';
+import PackagingPage from '@/pages/packaging/PackagingPage.jsx';
 import VariantsTab from '@/pages/inventory/VariantsTab.jsx';
 import CategoriesTab from '@/pages/inventory/CategoriesTab.jsx';
 import UnitsTab from '@/pages/inventory/UnitsTab.jsx';
@@ -330,11 +330,7 @@ export default function App() {
           />
           <Route
             path="packaging"
-            element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.packaging">
-                <PackagingTab />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/packaging" replace />}
           />
           <Route
             path="variants"
@@ -399,6 +395,15 @@ export default function App() {
             }
           />
         </Route>
+
+        <Route
+          path="packaging"
+          element={
+            <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.packaging">
+              <PackagingPage />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="purchases"

@@ -24,7 +24,8 @@ import {
   TRACKING_TYPES,
   INVENTORY_PERMISSIONS
 } from './inventory.config.js';
-import { useCategoriesOptions, useUnitsOptions } from './useInventoryOptions.js';
+import { useCategoriesOptions, useUnitsOptions, useWarehousesOptions } from './useInventoryOptions.js';
+import { formatStockQuantity } from './stockUnits.js';
 
 const STATUS_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUSES];
 const ITEM_TYPE_OPTIONS = [{ value: '', label: 'All product types' }, ...PRODUCT_ITEM_TYPES];
@@ -41,11 +42,13 @@ function emptyForm(item) {
     default_cost: item?.default_cost ?? 0,
     default_selling_price: item?.default_selling_price ?? '',
     reorder_level: item?.reorder_level ?? 0,
-    status: item?.status ?? 'active'
+    status: item?.status ?? 'active',
+    warehouse_id: '',
+    initial_quantity: ''
   };
 }
 
-function ItemFormModal({ open, onClose, item, categories, units }) {
+function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
   const isEdit = Boolean(item);
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyForm(item));
@@ -93,6 +96,12 @@ function ItemFormModal({ open, onClose, item, categories, units }) {
     if (form.reorder_level !== '' && Number(form.reorder_level) < 0) {
       next.reorder_level = 'Reorder level cannot be negative.';
     }
+    if (!isEdit && form.initial_quantity !== '' && Number(form.initial_quantity) < 0) {
+      next.initial_quantity = 'Quantity cannot be negative.';
+    }
+    if (!isEdit && Number(form.initial_quantity || 0) > 0 && !form.warehouse_id) {
+      next.warehouse_id = 'Warehouse is required when quantity is greater than zero.';
+    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -100,7 +109,7 @@ function ItemFormModal({ open, onClose, item, categories, units }) {
   function handleSubmit(event) {
     event.preventDefault();
     if (!validate()) return;
-    mutation.mutate({
+    const payload = {
       category_id: Number(form.category_id),
       base_unit_id: Number(form.base_unit_id),
       name: form.name.trim(),
@@ -113,7 +122,12 @@ function ItemFormModal({ open, onClose, item, categories, units }) {
         form.default_selling_price === '' ? null : Number(form.default_selling_price),
       reorder_level: Number(form.reorder_level) || 0,
       status: form.status
-    });
+    };
+    if (!isEdit && Number(form.initial_quantity || 0) > 0) {
+      payload.warehouse_id = Number(form.warehouse_id);
+      payload.initial_quantity = Number(form.initial_quantity);
+    }
+    mutation.mutate(payload);
   }
 
   return (
@@ -178,6 +192,7 @@ function ItemFormModal({ open, onClose, item, categories, units }) {
             {units.map((unit) => (
               <option key={unit.id} value={unit.id}>
                 {unit.name} ({unit.symbol})
+                {unit.unit_type ? ` - ${unit.unit_type}` : ''}
               </option>
             ))}
           </Select>
@@ -253,6 +268,35 @@ function ItemFormModal({ open, onClose, item, categories, units }) {
           />
         </div>
 
+        {!isEdit && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              label="Initial warehouse"
+              value={form.warehouse_id || ''}
+              onChange={(event) => handleChange('warehouse_id', event.target.value)}
+              error={errors.warehouse_id}
+              description="Required when initial quantity is greater than zero."
+            >
+              <option value="">Select warehouse</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name} ({warehouse.code})
+                </option>
+              ))}
+            </Select>
+            <Input
+              label="Initial item quantity"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={form.initial_quantity}
+              onChange={(event) => handleChange('initial_quantity', event.target.value)}
+              error={errors.initial_quantity}
+              description="This becomes the item pool available for variants."
+            />
+          </div>
+        )}
+
         <Textarea
           label="Description"
           value={form.description || ''}
@@ -306,9 +350,11 @@ export default function ItemsTab() {
 
   const categoriesQuery = useCategoriesOptions(true);
   const unitsQuery = useUnitsOptions(true);
+  const warehousesQuery = useWarehousesOptions(true);
 
   const categories = categoriesQuery.data?.data?.categories || [];
   const units = unitsQuery.data?.data?.units || [];
+  const warehouses = warehousesQuery.data?.data?.warehouses || [];
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.inventory.items.remove(id),
@@ -372,6 +418,16 @@ export default function ItemsTab() {
         cell: (row) => (
           <span className="font-mono text-xs text-ink-200">
             {row.base_unit_symbol || '-'}
+          </span>
+        )
+      },
+      {
+        id: 'item_quantity_on_hand',
+        header: 'Item qty',
+        align: 'right',
+        cell: (row) => (
+          <span className="font-mono text-sm text-ink-100">
+            {formatStockQuantity(row.item_quantity_on_hand || 0, row)}
           </span>
         )
       },
@@ -547,6 +603,7 @@ export default function ItemsTab() {
         onClose={() => setCreating(false)}
         categories={categories}
         units={units}
+        warehouses={warehouses}
       />
       <ItemFormModal
         open={Boolean(editing)}
@@ -554,6 +611,7 @@ export default function ItemsTab() {
         item={editing || undefined}
         categories={categories}
         units={units}
+        warehouses={warehouses}
       />
       <ConfirmDialog
         open={Boolean(deleteTarget)}

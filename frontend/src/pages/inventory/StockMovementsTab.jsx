@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/index.js';
 import { formatDateTime, formatNumber } from '@/lib/formatters.js';
 import { MOVEMENT_TYPES, REFERENCE_TYPES, INVENTORY_PERMISSIONS } from './inventory.config.js';
+import { formatStockQuantity } from './stockUnits.js';
 import {
   useVariantsOptions,
   useWarehousesOptions
@@ -134,7 +135,7 @@ export default function StockMovementsTab() {
               }`}
             >
               <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-              {formatNumber(value, { maximumFractionDigits: 4, signDisplay: 'never' })}
+              {formatStockQuantity(Math.abs(value), row)}
             </span>
           );
         }
@@ -145,7 +146,7 @@ export default function StockMovementsTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatNumber(row.quantity_after, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.quantity_after, row)}
           </span>
         )
       },
@@ -155,7 +156,7 @@ export default function StockMovementsTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatNumber(row.reserved_quantity_change || 0, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.reserved_quantity_change || 0, row)}
           </span>
         )
       },
@@ -165,7 +166,7 @@ export default function StockMovementsTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatNumber(row.reserved_quantity_after || 0, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.reserved_quantity_after || 0, row)}
           </span>
         )
       },

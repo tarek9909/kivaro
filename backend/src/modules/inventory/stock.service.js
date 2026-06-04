@@ -24,6 +24,29 @@ async function getOrCreateBalance(connection, warehouseId, itemVariantId, storeI
   return balance;
 }
 
+async function normalizeStockInput(connection, itemVariantId, quantity, unitCost = null) {
+  const variant = await inventoryModel.findVariantById(itemVariantId, connection);
+  if (variant?.base_unit_type === 'quantity' && !decimal(quantity).isInteger()) {
+    throw ApiError.badRequest('Validation failed', [
+      {
+        field: 'quantity',
+        message: 'Piece-based stock quantities must be whole numbers'
+      }
+    ]);
+  }
+
+  if (variant?.base_unit_type !== 'weight') {
+    return { quantity, unitCost, variant };
+  }
+
+  const conversion = decimal(variant.base_unit_conversion_to_base || 1);
+  return {
+    quantity: decimal(quantity).mul(conversion),
+    unitCost: unitCost === null || unitCost === undefined ? unitCost : decimal(unitCost).div(conversion),
+    variant
+  };
+}
+
 function calculateWeightedAverageCost(balance, quantity, unitCost) {
   const currentQuantity = decimal(balance.quantity_on_hand);
   const currentAverageCost = decimal(balance.average_cost);
@@ -45,6 +68,7 @@ function calculateWeightedAverageCost(balance, quantity, unitCost) {
 
 async function increaseStock(connection, input) {
   assertPositiveQuantity(input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -54,11 +78,11 @@ async function increaseStock(connection, input) {
   );
 
   const quantityBefore = decimal(balance.quantity_on_hand);
-  const quantityAfter = quantityBefore.plus(input.quantity);
+  const quantityAfter = quantityBefore.plus(normalized.quantity);
   const averageCost = calculateWeightedAverageCost(
     balance,
-    input.quantity,
-    input.unitCost
+    normalized.quantity,
+    normalized.unitCost
   );
 
   await inventoryModel.updateStockBalance(connection, balance.id, {
@@ -71,10 +95,10 @@ async function increaseStock(connection, input) {
     warehouse_id: input.warehouseId,
     item_variant_id: input.itemVariantId,
     movement_type: input.movementType,
-    quantity_change: toMoney(input.quantity),
+    quantity_change: toMoney(normalized.quantity),
     quantity_before: toMoney(quantityBefore),
     quantity_after: toMoney(quantityAfter),
-    unit_cost: input.unitCost,
+    unit_cost: normalized.unitCost === null || normalized.unitCost === undefined ? normalized.unitCost : toMoney(normalized.unitCost),
     reference_type: input.referenceType,
     reference_id: input.referenceId,
     notes: input.notes,
@@ -92,6 +116,7 @@ async function increaseStock(connection, input) {
 
 async function decreaseStock(connection, input) {
   assertPositiveQuantity(input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity, input.unitCost);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -103,16 +128,16 @@ async function decreaseStock(connection, input) {
   const quantityBefore = decimal(balance.quantity_on_hand);
   const reservedQuantity = decimal(balance.quantity_reserved);
   const availableQuantity = quantityBefore.minus(reservedQuantity);
-  const decreaseQuantity = decimal(input.quantity);
+  const decreaseQuantity = decimal(normalized.quantity);
 
   if (availableQuantity.lt(decreaseQuantity)) {
     throw ApiError.conflict('Insufficient stock available');
   }
 
   const quantityAfter = quantityBefore.minus(decreaseQuantity);
-  const unitCost = input.unitCost === null || input.unitCost === undefined
+  const unitCost = normalized.unitCost === null || normalized.unitCost === undefined
     ? balance.average_cost
-    : input.unitCost;
+    : normalized.unitCost;
 
   await inventoryModel.updateStockBalance(connection, balance.id, {
     quantity_on_hand: toMoney(quantityAfter),
@@ -127,7 +152,7 @@ async function decreaseStock(connection, input) {
     quantity_change: toMoney(decreaseQuantity.negated()),
     quantity_before: toMoney(quantityBefore),
     quantity_after: toMoney(quantityAfter),
-    unit_cost: unitCost,
+    unit_cost: unitCost === null || unitCost === undefined ? unitCost : toMoney(unitCost),
     reference_type: input.referenceType,
     reference_id: input.referenceId,
     notes: input.notes,
@@ -145,6 +170,7 @@ async function decreaseStock(connection, input) {
 
 async function reserveStock(connection, input) {
   assertPositiveQuantity(input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -155,7 +181,7 @@ async function reserveStock(connection, input) {
 
   const quantityBefore = decimal(balance.quantity_on_hand);
   const reservedBefore = decimal(balance.quantity_reserved);
-  const reserveQuantity = decimal(input.quantity);
+  const reserveQuantity = decimal(normalized.quantity);
   const availableQuantity = quantityBefore.minus(reservedBefore);
 
   if (availableQuantity.lt(reserveQuantity)) {
@@ -197,6 +223,7 @@ async function reserveStock(connection, input) {
 
 async function releaseReservedStock(connection, input) {
   assertPositiveQuantity(input.quantity);
+  const normalized = await normalizeStockInput(connection, input.itemVariantId, input.quantity);
 
   const balance = await getOrCreateBalance(
     connection,
@@ -206,7 +233,7 @@ async function releaseReservedStock(connection, input) {
   );
 
   const reservedBefore = decimal(balance.quantity_reserved);
-  const releaseQuantity = decimal(input.quantity);
+  const releaseQuantity = decimal(normalized.quantity);
   const quantityOnHand = decimal(balance.quantity_on_hand);
 
   if (reservedBefore.lt(releaseQuantity)) {

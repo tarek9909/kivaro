@@ -179,12 +179,6 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
         { field: 'packaging_assignment_id', message: 'Packaging assignment is in a different warehouse' }
       ]);
     }
-    if (Number(assignment.output_item_variant_id) !== Number(data.item_variant_id)) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'item_variant_id', message: 'Variant must match the assignment output variant' }
-      ]);
-    }
-
     const allocatedQuantity = await packagingModel.getAssignmentAllocatedQuantity(assignment.id);
     const availableQuantity = decimal(assignment.produced_quantity || 0).minus(allocatedQuantity);
     if (decimal(data.quantity).gt(availableQuantity)) {
@@ -388,18 +382,20 @@ async function createReturn(dispatchId, data, userId, actor = {}) {
       reason: data.reason,
       created_by: userId
     });
-    await stockService.increaseStock(connection, {
-      storeId: lockedDispatch.store_id,
-      warehouseId: lockedDispatch.warehouse_id,
-      itemVariantId: dispatchItem.item_variant_id,
-      quantity: data.returned_quantity,
-      unitCost: dispatchItem.unit_cost,
-      movementType: 'dispatch_return',
-      referenceType: 'dispatch_return',
-      referenceId: returnId,
-      notes: data.reason,
-      createdBy: userId
-    });
+    if (!dispatchItem.packaging_assignment_id) {
+      await stockService.increaseStock(connection, {
+        storeId: lockedDispatch.store_id,
+        warehouseId: lockedDispatch.warehouse_id,
+        itemVariantId: dispatchItem.item_variant_id,
+        quantity: data.returned_quantity,
+        unitCost: dispatchItem.unit_cost,
+        movementType: 'dispatch_return',
+        referenceType: 'dispatch_return',
+        referenceId: returnId,
+        notes: data.reason,
+        createdBy: userId
+      });
+    }
   });
 
   return { id: returnId };

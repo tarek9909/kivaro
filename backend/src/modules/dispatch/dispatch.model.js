@@ -275,6 +275,7 @@ async function aggregateDispatchItems(dispatchId, connection = null) {
     `SELECT item_variant_id, SUM(quantity - returned_quantity) AS quantity
      FROM dispatch_items
      WHERE dispatch_request_id = ?
+       AND packaging_assignment_id IS NULL
      GROUP BY item_variant_id`,
     [dispatchId]
   );

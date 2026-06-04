@@ -107,14 +107,16 @@ const createItemSchema = z.object({
     default_cost: nonNegativeNumber.default(0),
     default_selling_price: nonNegativeNumber.optional().nullable(),
     reorder_level: nonNegativeNumber.default(0),
-    status: status.default('active')
+    status: status.default('active'),
+    warehouse_id: z.coerce.number().int().positive().optional(),
+    initial_quantity: nonNegativeNumber.optional()
     , store_id: z.coerce.number().int().positive().optional()
   })
 });
 
 const updateItemSchema = z.object({
   params: idParam,
-  body: createItemSchema.shape.body.omit({ store_id: true }).partial().refine((body) => Object.keys(body).length > 0, {
+  body: createItemSchema.shape.body.omit({ store_id: true, warehouse_id: true, initial_quantity: true }).partial().refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required'
   })
 });
@@ -138,14 +140,16 @@ const createVariantSchema = z.object({
     attributes_json: z.record(z.any()).optional().nullable(),
     cost: nonNegativeNumber.default(0),
     selling_price: nonNegativeNumber.optional().nullable(),
-    status: status.default('active')
+    status: status.default('active'),
+    warehouse_id: z.coerce.number().int().positive().optional(),
+    initial_quantity: nonNegativeNumber.optional()
     , store_id: z.coerce.number().int().positive().optional()
   })
 });
 
 const updateVariantSchema = z.object({
   params: idParam,
-  body: createVariantSchema.shape.body.omit({ store_id: true }).partial().refine((body) => Object.keys(body).length > 0, {
+  body: createVariantSchema.shape.body.omit({ store_id: true, warehouse_id: true, initial_quantity: true }).partial().refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field is required'
   })
 });

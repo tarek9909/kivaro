@@ -82,7 +82,7 @@ describe('inventory config', () => {
       return INVENTORY_TABS.find((tab) => tab.id === id)?.anyOfPermissions;
     }
     expect(permsFor('items')).toEqual(['inventory.view']);
-    expect(permsFor('packaging')).toEqual(['inventory.view']);
+    expect(INVENTORY_TABS.some((tab) => tab.id === 'packaging')).toBe(false);
     expect(permsFor('variants')).toEqual(['inventory.view']);
     expect(permsFor('categories')).toEqual(['inventory.view']);
     expect(permsFor('warehouses')).toEqual(['inventory.view']);

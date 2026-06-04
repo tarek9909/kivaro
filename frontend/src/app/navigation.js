@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Boxes,
+  Package,
   Truck,
   Users,
   ShoppingCart,
@@ -51,6 +52,15 @@ export const NAV_SECTIONS = [
         icon: Boxes,
         moduleKey: 'inventory',
         anyOfPermissions: ['inventory.view', 'stock.movements', 'stock.adjust']
+      },
+      {
+        id: 'packaging',
+        label: 'Packaging',
+        labelKey: 'nav.packaging',
+        to: '/packaging',
+        icon: Package,
+        moduleKey: 'inventory.packaging',
+        anyOfPermissions: ['inventory.view']
       },
       {
         id: 'production',

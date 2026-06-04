@@ -1,8 +1,12 @@
 jest.mock('../src/modules/packaging/packaging.model', () => ({
   createComponent: jest.fn(),
+  createAssignment: jest.fn(),
+  findAssignmentById: jest.fn(),
   findGroupById: jest.fn(),
   findComponentById: jest.fn(),
-  getGroupComponents: jest.fn()
+  getGroupComponents: jest.fn(),
+  getWarehouseVariantBalances: jest.fn(),
+  updateAssignment: jest.fn()
 }));
 
 jest.mock('../src/modules/inventory/inventory.model', () => ({
@@ -10,8 +14,17 @@ jest.mock('../src/modules/inventory/inventory.model', () => ({
   findWarehouseById: jest.fn()
 }));
 
+jest.mock('../src/modules/inventory/stock.service', () => ({
+  decreaseStock: jest.fn()
+}));
+
+jest.mock('../src/utils/transaction', () => ({
+  withTransaction: jest.fn(async (callback) => callback({ execute: jest.fn() }))
+}));
+
 const model = require('../src/modules/packaging/packaging.model');
 const inventoryModel = require('../src/modules/inventory/inventory.model');
+const stockService = require('../src/modules/inventory/stock.service');
 const service = require('../src/modules/packaging/packaging.service');
 
 const actor = { store_id: 1 };
@@ -49,6 +62,7 @@ describe('packaging service hierarchy calculations', () => {
       name: 'Retail carton group'
     });
     model.getGroupComponents.mockResolvedValue([]);
+    model.getWarehouseVariantBalances.mockResolvedValue([]);
   });
 
   test('uses category capacity as the top container capacity', async () => {
@@ -180,5 +194,173 @@ describe('packaging service hierarchy calculations', () => {
         expect.objectContaining({ field: 'quantity_per_parent' })
       ])
     });
+  });
+});
+
+describe('packaging assignment output handling', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    model.findGroupById.mockResolvedValue({
+      id: 7,
+      store_id: 1,
+      name: 'Retail carton group',
+      charcoal_variant_id: null
+    });
+    model.getGroupComponents.mockResolvedValue([
+      component({
+        id: 1,
+        level_key: 'category',
+        variant_attributes_json: JSON.stringify({ capacity_kg: 6 })
+      })
+    ]);
+    model.getWarehouseVariantBalances.mockResolvedValue([]);
+    inventoryModel.findWarehouseById.mockResolvedValue({
+      id: 2,
+      store_id: 1,
+      status: 'active'
+    });
+    inventoryModel.findVariantById.mockResolvedValue({
+      id: 4,
+      store_id: 1,
+      status: 'active',
+      item_type: 'raw_charcoal',
+      tracking_type: 'stocked'
+    });
+    model.createAssignment.mockImplementation(async (payload) => ({ id: 11, ...payload }));
+  });
+
+  test('creates packaging assignments as consumed batches without a finished output variant', async () => {
+    const createdAssignment = {
+      id: 11,
+      store_id: 1,
+      packaging_group_id: 7,
+      warehouse_id: 2,
+      charcoal_variant_id: 4,
+      output_item_variant_id: null,
+      charcoal_quantity_kg: '600.0000',
+      primary_container_count: 100,
+      produced_quantity: '0.0000',
+      total_packaging_cost: '25.0000',
+      cost_per_kg: '0.0417',
+      status: 'calculated',
+      calculation_json: {
+        primary_container_count: 100,
+        requirements: [
+          {
+            component_id: 1,
+            item_variant_id: 8,
+            required_quantity: '100.0000',
+            unit_cost: '0.2500',
+            parent_component_id: null,
+            capacity_kg: '6.0000'
+          }
+        ]
+      },
+      consumed_movements_json: null,
+      notes: null
+    };
+    model.getWarehouseVariantBalances.mockResolvedValue([
+      {
+        item_variant_id: 1,
+        quantity_on_hand: '150.0000',
+        quantity_reserved: '0.0000'
+      }
+    ]);
+    model.createAssignment.mockResolvedValue(createdAssignment);
+    model.findAssignmentById.mockResolvedValueOnce(createdAssignment).mockResolvedValueOnce({
+      ...createdAssignment,
+      status: 'consumed',
+      produced_quantity: '100.0000',
+      consumed_movements_json: []
+    });
+    stockService.decreaseStock
+      .mockResolvedValueOnce({
+        stock_movement_id: 21,
+        average_cost: '0.5000',
+        quantity_after: '400.0000'
+      })
+      .mockResolvedValueOnce({
+        stock_movement_id: 22,
+        quantity_after: '50.0000'
+      });
+    model.updateAssignment.mockResolvedValue(undefined);
+
+    const assignment = await service.createAssignment({
+      packaging_group_id: 7,
+      warehouse_id: 2,
+      charcoal_variant_id: 4,
+      charcoal_quantity_kg: 600,
+      notes: null
+    }, 9, actor);
+
+    expect(inventoryModel.findVariantById).toHaveBeenCalledTimes(1);
+    expect(model.createAssignment).toHaveBeenCalledWith(expect.objectContaining({
+      packaging_group_id: 7,
+      warehouse_id: 2,
+      charcoal_variant_id: 4,
+      output_item_variant_id: null,
+      primary_container_count: 100
+    }));
+    expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
+    expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({
+      status: 'consumed',
+      produced_quantity: '100.0000'
+    }));
+    expect(assignment.status).toBe('consumed');
+    expect(assignment.output_item_variant_id).toBeNull();
+  });
+
+  test('consumes packaging assignments without producing finished output stock', async () => {
+    model.findAssignmentById.mockResolvedValue({
+      id: 11,
+      store_id: 1,
+      packaging_group_id: 7,
+      warehouse_id: 2,
+      charcoal_variant_id: 4,
+      output_item_variant_id: null,
+      charcoal_quantity_kg: '600.0000',
+      primary_container_count: 100,
+      produced_quantity: '0.0000',
+      total_packaging_cost: '25.0000',
+      cost_per_kg: '0.0417',
+      status: 'calculated',
+      calculation_json: {
+        primary_container_count: 100,
+        requirements: [
+          {
+            component_id: 1,
+            item_variant_id: 8,
+            required_quantity: '100.0000',
+            unit_cost: '0.2500',
+            parent_component_id: null,
+            capacity_kg: '6.0000'
+          }
+        ]
+      },
+      consumed_movements_json: null,
+      notes: null
+    });
+    stockService.decreaseStock
+      .mockResolvedValueOnce({
+        stock_movement_id: 21,
+        average_cost: '0.5000',
+        quantity_after: '400.0000'
+      })
+      .mockResolvedValueOnce({
+        stock_movement_id: 22,
+        quantity_after: '50.0000'
+      });
+    model.updateAssignment.mockResolvedValue(undefined);
+
+    await service.consumeAssignment(11, { notes: 'Consumed' }, 9, actor);
+
+    expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
+    expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({
+      status: 'consumed',
+      produced_quantity: '100.0000',
+      consumed_movements_json: expect.not.arrayContaining([
+        expect.objectContaining({ role: 'finished_output' })
+      ])
+    }));
   });
 });

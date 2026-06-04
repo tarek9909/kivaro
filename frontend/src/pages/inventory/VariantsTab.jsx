@@ -19,7 +19,8 @@ import {
 } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
 import { STATUSES, INVENTORY_PERMISSIONS } from './inventory.config.js';
-import { useItemsOptions } from './useInventoryOptions.js';
+import { useItemsOptions, useWarehousesOptions } from './useInventoryOptions.js';
+import { formatStockQuantity } from './stockUnits.js';
 
 const STATUS_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUSES];
 
@@ -48,11 +49,13 @@ function emptyForm(variant) {
     cost: variant?.cost ?? 0,
     selling_price: variant?.selling_price ?? '',
     status: variant?.status ?? 'active',
+    warehouse_id: '',
+    initial_quantity: '',
     attributes: attributesToString(variant?.attributes_json)
   };
 }
 
-function VariantFormModal({ open, onClose, variant, items }) {
+function VariantFormModal({ open, onClose, variant, items, warehouses }) {
   const isEdit = Boolean(variant);
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyForm(variant));
@@ -73,6 +76,8 @@ function VariantFormModal({ open, onClose, variant, items }) {
       toast.success(isEdit ? 'Variant updated' : 'Variant created');
       queryClient.invalidateQueries({ queryKey: ['inventory', 'variants'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'variants'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'stock'] });
       onClose?.();
     },
     onError: (error) => {
@@ -88,6 +93,7 @@ function VariantFormModal({ open, onClose, variant, items }) {
 
   function validate() {
     const next = {};
+    const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
     if (!form.item_id) next.item_id = 'Item is required.';
     if (!form.variant_name?.trim()) next.variant_name = 'Variant name is required.';
     if (!form.sku?.trim()) next.sku = 'SKU is required.';
@@ -96,6 +102,15 @@ function VariantFormModal({ open, onClose, variant, items }) {
     }
     if (form.selling_price !== '' && Number(form.selling_price) < 0) {
       next.selling_price = 'Selling price cannot be negative.';
+    }
+    if (!isEdit && form.initial_quantity !== '' && Number(form.initial_quantity) < 0) {
+      next.initial_quantity = 'Quantity cannot be negative.';
+    }
+    if (!isEdit && Number(form.initial_quantity || 0) > 0 && !form.warehouse_id) {
+      next.warehouse_id = 'Warehouse is required when quantity is greater than zero.';
+    }
+    if (!isEdit && selectedItem && Number(form.initial_quantity || 0) > Number(selectedItem.item_quantity_on_hand || 0)) {
+      next.initial_quantity = `Only ${formatStockQuantity(selectedItem.item_quantity_on_hand || 0, selectedItem)} is available on the item.`;
     }
     if (form.attributes && form.attributes.trim()) {
       try {
@@ -123,6 +138,12 @@ function VariantFormModal({ open, onClose, variant, items }) {
       }
     }
     mutation.mutate({
+      ...(isEdit ? {} : Number(form.initial_quantity || 0) > 0
+        ? {
+            warehouse_id: Number(form.warehouse_id),
+            initial_quantity: Number(form.initial_quantity)
+          }
+        : {}),
       item_id: Number(form.item_id),
       variant_name: form.variant_name.trim(),
       sku: form.sku.trim(),
@@ -215,6 +236,38 @@ function VariantFormModal({ open, onClose, variant, items }) {
             ))}
           </Select>
         </div>
+        {!isEdit && (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Source warehouse"
+              value={form.warehouse_id || ''}
+              onChange={(event) => handleChange('warehouse_id', event.target.value)}
+              error={errors.warehouse_id}
+              description="Quantity is subtracted from the selected item's pool."
+            >
+              <option value="">Select warehouse</option>
+              {warehouses.map((warehouse) => (
+                <option key={warehouse.id} value={warehouse.id}>
+                  {warehouse.name} ({warehouse.code})
+                </option>
+              ))}
+            </Select>
+            <Input
+              label="Variant quantity"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={form.initial_quantity}
+              onChange={(event) => handleChange('initial_quantity', event.target.value)}
+              error={errors.initial_quantity}
+              description={
+                form.item_id
+                  ? `Item available: ${formatStockQuantity(items.find((item) => String(item.id) === String(form.item_id))?.item_quantity_on_hand || 0, items.find((item) => String(item.id) === String(form.item_id)) || {})}`
+                  : 'Select an item first.'
+              }
+            />
+          </div>
+        )}
         <Textarea
           label="Attributes data"
           value={form.attributes}
@@ -264,7 +317,9 @@ export default function VariantsTab() {
   });
 
   const itemsQuery = useItemsOptions(true, { exclude_item_type: 'packaging' });
+  const warehousesQuery = useWarehousesOptions(true);
   const items = itemsQuery.data?.data?.items || [];
+  const warehouses = warehousesQuery.data?.data?.warehouses || [];
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.inventory.variants.remove(id),
@@ -318,6 +373,16 @@ export default function VariantsTab() {
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
             {formatNumber(row.cost, { maximumFractionDigits: 4 })}
+          </span>
+        )
+      },
+      {
+        id: 'quantity_on_hand',
+        header: 'Qty',
+        align: 'right',
+        cell: (row) => (
+          <span className="font-mono text-sm text-ink-100">
+            {formatStockQuantity(row.quantity_on_hand || 0, row)}
           </span>
         )
       },
@@ -465,12 +530,13 @@ export default function VariantsTab() {
         }
       />
 
-      <VariantFormModal open={creating} onClose={() => setCreating(false)} items={items} />
+      <VariantFormModal open={creating} onClose={() => setCreating(false)} items={items} warehouses={warehouses} />
       <VariantFormModal
         open={Boolean(editing)}
         onClose={() => setEditing(null)}
         variant={editing || undefined}
         items={items}
+        warehouses={warehouses}
       />
       <ConfirmDialog
         open={Boolean(deleteTarget)}

@@ -96,7 +96,7 @@ const createAssignmentSchema = z.object({
     packaging_group_id: z.coerce.number().int().positive(),
     warehouse_id: z.coerce.number().int().positive(),
     charcoal_variant_id: z.coerce.number().int().positive(),
-    output_item_variant_id: z.coerce.number().int().positive(),
+    output_item_variant_id: z.coerce.number().int().positive().optional().nullable(),
     charcoal_quantity_kg: positiveNumber,
     production_batch_id: z.coerce.number().int().positive().optional().nullable(),
     notes: optionalText,

@@ -5,6 +5,7 @@ const mockConnection = {
 jest.mock('../src/modules/inventory/inventory.model', () => ({
   createStockBalance: jest.fn(),
   createStockMovement: jest.fn(),
+  findVariantById: jest.fn(),
   getStockBalanceForUpdate: jest.fn(),
   updateStockBalance: jest.fn()
 }));
@@ -24,6 +25,12 @@ const stockService = require('../src/modules/inventory/stock.service');
 describe('stock service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    inventoryModel.findVariantById.mockResolvedValue({
+      id: 2,
+      base_unit_symbol: 'kg',
+      base_unit_type: 'weight',
+      base_unit_conversion_to_base: '1.000000'
+    });
   });
 
   test('adjustStock increases balance, updates average cost, and writes movement/audit records', async () => {
@@ -113,6 +120,151 @@ describe('stock service', () => {
     expect(inventoryModel.updateStockBalance).not.toHaveBeenCalled();
     expect(inventoryModel.createStockMovement).not.toHaveBeenCalled();
     expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  test('adjustStock rejects fractional quantities for piece-based items', async () => {
+    inventoryModel.findVariantById.mockResolvedValue({
+      id: 2,
+      base_unit_symbol: 'pc',
+      base_unit_type: 'quantity',
+      base_unit_conversion_to_base: '1.000000'
+    });
+
+    await expect(
+      stockService.adjustStock({
+        warehouseId: 1,
+        itemVariantId: 2,
+        quantityChange: 1.5,
+        reason: 'Opening count',
+        createdBy: 7
+      })
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      errors: expect.arrayContaining([
+        expect.objectContaining({
+          field: 'quantity',
+          message: 'Piece-based stock quantities must be whole numbers'
+        })
+      ])
+    });
+
+    expect(inventoryModel.updateStockBalance).not.toHaveBeenCalled();
+    expect(inventoryModel.createStockMovement).not.toHaveBeenCalled();
+  });
+
+  test('adjustStock allows fractional quantities for weight-based items', async () => {
+    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
+      id: 10,
+      warehouse_id: 1,
+      item_variant_id: 2,
+      quantity_on_hand: '10.0000',
+      quantity_reserved: '0.0000',
+      average_cost: '2.0000'
+    });
+    inventoryModel.createStockMovement.mockResolvedValue(99);
+
+    await stockService.adjustStock({
+      warehouseId: 1,
+      itemVariantId: 2,
+      quantityChange: 1.5,
+      unitCost: 2,
+      reason: 'Weighed intake',
+      createdBy: 7
+    });
+
+    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
+      mockConnection,
+      10,
+      expect.objectContaining({
+        quantity_on_hand: '11.5000'
+      })
+    );
+  });
+
+  test('adjustStock stores ton-based item quantities as kg', async () => {
+    inventoryModel.findVariantById.mockResolvedValue({
+      id: 2,
+      base_unit_symbol: 'ton',
+      base_unit_type: 'weight',
+      base_unit_conversion_to_base: '1000.000000'
+    });
+    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
+      id: 10,
+      warehouse_id: 1,
+      item_variant_id: 2,
+      quantity_on_hand: '0.0000',
+      quantity_reserved: '0.0000',
+      average_cost: '0.0000'
+    });
+    inventoryModel.createStockMovement.mockResolvedValue(99);
+
+    await stockService.adjustStock({
+      warehouseId: 1,
+      itemVariantId: 2,
+      quantityChange: 1,
+      unitCost: 500,
+      reason: 'One ton intake',
+      createdBy: 7
+    });
+
+    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
+      mockConnection,
+      10,
+      {
+        quantity_on_hand: '1000.0000',
+        average_cost: '0.5000'
+      }
+    );
+    expect(inventoryModel.createStockMovement).toHaveBeenCalledWith(
+      mockConnection,
+      expect.objectContaining({
+        quantity_change: '1000.0000',
+        unit_cost: '0.5000'
+      })
+    );
+  });
+
+  test('adjustStock stores gram-based item quantities as kg', async () => {
+    inventoryModel.findVariantById.mockResolvedValue({
+      id: 2,
+      base_unit_symbol: 'g',
+      base_unit_type: 'weight',
+      base_unit_conversion_to_base: '0.001000'
+    });
+    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
+      id: 10,
+      warehouse_id: 1,
+      item_variant_id: 2,
+      quantity_on_hand: '0.0000',
+      quantity_reserved: '0.0000',
+      average_cost: '0.0000'
+    });
+    inventoryModel.createStockMovement.mockResolvedValue(99);
+
+    await stockService.adjustStock({
+      warehouseId: 1,
+      itemVariantId: 2,
+      quantityChange: 1000,
+      unitCost: 0.002,
+      reason: 'One kilogram in grams',
+      createdBy: 7
+    });
+
+    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
+      mockConnection,
+      10,
+      {
+        quantity_on_hand: '1.0000',
+        average_cost: '2.0000'
+      }
+    );
+    expect(inventoryModel.createStockMovement).toHaveBeenCalledWith(
+      mockConnection,
+      expect.objectContaining({
+        quantity_change: '1.0000',
+        unit_cost: '2.0000'
+      })
+    );
   });
 
   test('reserveStock moves available stock into reserved quantity', async () => {

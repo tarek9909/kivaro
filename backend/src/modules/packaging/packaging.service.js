@@ -456,6 +456,18 @@ function calculateRequirements(group, charcoalQuantityKg, balances = []) {
   };
 }
 
+function assertNoRequirementShortages(calculation) {
+  const hasShortage = (calculation.requirements || []).some((requirement) => {
+    const quantity = decimal(requirement.required_quantity || 0);
+    if (quantity.lte(0)) return false;
+    if (!requirement.parent_component_id && !Number(requirement.capacity_kg || 0)) return false;
+    return decimal(requirement.shortage_quantity || 0).gt(0);
+  });
+  if (hasShortage) {
+    throw ApiError.conflict('Packaging assignment cannot be saved while required materials are short');
+  }
+}
+
 async function calculateGroup(groupId, data, actor = {}, warehouseId = null) {
   const group = await getGroup(groupId, actor);
   if (warehouseId) {
@@ -474,12 +486,6 @@ async function createAssignment(data, userId, actor = {}) {
   const group = await getGroup(scoped.packaging_group_id, actor);
   await validateWarehouse(scoped.warehouse_id, 'warehouse_id', scoped.store_id);
   await validateVariant(scoped.charcoal_variant_id, 'charcoal_variant_id', scoped.store_id);
-  const outputVariant = await validateVariant(scoped.output_item_variant_id, 'output_item_variant_id', scoped.store_id, { itemType: 'finished_product' });
-  if (outputVariant.base_unit_symbol !== 'pc') {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'output_item_variant_id', message: 'Assignment output variant must be stocked in pc' }
-    ]);
-  }
   if (scoped.production_batch_id) {
     const batch = await productionModel.findProductionBatchById(scoped.production_batch_id);
     assertSameStore(batch, scoped.store_id, 'production_batch_id', 'Production batch does not belong to this store');
@@ -492,13 +498,14 @@ async function createAssignment(data, userId, actor = {}) {
   }
 
   const calculation = await calculateGroup(group.id, scoped, actor, scoped.warehouse_id);
+  assertNoRequirementShortages(calculation);
 
-  return model.createAssignment({
+  const assignment = await model.createAssignment({
     store_id: scoped.store_id,
     packaging_group_id: scoped.packaging_group_id,
     warehouse_id: scoped.warehouse_id,
     charcoal_variant_id: scoped.charcoal_variant_id,
-    output_item_variant_id: scoped.output_item_variant_id,
+    output_item_variant_id: scoped.output_item_variant_id || null,
     charcoal_quantity_kg: toMoney(scoped.charcoal_quantity_kg),
     primary_container_count: calculation.primary_container_count,
     total_packaging_cost: calculation.total_packaging_cost,
@@ -509,6 +516,8 @@ async function createAssignment(data, userId, actor = {}) {
     notes: scoped.notes,
     created_by: userId
   });
+
+  return consumeAssignment(assignment.id, { notes: scoped.notes }, userId, actor);
 }
 
 async function getAssignment(id, actor = {}) {
@@ -536,10 +545,6 @@ async function consumeAssignment(id, data = {}, userId, actor = {}) {
     throw ApiError.conflict('Packaging assignment has no calculated requirements');
   }
 
-  if (!assignment.output_item_variant_id) {
-    throw ApiError.conflict('Packaging assignment must have an output variant before it can be consumed');
-  }
-
   const movements = [];
   await withTransaction(async (connection) => {
     const rawMovement = await stockService.decreaseStock(connection, {
@@ -554,7 +559,6 @@ async function consumeAssignment(id, data = {}, userId, actor = {}) {
       notes: data.notes || assignment.notes || 'Packaging assignment raw charcoal consumption',
       createdBy: userId
     });
-    const rawCost = decimal(assignment.charcoal_quantity_kg).mul(rawMovement.average_cost || 0);
     movements.push({
       role: 'raw_charcoal',
       item_variant_id: assignment.charcoal_variant_id,
@@ -595,28 +599,6 @@ async function consumeAssignment(id, data = {}, userId, actor = {}) {
     if (producedQuantity.lte(0)) {
       throw ApiError.conflict('Primary container count must be greater than zero');
     }
-    const outputUnitCost = decimal(assignment.total_packaging_cost || 0).plus(rawCost).div(producedQuantity);
-    const outputMovement = await stockService.increaseStock(connection, {
-      storeId: assignment.store_id,
-      warehouseId: assignment.warehouse_id,
-      itemVariantId: assignment.output_item_variant_id,
-      quantity: producedQuantity,
-      unitCost: outputUnitCost,
-      movementType: 'production_output',
-      referenceType: 'packaging_assignment_output',
-      referenceId: assignment.id,
-      notes: data.notes || assignment.notes || 'Packaging assignment finished batch output',
-      createdBy: userId
-    });
-    movements.push({
-      role: 'finished_output',
-      item_variant_id: assignment.output_item_variant_id,
-      produced_quantity: toMoney(producedQuantity),
-      unit_cost: toMoney(outputUnitCost),
-      stock_movement_id: outputMovement.stock_movement_id,
-      quantity_after: outputMovement.quantity_after
-    });
-
     await model.updateAssignment(connection, id, {
       status: 'consumed',
       produced_quantity: toMoney(producedQuantity),

@@ -109,13 +109,6 @@ export const INVENTORY_TABS = [
     anyOfPermissions: [INVENTORY_PERMISSIONS.view]
   },
   {
-    id: 'packaging',
-    featureKey: 'inventory.packaging',
-    label: 'Packaging',
-    to: '/inventory/packaging',
-    anyOfPermissions: [INVENTORY_PERMISSIONS.view]
-  },
-  {
     id: 'variants',
     featureKey: 'inventory.variants',
     label: 'Product variants',

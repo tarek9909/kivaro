@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
 import { ITEM_TYPES } from './inventory.config.js';
+import { formatStockQuantity } from './stockUnits.js';
 import {
   useItemsOptions,
   useVariantsOptions,
@@ -97,7 +98,7 @@ export default function StockBalancesTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatNumber(row.quantity_on_hand, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.quantity_on_hand, row)}
           </span>
         )
       },
@@ -107,7 +108,7 @@ export default function StockBalancesTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-200">
-            {formatNumber(row.quantity_reserved ?? 0, { maximumFractionDigits: 4 })}
+            {formatStockQuantity(row.quantity_reserved ?? 0, row)}
           </span>
         )
       },
@@ -120,7 +121,7 @@ export default function StockBalancesTab() {
             Number(row.quantity_on_hand || 0) - Number(row.quantity_reserved || 0);
           return (
             <span className="font-mono text-sm text-ink-100">
-              {formatNumber(available, { maximumFractionDigits: 4 })}
+              {formatStockQuantity(available, row)}
             </span>
           );
         }

@@ -151,24 +151,22 @@ export function AddDispatchItemModal({
             label="Assignment batch"
             value={form.packaging_assignment_id}
             onChange={(event) => {
-              const assignment = assignments.find((entry) => String(entry.id) === String(event.target.value));
               setForm((prev) => ({
                 ...prev,
-                packaging_assignment_id: event.target.value,
-                item_variant_id: assignment?.output_item_variant_id ? String(assignment.output_item_variant_id) : prev.item_variant_id
+                packaging_assignment_id: event.target.value
               }));
               setErrors((prev) => ({ ...prev, packaging_assignment_id: undefined, item_variant_id: undefined, quantity: undefined }));
             }}
             description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} primary containers available` : undefined}
           >
-            <option value="">No assignment batch</option>
+            <option value="">No packaging batch</option>
             {assignments.map((assignment) => (
               <option
                 key={assignment.id}
                 value={assignment.id}
                 disabled={Number(assignment.available_quantity || 0) <= 0}
               >
-                Assignment #{assignment.id} - {assignment.output_item_name || 'Output'} {assignment.output_variant_name || ''} ({formatNumber(assignment.available_quantity)} available)
+                Batch #{assignment.id} - {assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available)
               </option>
             ))}
           </Select>
@@ -178,11 +176,10 @@ export function AddDispatchItemModal({
             label="Variant"
             value={form.item_variant_id}
             onChange={(event) =>
-              setForm((prev) => ({ ...prev, item_variant_id: event.target.value, packaging_assignment_id: '' }))
+              setForm((prev) => ({ ...prev, item_variant_id: event.target.value }))
             }
             error={errors.item_variant_id}
             required
-            disabled={Boolean(form.packaging_assignment_id)}
           >
             <option value="">Select variant</option>
             {variants.map((variant) => (
@@ -198,7 +195,7 @@ export function AddDispatchItemModal({
             min="1"
             value={form.item_variant_id}
             onChange={(event) =>
-              setForm((prev) => ({ ...prev, item_variant_id: event.target.value, packaging_assignment_id: '' }))
+              setForm((prev) => ({ ...prev, item_variant_id: event.target.value }))
             }
             error={errors.item_variant_id}
             required
@@ -207,7 +204,7 @@ export function AddDispatchItemModal({
         )}
         <div className="grid gap-4 sm:grid-cols-3">
           <Input
-            label="Quantity (base unit)"
+            label={selectedAssignment ? 'Primary containers' : 'Quantity (base unit)'}
             type="number"
             min="0"
             step="0.0001"

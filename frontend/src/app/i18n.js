@@ -33,6 +33,7 @@ const dictionaries = {
     'nav.platform': 'Platform',
     'nav.dashboard': 'Dashboard',
     'nav.inventory': 'Inventory',
+    'nav.packaging': 'Packaging',
     'nav.production': 'Production',
     'nav.purchases': 'Purchases',
     'nav.dispatch': 'Dispatch',
