@@ -1,0 +1,606 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root, .theme-black {
+    color-scheme: dark;
+    --color-ink-50: 245 247 251;
+    --color-ink-100: 229 234 243;
+    --color-ink-200: 197 206 224;
+    --color-ink-300: 154 166 194;
+    --color-ink-400: 107 120 160;
+    --color-ink-500: 71 81 116;
+    --color-ink-600: 47 55 89;
+    --color-ink-700: 31 37 71;
+    --color-ink-800: 20 25 56;
+    --color-ink-900: 8 8 8;
+    --color-ink-950: 0 0 0;
+
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-bg-strong: rgba(255, 255, 255, 0.07);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-divider: rgba(255, 255, 255, 0.15);
+    --shadow-glass: 0 10px 30px -10px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255,255,255,0.04) inset;
+    --shadow-glass-lg: 0 30px 60px -20px rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255,255,255,0.06) inset;
+  }
+
+  .theme-light {
+    color-scheme: light;
+    --color-ink-50: 15 23 42;
+    --color-ink-100: 30 41 59;
+    --color-ink-200: 51 65 85;
+    --color-ink-300: 71 85 105;
+    --color-ink-400: 100 116 139;
+    --color-ink-500: 148 163 184;
+    --color-ink-600: 203 213 225;
+    --color-ink-700: 226 232 240;
+    --color-ink-800: 241 245 249;
+    --color-ink-900: 248 250 252;
+    --color-ink-950: 255 255 255;
+
+    --glass-bg: rgba(255, 255, 255, 0.75);
+    --glass-bg-strong: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(15, 23, 42, 0.08);
+    --glass-divider: rgba(15, 23, 42, 0.08);
+    --shadow-glass: 0 10px 30px -10px rgba(15, 23, 42, 0.08);
+    --shadow-glass-lg: 0 30px 60px -20px rgba(15, 23, 42, 0.12);
+  }
+
+  /*
+   * Hard width discipline at the document root.
+   */
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    margin: 0;
+  }
+
+  body {
+    @apply font-sans text-ink-100 antialiased;
+    background-attachment: fixed;
+    min-height: 100vh;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  :root, html.theme-black, .theme-black body {
+    background:
+      linear-gradient(135deg, rgba(74, 84, 240, 0.08) 0%, transparent 40%),
+      linear-gradient(225deg, rgba(34, 211, 238, 0.06) 0%, transparent 40%),
+      linear-gradient(180deg, #020205 0%, #050508 60%, #000000 100%);
+  }
+
+  html.theme-light, .theme-light body {
+    background:
+      linear-gradient(135deg, rgba(74, 84, 240, 0.05) 0%, transparent 40%),
+      linear-gradient(225deg, rgba(34, 211, 238, 0.04) 0%, transparent 40%),
+      #f4f6fa;
+  }
+
+  ::selection {
+    background: rgba(74, 84, 240, 0.4);
+    color: #fff;
+  }
+
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-400/70 ring-offset-2 ring-offset-ink-900;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background-color: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(24px);
+    box-shadow: var(--shadow-glass);
+    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    @apply max-w-full rounded-2xl;
+  }
+
+  .glass-panel-strong {
+    background-color: var(--glass-bg-strong);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(40px);
+    box-shadow: var(--shadow-glass-lg);
+    transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+    @apply max-w-full rounded-2xl;
+  }
+
+  .glass-divider {
+    height: 1px;
+    width: 100%;
+    background: linear-gradient(90deg, transparent, var(--glass-divider), transparent);
+    transition: background 0.3s ease;
+  }
+
+  /* Light theme class-based overrides to translate white-transparency utilities to dark-transparency */
+  .theme-light .border-white\/10 {
+    border-color: rgba(15, 23, 42, 0.08) !important;
+  }
+  .theme-light .border-white\/15 {
+    border-color: rgba(15, 23, 42, 0.12) !important;
+  }
+  .theme-light .border-white\/5 {
+    border-color: rgba(15, 23, 42, 0.05) !important;
+  }
+  .theme-light .bg-white\/5 {
+    background-color: rgba(15, 23, 42, 0.03) !important;
+  }
+  .theme-light .bg-white\/10 {
+    background-color: rgba(15, 23, 42, 0.06) !important;
+  }
+  .theme-light .bg-white\/\[0\.03\] {
+    background-color: rgba(15, 23, 42, 0.015) !important;
+  }
+  .theme-light .bg-white\/\[0\.04\] {
+    background-color: rgba(15, 23, 42, 0.02) !important;
+  }
+  .theme-light .bg-white\/\[0\.07\] {
+    background-color: rgba(15, 23, 42, 0.045) !important;
+  }
+  .theme-light .bg-white\/\[0\.06\] {
+    background-color: rgba(15, 23, 42, 0.035) !important;
+  }
+  .theme-light .hover\:bg-white\/10:hover {
+    background-color: rgba(15, 23, 42, 0.06) !important;
+  }
+  .theme-light .hover\:bg-white\/5:hover {
+    background-color: rgba(15, 23, 42, 0.03) !important;
+  }
+  .theme-light .hover\:bg-white\/\[0\.03\]:hover {
+    background-color: rgba(15, 23, 42, 0.02) !important;
+  }
+  .theme-light .focus-within\:bg-white\/\[0\.07\]:focus-within {
+    background-color: rgba(15, 23, 42, 0.045) !important;
+  }
+  .theme-light .scrollbar-glass {
+    scrollbar-color: rgba(15, 23, 42, 0.15) transparent !important;
+  }
+  .theme-light .scrollbar-glass::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.12) !important;
+  }
+  .theme-light .scrollbar-glass::-webkit-scrollbar-thumb:hover {
+    background: rgba(15, 23, 42, 0.2) !important;
+  }
+  .theme-light .shadow-glass {
+    box-shadow: var(--shadow-glass) !important;
+  }
+  .theme-light .shadow-glass-lg {
+    box-shadow: var(--shadow-glass-lg) !important;
+  }
+
+  /* Specific premium light mode theme overrides */
+  .theme-light .bg-white\/12 {
+    background-color: rgba(74, 84, 240, 0.08) !important;
+    color: rgb(74, 84, 240) !important;
+    border-color: rgba(74, 84, 240, 0.15) !important;
+  }
+  .theme-light .text-brand-100 {
+    color: #4a54f0 !important;
+  }
+  .theme-light .text-brand-200 {
+    color: #3b3fd0 !important;
+  }
+  .theme-light .text-brand-300 {
+    color: #3034a8 !important;
+  }
+  .theme-light .text-brand-200\/80 {
+    color: rgba(74, 84, 240, 0.85) !important;
+  }
+  .theme-light .hover\:text-brand-100:hover {
+    color: #3034a8 !important;
+  }
+  .theme-light .hover\:text-brand-200:hover {
+    color: #3034a8 !important;
+  }
+  .theme-light .hover\:text-white:hover {
+    color: rgb(15 23 42) !important;
+  }
+  .theme-light .group:hover .group-hover\:text-brand-300 {
+    color: #3034a8 !important;
+  }
+  .theme-light select {
+    color: rgb(15 23 42) !important;
+  }
+  .theme-light select option {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .theme-light input::placeholder {
+    color: rgba(15, 23, 42, 0.45) !important;
+  }
+  .theme-light .bg-ink-950\/25,
+  .theme-light .bg-ink-950\/20 {
+    background-color: rgba(255, 255, 255, 0.75) !important;
+  }
+  .theme-light .text-ink-50 {
+    color: rgb(15 23 42) !important;
+  }
+  .theme-light .text-ink-100 {
+    color: rgb(30 41 59) !important;
+  }
+  .theme-light .text-ink-200 {
+    color: rgb(51 65 85) !important;
+  }
+  .theme-light .text-ink-300 {
+    color: rgb(71 85 105) !important;
+  }
+  .theme-light .text-ink-400 {
+    color: rgb(100 116 139) !important;
+  }
+  .theme-light .text-ink-500 {
+    color: rgb(148 163 184) !important;
+  }
+  .theme-light .recharts-cartesian-grid-horizontal line,
+  .theme-light .recharts-cartesian-grid-vertical line {
+    stroke: rgba(15, 23, 42, 0.08) !important;
+  }
+  .theme-light .recharts-text {
+    fill: rgba(15, 23, 42, 0.6) !important;
+  }
+
+  /* Badge tone overrides for Light Mode */
+  .theme-light .text-emerald-200 {
+    color: #047857 !important;
+  }
+  .theme-light .bg-emerald-500\/15 {
+    background-color: rgba(16, 185, 129, 0.08) !important;
+  }
+  .theme-light .border-emerald-400\/30 {
+    border-color: rgba(16, 185, 129, 0.25) !important;
+  }
+  .theme-light .text-cyan-200 {
+    color: #0891b2 !important;
+  }
+  .theme-light .bg-cyan-500\/15 {
+    background-color: rgba(6, 182, 212, 0.08) !important;
+  }
+  .theme-light .border-cyan-400\/30 {
+    border-color: rgba(6, 182, 212, 0.25) !important;
+  }
+  .theme-light .text-amber-200 {
+    color: #b45309 !important;
+  }
+  .theme-light .bg-amber-500\/15 {
+    background-color: rgba(245, 158, 11, 0.08) !important;
+  }
+  .theme-light .border-amber-400\/30 {
+    border-color: rgba(245, 158, 11, 0.25) !important;
+  }
+  .theme-light .text-rose-200 {
+    color: #be185d !important;
+  }
+  .theme-light .bg-rose-500\/15 {
+    background-color: rgba(244, 63, 94, 0.08) !important;
+  }
+  .theme-light .border-rose-400\/30 {
+    border-color: rgba(244, 63, 94, 0.25) !important;
+  }
+  .theme-light .text-brand-200 {
+    color: #3b3fd0 !important;
+  }
+  .theme-light .bg-brand-500\/15 {
+    background-color: rgba(74, 84, 240, 0.08) !important;
+  }
+  .theme-light .border-brand-400\/30 {
+    border-color: rgba(74, 84, 240, 0.25) !important;
+  }
+  .theme-light .text-ink-200 {
+    color: #475569 !important;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  .scrollbar-glass {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  }
+
+  .scrollbar-glass::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-glass::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+  }
+
+  .scrollbar-glass::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .shimmer-bg {
+    background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 0%,
+      rgba(255, 255, 255, 0.12) 50%,
+      rgba(255, 255, 255, 0.04) 100%
+    );
+    background-size: 200% 100%;
+  }
+
+  /* ---------------------------------------------------------------------
+   * Login layout - foolproof mobile constraint.
+   *
+   * Strategy:
+   *   1. .login-shell is a normal block (NOT flex) on mobile, with
+   *      vertical padding only. Horizontal centering is handled by
+   *      .login-container's auto margins, not by flex justification.
+   *   2. .login-container has an EXPLICIT max-width pinned to the
+   *      viewport: max-width: calc(100vw - 32px). Centered with
+   *      margin: 0 auto. This guarantees 16px gutters at any width.
+   *   3. .login-card and .login-marketing-card are PLAIN WRAPPER divs
+   *      that own the width constraints. The visual GlassPanel surface
+   *      sits inside as a child so the panel can never extend past the
+   *      wrapper, regardless of which class order React renders.
+   *   4. Inputs and form children get min-width: 0 so intrinsic content
+   *      cannot push the card wider than its container.
+   *   5. Desktop split is a separate flex layout applied at >= 1024px.
+   * ------------------------------------------------------------------ */
+  .login-shell {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 100vh;
+  }
+
+  .login-container {
+    box-sizing: border-box;
+    /* The hard cap: never wider than viewport minus 16px on each side. */
+    width: 100%;
+    max-width: calc(100vw - 32px);
+    min-width: 0;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .login-stack {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .login-marketing {
+    /* Hidden on mobile/tablet so the card is the only visible element. */
+    display: none;
+    min-width: 0;
+  }
+
+  .login-marketing-card,
+  .login-card-wrap {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .login-card {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    /* Final safety net so any long string never widens the card. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  /* The visual GlassPanel surface inside the wrapper. Width constraints
+     are enforced here too because the GlassPanel root is what carries
+     the border, padding, and shadow that would otherwise paint outside
+     the wrapper. */
+  .login-card .login-card-panel,
+  .login-marketing-card .glass-panel,
+  .login-marketing-card .glass-panel-strong {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  /* Inputs inside the login card must not assume intrinsic min-width. */
+  .login-card input,
+  .login-card form,
+  .login-card label,
+  .login-card .glass-panel,
+  .login-card .glass-panel-strong,
+  .login-card .login-card-panel {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Tablet: cap the card width so it doesn't stretch edge-to-edge. */
+  @media (min-width: 480px) {
+    .login-container {
+      max-width: min(28rem, calc(100vw - 32px));
+    }
+  }
+
+  /* Premium Glassmorphic Login Card overrides */
+  .login-card-panel {
+    background: rgba(255, 255, 255, 0.02) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 
+      0 20px 50px -15px rgba(0, 0, 0, 0.6), 
+      0 1px 0 rgba(255, 255, 255, 0.12) inset,
+      0 0 80px -20px rgba(74, 84, 240, 0.2) !important;
+    backdrop-filter: blur(40px) !important;
+  }
+
+  html.theme-light .login-card-panel,
+  .theme-light .login-card-panel {
+    background: rgba(255, 255, 255, 0.75) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    box-shadow: 
+      0 20px 50px -15px rgba(15, 23, 42, 0.05), 
+      0 1px 0 rgba(255, 255, 255, 0.6) inset,
+      0 0 80px -20px rgba(74, 84, 240, 0.1) !important;
+  }
+
+  /* Desktop: two-column flex split. */
+  @media (min-width: 1024px) {
+    .login-shell {
+      padding-top: 2rem;
+      padding-bottom: 2rem;
+    }
+
+    .login-container {
+      max-width: min(64rem, calc(100vw - 48px));
+    }
+
+    .login-stack {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      gap: 1.5rem;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .login-marketing {
+      display: block;
+      flex: 1.1 1 0;
+      min-width: 0;
+    }
+
+    .login-card-wrap {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+  }
+
+  /* ---------------------------------------------------------------------
+   * Premium Bordered Icon Action Buttons
+   * ------------------------------------------------------------------ */
+  .datatable-actions-cell button,
+  .datatable-actions-cell a {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 2.25rem !important; /* 36px */
+    height: 2.25rem !important; /* 36px */
+    padding: 0 !important;
+    border-radius: 0.75rem !important; /* Rounded square bordered buttons */
+    background-color: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.2) !important;
+    color: rgb(192, 132, 252) !important; /* purple-400 */
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+    cursor: pointer !important;
+    position: relative !important;
+  }
+
+  /* Light Theme support override */
+  html.theme-light .datatable-actions-cell button,
+  html.theme-light .datatable-actions-cell a,
+  .theme-light .datatable-actions-cell button,
+  .theme-light .datatable-actions-cell a {
+    background-color: rgba(15, 23, 42, 0.03) !important;
+    border: 1px solid rgba(15, 23, 42, 0.08) !important;
+    color: rgb(147, 51, 234) !important; /* purple-600 */
+  }
+
+  /* Hover Animation & Bordering */
+  .datatable-actions-cell button:hover,
+  .datatable-actions-cell a:hover {
+    transform: scale(1.08) !important;
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgb(168, 85, 247) !important; /* brand purple-500 */
+    color: rgb(216, 180, 254) !important; /* purple-300 */
+    box-shadow: 0 0 12px 1px rgba(168, 85, 247, 0.25) !important;
+  }
+
+  html.theme-light .datatable-actions-cell button:hover,
+  html.theme-light .datatable-actions-cell a:hover,
+  .theme-light .datatable-actions-cell button:hover,
+  .theme-light .datatable-actions-cell a:hover {
+    background-color: rgba(15, 23, 42, 0.06) !important;
+    border-color: rgb(147, 51, 234) !important;
+    color: rgb(126, 34, 206) !important;
+    box-shadow: 0 0 12px 1px rgba(147, 51, 234, 0.15) !important;
+  }
+
+  .datatable-actions-cell button:disabled,
+  .datatable-actions-cell a:disabled {
+    opacity: 0.3 !important;
+    transform: none !important;
+    background-color: rgba(255, 255, 255, 0.01) !important;
+    border-color: rgba(255, 255, 255, 0.03) !important;
+    color: rgba(255, 255, 255, 0.2) !important;
+    cursor: not-allowed !important;
+    box-shadow: none !important;
+  }
+
+  /* Keep icons centered and aligned */
+  .datatable-actions-cell button svg,
+  .datatable-actions-cell a svg {
+    width: 15px !important;
+    height: 15px !important;
+    margin: 0 !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Specific styling overrides for common danger/rose tones inside tables */
+  .datatable-actions-cell button.text-rose-500,
+  .datatable-actions-cell button.bg-rose-500,
+  .datatable-actions-cell button[variant="danger"] {
+    color: rgb(244, 63, 94) !important; /* rose-500 */
+    border-color: rgba(244, 63, 94, 0.2) !important;
+  }
+
+  .datatable-actions-cell button.text-rose-500:hover,
+  .datatable-actions-cell button.bg-rose-500:hover,
+  .datatable-actions-cell button[variant="danger"]:hover {
+    color: rgb(251, 113, 133) !important; /* rose-400 */
+    border-color: rgb(244, 63, 94) !important;
+    box-shadow: 0 0 12px 1px rgba(244, 63, 94, 0.25) !important;
+  }
+
+  /* Stacking context & overlay fix: Ensure expanded filter panels sit absolute and overlay the table instead of extending the view */
+  .space-y-4 {
+    position: relative;
+  }
+
+  .space-y-4 > .transition-all.overflow-visible {
+    position: absolute !important;
+    z-index: 40 !important;
+    left: 0 !important;
+    right: 0 !important;
+    margin-top: 0.5rem !important;
+    background-color: var(--glass-bg-strong) !important;
+    backdrop-filter: blur(16px) !important;
+    box-shadow: var(--shadow-glass-lg) !important;
+  }
+
+  /* Form/Modal collapsible elements keep relative positioning so they extend elements naturally */
+  .transition-all.overflow-visible {
+    position: relative;
+    z-index: 30;
+  }
+
+  /* Ensure select dropdown popovers have a fully opaque background so no content from underneath is visible */
+  .glass-panel-strong.absolute {
+    background-color: #0b0c16 !important; /* solid deep premium dark */
+  }
+
+  html.theme-light .glass-panel-strong.absolute,
+  .theme-light .glass-panel-strong.absolute {
+    background-color: #ffffff !important; /* solid white light theme */
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "kivaro-charcoal-erp-api",
+  "version": "0.1.0",
+  "description": "Phase 1 Express API foundation for the Charcoal ERP backend.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "create-owner": "node scripts/create-owner.js",
+    "db:check": "node scripts/db/check.js",
+    "db:migrate": "node scripts/db/migrate.js",
+    "db:migrate:check": "node scripts/db/migrate.js --check",
+    "db:reset": "node scripts/db/reset.js",
+    "dev": "nodemon src/server.js",
+    "seed:owner": "node scripts/db/seed-owner.js",
+    "seed:superadmin": "node scripts/db/seed-superadmin.js",
+    "start": "node src/server.js",
+    "test": "jest --runInBand --testPathIgnorePatterns=tests/integration",
+    "test:integration": "jest --runInBand --testMatch \"**/tests/integration/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "decimal.js": "^10.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "mysql2": "^3.11.0",
+    "pdfkit": "^0.18.0",
+    "swagger-ui-express": "^5.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.0.0"
+  }
+}
