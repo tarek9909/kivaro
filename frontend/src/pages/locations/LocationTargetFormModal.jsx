@@ -31,6 +31,46 @@ function emptyForm(target) {
   };
 }
 
+function addMonthsClamped(date, months) {
+  const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate()));
+  if (next.getUTCDate() !== date.getUTCDate()) {
+    next.setUTCDate(0);
+  }
+  return next;
+}
+
+function formatDateInput(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+export function calculateTargetPeriodEnd(targetPeriod, periodStart) {
+  if (!periodStart) return '';
+  const start = new Date(`${periodStart}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime())) return '';
+
+  const end = new Date(start);
+  if (targetPeriod === 'weekly') {
+    end.setUTCDate(end.getUTCDate() + 6);
+    return formatDateInput(end);
+  }
+  if (targetPeriod === 'monthly') {
+    const next = addMonthsClamped(start, 1);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDateInput(next);
+  }
+  if (targetPeriod === 'quarterly') {
+    const next = addMonthsClamped(start, 3);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDateInput(next);
+  }
+  if (targetPeriod === 'yearly') {
+    const next = addMonthsClamped(start, 12);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDateInput(next);
+  }
+  return formatDateInput(end);
+}
+
 export function LocationTargetFormModal({ open, onClose, target }) {
   const isEdit = Boolean(target);
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -71,7 +111,13 @@ export function LocationTargetFormModal({ open, onClose, target }) {
   });
 
   function handleChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'target_period' || field === 'period_start') {
+        next.period_end = calculateTargetPeriodEnd(next.target_period, next.period_start);
+      }
+      return next;
+    });
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
@@ -81,10 +127,11 @@ export function LocationTargetFormModal({ open, onClose, target }) {
     if (!form.location_id || Number.isNaN(locationId) || locationId <= 0) {
       next.location_id = 'Location is required.';
     }
-    if (!form.period_start) next.period_start = 'Period start is required.';
-    if (!form.period_end) next.period_end = 'Period end is required.';
+    const periodEnd = calculateTargetPeriodEnd(form.target_period, form.period_start);
+    if (!form.period_start) next.period_start = 'Applies from is required.';
+    if (!periodEnd) next.period_end = 'Applies to could not be calculated.';
     if (form.period_start && form.period_end && form.period_start > form.period_end) {
-      next.period_end = 'Period end must be on or after period start.';
+      next.period_end = 'Applies to must be on or after applies from.';
     }
     const amount = Number(form.target_amount);
     if (Number.isNaN(amount) || amount < 0) {
@@ -97,11 +144,12 @@ export function LocationTargetFormModal({ open, onClose, target }) {
   function handleSubmit(event) {
     event.preventDefault();
     if (!validate()) return;
+    const periodEnd = calculateTargetPeriodEnd(form.target_period, form.period_start);
     mutation.mutate({
       location_id: Number(form.location_id),
       target_period: form.target_period,
       period_start: form.period_start,
-      period_end: form.period_end,
+      period_end: periodEnd,
       target_amount: Number(form.target_amount) || 0,
       status: form.status
     });
@@ -191,7 +239,7 @@ export function LocationTargetFormModal({ open, onClose, target }) {
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
-            label="Period start"
+            label="Applies from"
             type="date"
             value={form.period_start || ''}
             onChange={(event) => handleChange('period_start', event.target.value)}
@@ -199,12 +247,13 @@ export function LocationTargetFormModal({ open, onClose, target }) {
             required
           />
           <Input
-            label="Period end"
+            label="Applies to"
             type="date"
-            value={form.period_end || ''}
-            onChange={(event) => handleChange('period_end', event.target.value)}
+            value={calculateTargetPeriodEnd(form.target_period, form.period_start)}
+            readOnly
             error={errors.period_end}
             required
+            description="Calculated from period and applies from."
           />
         </div>
         <Input

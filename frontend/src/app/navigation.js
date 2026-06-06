@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Bell,
+  TrendingUp,
   Store
 } from 'lucide-react';
 
@@ -102,6 +103,15 @@ export const NAV_SECTIONS = [
     label: 'Sales and Customers',
     labelKey: 'nav.sales',
     items: [
+      {
+        id: 'sales',
+        label: 'Sales',
+        labelKey: 'nav.salesWorkspace',
+        to: '/sales',
+        icon: TrendingUp,
+        moduleKey: 'reports.salesman-target-progress',
+        anyOfPermissions: ['reports.view']
+      },
       {
         id: 'customers',
         label: 'Customers',

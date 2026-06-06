@@ -80,7 +80,8 @@ function hasRequirementShortage(requirements = []) {
 }
 
 function assignmentHasShortage(assignment) {
-  return hasRequirementShortage(assignment?.calculation_json?.requirements || []);
+  return Number(assignment?.calculation_json?.charcoal_shortage_quantity || 0) > 0
+    || hasRequirementShortage(assignment?.calculation_json?.requirements || []);
 }
 
 function variantAttributes(variant) {
@@ -976,7 +977,7 @@ function AssignmentsView({
   const saveMutation = useMutation({
     mutationFn: (payload) => api.inventory.packagingAssignments.create(payload),
     onSuccess: (response) => {
-      toast.success('Packaging batch saved');
+      toast.success('Packaging batch saved and stock consumed');
       setCalculation(response?.data?.packaging_assignment?.calculation_json || calculation);
       queryClient.invalidateQueries({ queryKey: ['inventory', 'packaging', 'assignments'] });
       queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
@@ -1199,7 +1200,11 @@ function AssignmentsView({
           <GlassPanelHeader
             title={`${formatNumber(calculation.primary_container_count)} containers`}
             subtitle={`${formatNumber(calculation.charcoal_quantity_kg)} kg assigned / total cost ${formatNumber(calculation.total_cost ?? calculation.total_packaging_cost, { maximumFractionDigits: 4 })}`}
-            actions={hasRequirementShortage(calculation.requirements || []) ? <Badge tone="danger">Shortage</Badge> : <Badge tone="success">Ready</Badge>}
+            actions={
+              Number(calculation.charcoal_shortage_quantity || 0) > 0 || hasRequirementShortage(calculation.requirements || [])
+                ? <Badge tone="danger">Shortage</Badge>
+                : <Badge tone="success">Ready</Badge>
+            }
           />
           <GlassPanelBody className="space-y-4">
             <div className="grid gap-3 md:grid-cols-4">
@@ -1226,6 +1231,14 @@ function AssignmentsView({
                 </p>
               </div>
               <div className="rounded-lg border border-white/10 bg-white/5 p-3 md:col-span-2">
+                <p className="text-xs uppercase tracking-wide text-ink-400">Charcoal stock</p>
+                <p className="mt-1 font-mono text-sm text-ink-100">
+                  {calculation.charcoal_available_quantity === null || calculation.charcoal_available_quantity === undefined
+                    ? '-'
+                    : `${formatNumber(calculation.charcoal_available_quantity)} available / ${formatNumber(calculation.charcoal_shortage_quantity || 0)} short`}
+                </p>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 md:col-span-2">
                 <p className="text-xs uppercase tracking-wide text-ink-400">Packaging cost</p>
                 <p className="mt-1 font-mono text-sm text-ink-100">
                   {formatNumber(calculation.total_packaging_cost || 0, { maximumFractionDigits: 4 })} total / {formatNumber(calculation.packaging_cost_per_kg || 0, { maximumFractionDigits: 4 })} per kg
@@ -1238,7 +1251,7 @@ function AssignmentsView({
       )}
 
       <GlassPanel>
-        <GlassPanelHeader title="Saved packaging assignments" subtitle="Filter saved calculations before consuming packaging stock." />
+        <GlassPanelHeader title="Saved packaging assignments" subtitle="Saved assignments consume stock immediately; filter previous batches here." />
         <GlassPanelBody className="space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
             <Select

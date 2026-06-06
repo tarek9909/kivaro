@@ -61,6 +61,15 @@ describe('navigation config', () => {
     ]);
   });
 
+  it('exposes the sales nav item to report viewers', () => {
+    const items = flattenNavItems();
+    const sales = items.find((item) => item.id === 'sales');
+    expect(sales).toBeDefined();
+    expect(sales.to).toBe('/sales');
+    expect(sales.moduleKey).toBe('reports.salesman-target-progress');
+    expect(sales.anyOfPermissions).toEqual(['reports.view']);
+  });
+
   it('exposes the locations nav item to locations.manage, salesmen.manage, or targets.manage users', () => {
     const items = flattenNavItems();
     const locations = items.find((item) => item.id === 'locations');

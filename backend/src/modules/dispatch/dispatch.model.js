@@ -91,9 +91,8 @@ async function lockDispatchRequest(connection, id) {
   return rows[0] || null;
 }
 
-async function getDispatchCustomers(dispatchId) {
-  return query(
-    `SELECT dc.id, dc.dispatch_request_id, dc.customer_id, c.name AS customer_name,
+async function getDispatchCustomers(dispatchId, connection = null) {
+  const sql = `SELECT dc.id, dc.dispatch_request_id, dc.customer_id, c.name AS customer_name,
       dc.location_id, l.name AS location_name, dc.sublocation_id, sl.name AS sublocation_name, dc.store_id,
       dc.subtotal_amount, dc.vat_amount, dc.customer_total_amount, dc.collected_amount, dc.debt_amount,
       COALESCE(adjustments.debt_adjustment_amount, 0) AS debt_adjustment_amount,
@@ -131,9 +130,14 @@ async function getDispatchCustomers(dispatchId) {
        GROUP BY dispatch_customer_id
      ) debts ON debts.dispatch_customer_id = dc.id
      WHERE dc.dispatch_request_id = ?
-     ORDER BY dc.id ASC`,
-    [dispatchId]
-  );
+     ORDER BY dc.id ASC`;
+
+  if (connection) {
+    const [rows] = await connection.execute(sql, [dispatchId]);
+    return rows;
+  }
+
+  return query(sql, [dispatchId]);
 }
 
 async function getDispatchItems(dispatchId) {
@@ -285,7 +289,8 @@ async function aggregateDispatchItems(dispatchId, connection = null) {
 async function aggregateDispatchAssignmentItems(dispatchId, connection = null) {
   const executor = connection || { execute: (sql, params) => query(sql, params).then((rows) => [rows]) };
   const [rows] = await executor.execute(
-    `SELECT packaging_assignment_id, item_variant_id, SUM(quantity - returned_quantity) AS quantity
+    `SELECT packaging_assignment_id, item_variant_id, SUM(quantity - returned_quantity) AS quantity,
+       AVG(unit_cost) AS unit_cost
      FROM dispatch_items
      WHERE dispatch_request_id = ?
        AND packaging_assignment_id IS NOT NULL

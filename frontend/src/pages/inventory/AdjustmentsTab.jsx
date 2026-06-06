@@ -95,6 +95,7 @@ function AdjustmentFormModal({
     setForm((prev) => ({
       ...prev,
       [field]: value,
+      ...(field === 'catalog_type' && value === 'packaging' ? { target_type: 'variant' } : {}),
       ...(['target_type', 'catalog_type'].includes(field) ? { item_id: '', item_variant_id: '', quantity: '' } : {})
     }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
@@ -104,11 +105,12 @@ function AdjustmentFormModal({
     const next = {};
     const items = form.catalog_type === 'packaging' ? packagingItems : productItems;
     const variants = form.catalog_type === 'packaging' ? packagingVariants : productVariants;
+    const targetType = form.catalog_type === 'packaging' ? 'variant' : form.target_type;
     const warehouseId = Number(form.warehouse_id);
     if (!form.warehouse_id || Number.isNaN(warehouseId) || warehouseId <= 0) {
       next.warehouse_id = 'Warehouse is required.';
     }
-    if (form.target_type === 'item') {
+    if (targetType === 'item') {
       const itemId = Number(form.item_id);
       if (!form.item_id || Number.isNaN(itemId) || itemId <= 0) {
         next.item_id = 'Item is required.';
@@ -122,7 +124,7 @@ function AdjustmentFormModal({
     const quantity = Number(form.quantity);
     const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
     const selectedVariant = variants.find((variant) => String(variant.id) === String(form.item_variant_id));
-    const selectedTarget = form.target_type === 'item' ? selectedItem : selectedVariant;
+    const selectedTarget = targetType === 'item' ? selectedItem : selectedVariant;
     if (!form.quantity || Number.isNaN(quantity) || quantity <= 0) {
       next.quantity = 'Enter a positive quantity. Use direction to add or remove.';
     }
@@ -143,10 +145,11 @@ function AdjustmentFormModal({
     if (!validate()) return;
     const quantity = Number(form.quantity);
     const quantity_change = form.direction === 'decrease' ? -quantity : quantity;
+    const targetType = form.catalog_type === 'packaging' ? 'variant' : form.target_type;
     mutation.mutate({
-      target_type: form.target_type,
+      target_type: targetType,
       warehouse_id: Number(form.warehouse_id),
-      ...(form.target_type === 'item'
+      ...(targetType === 'item'
         ? { item_id: Number(form.item_id) }
         : { item_variant_id: Number(form.item_variant_id) }),
       quantity_change,
@@ -157,15 +160,16 @@ function AdjustmentFormModal({
 
   const items = form.catalog_type === 'packaging' ? packagingItems : productItems;
   const variants = form.catalog_type === 'packaging' ? packagingVariants : productVariants;
+  const targetType = form.catalog_type === 'packaging' ? 'variant' : form.target_type;
   const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
   const selectedVariant = variants.find((variant) => String(variant.id) === String(form.item_variant_id));
   const selectedVariantItem = selectedVariant
     ? items.find((item) => String(item.id) === String(selectedVariant.item_id))
     : null;
-  const selectedTarget = form.target_type === 'item' ? selectedItem : selectedVariant;
+  const selectedTarget = targetType === 'item' ? selectedItem : selectedVariant;
   const stockUnitLabel = getEntryUnitLabel(selectedTarget);
   const quantityLabel = stockUnitLabel ? `Quantity (${stockUnitLabel})` : 'Quantity';
-  const isPackagingVariantAdjustment = form.catalog_type === 'packaging' && form.target_type === 'variant';
+  const isPackagingVariantAdjustment = form.catalog_type === 'packaging';
 
   return (
     <Modal
@@ -203,8 +207,10 @@ function AdjustmentFormModal({
         </Select>
         <Select
           label="Target"
-          value={form.target_type}
+          value={targetType}
           onChange={(event) => handleChange('target_type', event.target.value)}
+          disabled={form.catalog_type === 'packaging'}
+          description={form.catalog_type === 'packaging' ? 'Packaging stock is adjusted directly on variants.' : undefined}
         >
           <option value="item">Item pool</option>
           <option value="variant">Variant stock</option>
@@ -224,7 +230,7 @@ function AdjustmentFormModal({
             </option>
           ))}
         </Select>
-        {form.target_type === 'item' ? (
+        {targetType === 'item' ? (
           <Select
             label="Item"
             value={form.item_id}
@@ -278,7 +284,7 @@ function AdjustmentFormModal({
             description={
               isPackagingVariantAdjustment
                 ? 'Directly adjusts packaging variant stock.'
-                : form.target_type === 'variant' && selectedVariantItem
+                : targetType === 'variant' && selectedVariantItem
                 ? form.direction === 'increase'
                   ? `Increase subtracts from item pool. Available: ${formatStockQuantity(selectedVariantItem.item_quantity_on_hand || 0, selectedVariantItem)}`
                   : 'Decrease returns quantity to the item pool.'

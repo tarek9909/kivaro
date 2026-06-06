@@ -27,11 +27,19 @@ module.exports = {
   addItemSchema: z.object({
     params: idParam,
     body: z.object({
-      item_variant_id: z.coerce.number().int().positive(),
+      item_variant_id: z.coerce.number().int().positive().optional(),
       packaging_assignment_id: z.coerce.number().int().positive().optional().nullable(),
       quantity: z.coerce.number().positive(),
       unit_price: z.coerce.number().min(0),
       unit_cost: z.coerce.number().min(0).optional()
+    }).superRefine((body, ctx) => {
+      if (!body.item_variant_id && !body.packaging_assignment_id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['item_variant_id'],
+          message: 'Variant is required.'
+        });
+      }
     })
   }),
   completeSettlementSchema: z.object({
@@ -40,7 +48,17 @@ module.exports = {
       cash_account_id: z.coerce.number().int().positive().optional().nullable(),
       payment_method: z.enum(['cash', 'bank_transfer', 'cheque', 'other']).default('cash'),
       due_date: z.string().trim().optional().nullable(),
-      notes: z.string().trim().optional().nullable()
+      notes: z.string().trim().optional().nullable(),
+      customers: z.array(z.object({
+        dispatch_customer_id: z.coerce.number().int().positive(),
+        settlement_status: z.enum(['completed', 'partial']).default('completed'),
+        collected_amount: z.coerce.number().min(0).optional(),
+        notes: z.string().trim().optional().nullable(),
+        return_items: z.array(z.object({
+          dispatch_item_id: z.coerce.number().int().positive(),
+          returned_quantity: z.coerce.number().min(0)
+        })).optional().default([])
+      })).optional()
     }).default({})
   }),
   createDispatchSchema: z.object({

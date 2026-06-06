@@ -52,6 +52,7 @@ import {
 } from '@/pages/locations/locations.config.js';
 import CustomersPage from '@/pages/customers/CustomersPage.jsx';
 import { CUSTOMERS_PARENT_PERMISSIONS } from '@/pages/customers/customers.config.js';
+import SalesPage from '@/pages/sales/SalesPage.jsx';
 import ProductionLayout from '@/pages/production/ProductionLayout.jsx';
 import ConfigurationsTab from '@/pages/production/ConfigurationsTab.jsx';
 import BatchesTab from '@/pages/production/BatchesTab.jsx';
@@ -487,6 +488,15 @@ export default function App() {
             }
           />
         </Route>
+
+        <Route
+          path="sales"
+          element={
+            <ProtectedRoute anyOfPermissions={[REPORTS_PERMISSIONS.view]} moduleKey="reports.salesman-target-progress">
+              <SalesPage />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="customers"

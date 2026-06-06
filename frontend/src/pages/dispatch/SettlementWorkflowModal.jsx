@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Plus, XCircle } from 'lucide-react';
+import { CheckCircle2, RotateCcw, XCircle } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
@@ -18,20 +18,194 @@ import { useCashAccountsList } from './useDispatchPicker.js';
 
 const ACCOUNTING_VIEW = 'accounting.view';
 
-function settlementCustomerKey(row) {
-  return [
-    row.dispatch_settlement_customer_id || row.id || '',
-    row.dispatch_customer_id,
-    row.collected_amount,
-    row.expected_amount,
-    row.notes
-  ].join('|');
+function customerBaseExpected(customer) {
+  return Number(customer?.net_total_amount ?? customer?.customer_total_amount ?? 0);
 }
 
-/**
- * Two-stage settlement worksheet backed by settlement detail so draft
- * settlements can be resumed after a refresh.
- */
+function itemReturnDeduction(item, returnedQuantity) {
+  const quantity = Number(item.quantity || 0);
+  const lineTotal = Number(item.line_total || 0);
+  if (quantity <= 0 || returnedQuantity <= 0) return 0;
+  return (lineTotal / quantity) * returnedQuantity;
+}
+
+function buildInitialRows(dispatchCustomers, itemsByCustomer, existingCustomers) {
+  const existingIds = new Set((existingCustomers || []).map((row) => Number(row.dispatch_customer_id)));
+
+  return dispatchCustomers
+    .filter((customer) => !existingIds.has(Number(customer.id)))
+    .map((customer) => ({
+      dispatch_customer_id: String(customer.id),
+      selected: true,
+      settlement_status: 'completed',
+      collected_amount: '',
+      has_return: false,
+      notes: '',
+      return_items: (itemsByCustomer.get(Number(customer.id)) || []).map((item) => ({
+        dispatch_item_id: String(item.id),
+        returned_quantity: ''
+      }))
+    }));
+}
+
+function SettlementCustomerRow({
+  customer,
+  items,
+  row,
+  onChange,
+  errors
+}) {
+  const returnByItem = new Map((row.return_items || []).map((entry) => [Number(entry.dispatch_item_id), entry]));
+  const returnDeduction = items.reduce((sum, item) => {
+    const returnEntry = returnByItem.get(Number(item.id));
+    return sum + itemReturnDeduction(item, Number(returnEntry?.returned_quantity || 0));
+  }, 0);
+  const expected = Math.max(customerBaseExpected(customer) - returnDeduction, 0);
+  const collected = row.settlement_status === 'completed'
+    ? expected
+    : Number(row.collected_amount || 0);
+  const remaining = Math.max(expected - collected, 0);
+
+  function updateReturnItem(itemId, value) {
+    onChange({
+      return_items: (row.return_items || []).map((entry) =>
+        Number(entry.dispatch_item_id) === Number(itemId)
+          ? { ...entry, returned_quantity: value }
+          : entry
+      )
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 rounded border-white/20 bg-white/10"
+            checked={row.selected}
+            onChange={(event) => onChange({ selected: event.target.checked })}
+          />
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-ink-50">
+              {customer.customer_name || `customer #${customer.customer_id}`}
+            </span>
+            <span className="mt-1 block font-mono text-xs text-ink-400">
+              Expected {formatNumber(expected, { maximumFractionDigits: 4 })}
+              {returnDeduction > 0
+                ? ` / Return deduction ${formatNumber(returnDeduction, { maximumFractionDigits: 4 })}`
+                : ''}
+            </span>
+          </span>
+        </label>
+        <div className="font-mono text-xs text-ink-200">
+          Remaining {formatNumber(remaining, { maximumFractionDigits: 4 })}
+        </div>
+      </div>
+
+      {row.selected && (
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { value: 'completed', label: 'Completed' },
+                { value: 'partial', label: 'Partial' }
+              ].map((option) => (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-white/20 bg-white/10"
+                    checked={row.settlement_status === option.value}
+                    onChange={() => onChange({
+                      settlement_status: option.value,
+                      collected_amount: option.value === 'completed' ? '' : row.collected_amount
+                    })}
+                    aria-label={option.label}
+                  />
+                  <span className="text-sm font-medium text-ink-100">{option.label}</span>
+                </label>
+              ))}
+            </div>
+            <Input
+              label="Collected"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={row.settlement_status === 'completed' ? expected.toFixed(4) : row.collected_amount}
+              onChange={(event) => onChange({ collected_amount: event.target.value })}
+              disabled={row.settlement_status === 'completed'}
+              error={errors?.collected_amount}
+            />
+            <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-white/20 bg-white/10"
+                checked={row.has_return}
+                onChange={(event) => onChange({ has_return: event.target.checked })}
+              />
+              <span className="text-sm font-medium text-ink-100">Return</span>
+            </label>
+          </div>
+
+          {row.has_return && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-ink-400">
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                Returned items
+              </div>
+              <div className="grid gap-2">
+                {items.map((item) => {
+                  const entry = returnByItem.get(Number(item.id));
+                  const maxReturn = Math.max(Number(item.quantity || 0) - Number(item.returned_quantity || 0), 0);
+                  const returnedQuantity = Number(entry?.returned_quantity || 0);
+                  return (
+                    <div key={item.id} className="grid gap-2 md:grid-cols-[1fr_160px_150px] md:items-end">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-ink-100">
+                          {item.item_name || ''}
+                          {item.variant_name ? ` - ${item.variant_name}` : ''}
+                        </p>
+                        <p className="font-mono text-xs text-ink-400">
+                          Available {formatNumber(maxReturn, { maximumFractionDigits: 4 })}
+                        </p>
+                      </div>
+                      <Input
+                        label="Return qty"
+                        type="number"
+                        min="0"
+                        max={maxReturn}
+                        step="0.0001"
+                        value={entry?.returned_quantity || ''}
+                        onChange={(event) => updateReturnItem(item.id, event.target.value)}
+                      />
+                      <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                        <p className="text-xs font-medium uppercase tracking-wider text-ink-400">Deduction</p>
+                        <p className="mt-1 font-mono text-sm text-ink-50">
+                          {formatNumber(itemReturnDeduction(item, returnedQuantity), { maximumFractionDigits: 4 })}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <Textarea
+            label="Notes"
+            value={row.notes}
+            onChange={(event) => onChange({ notes: event.target.value })}
+            rows={2}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettlementWorkflowModal({
   open,
   onClose,
@@ -42,13 +216,7 @@ export function SettlementWorkflowModal({
   const canPickCashAccounts = hasPermission(ACCOUNTING_VIEW);
   const queryClient = useQueryClient();
 
-  const [addedCustomers, setAddedCustomers] = useState([]);
-  const [customerForm, setCustomerForm] = useState({
-    dispatch_customer_id: '',
-    collected_amount: '',
-    notes: ''
-  });
-  const [customerErrors, setCustomerErrors] = useState({});
+  const [rows, setRows] = useState([]);
   const [completeForm, setCompleteForm] = useState({
     cash_account_id: '',
     payment_method: 'cash',
@@ -56,6 +224,7 @@ export function SettlementWorkflowModal({
     notes: ''
   });
   const [completeErrors, setCompleteErrors] = useState({});
+  const [rowErrors, setRowErrors] = useState({});
 
   const settlementDetailQuery = useQuery({
     queryKey: ['dispatch', 'settlement', settlement?.id],
@@ -64,16 +233,21 @@ export function SettlementWorkflowModal({
   });
 
   const activeSettlement = settlementDetailQuery.data?.data?.dispatch_settlement || settlement;
+  const dispatchCustomers = dispatchRequest?.customers || [];
+  const dispatchItems = dispatchRequest?.items || [];
+  const itemsByCustomer = useMemo(
+    () => dispatchItems.reduce((acc, item) => {
+      const key = Number(item.dispatch_customer_id);
+      if (!acc.has(key)) acc.set(key, []);
+      acc.get(key).push(item);
+      return acc;
+    }, new Map()),
+    [dispatchItems]
+  );
 
   useEffect(() => {
     if (!open) return;
-    setAddedCustomers([]);
-    setCustomerForm({
-      dispatch_customer_id: '',
-      collected_amount: '',
-      notes: ''
-    });
-    setCustomerErrors({});
+    setRows(buildInitialRows(dispatchCustomers, itemsByCustomer, activeSettlement?.customers || []));
     setCompleteForm({
       cash_account_id: '',
       payment_method: 'cash',
@@ -81,55 +255,33 @@ export function SettlementWorkflowModal({
       notes: ''
     });
     setCompleteErrors({});
-  }, [open, settlement?.id]);
+    setRowErrors({});
+  }, [open, activeSettlement?.id, activeSettlement?.customers, dispatchCustomers, itemsByCustomer]);
 
-  useEffect(() => {
-    if (!open) return;
-    const rows = activeSettlement?.customers;
-    if (Array.isArray(rows)) {
-      setAddedCustomers(rows);
-    }
-  }, [open, activeSettlement?.id, activeSettlement?.customers]);
+  const customerLookup = useMemo(
+    () => new Map(dispatchCustomers.map((customer) => [Number(customer.id), customer])),
+    [dispatchCustomers]
+  );
 
-  const dispatchCustomers = dispatchRequest?.customers || [];
-  const usedCustomerIds = new Set(
-    addedCustomers.map((row) => Number(row.dispatch_customer_id))
-  );
-  const totalCollected = addedCustomers.reduce(
-    (sum, row) => sum + (Number(row.collected_amount) || 0),
-    0
-  );
+  function rowExpected(row) {
+    const customer = customerLookup.get(Number(row.dispatch_customer_id));
+    const items = itemsByCustomer.get(Number(row.dispatch_customer_id)) || [];
+    const returnByItem = new Map((row.return_items || []).map((entry) => [Number(entry.dispatch_item_id), entry]));
+    const deduction = items.reduce((sum, item) => (
+      sum + itemReturnDeduction(item, Number(returnByItem.get(Number(item.id))?.returned_quantity || 0))
+    ), 0);
+    return Math.max(customerBaseExpected(customer) - deduction, 0);
+  }
+
+  const selectedRows = rows.filter((row) => row.selected);
+  const totalCollected = selectedRows.reduce((sum, row) => {
+    const expected = rowExpected(row);
+    return sum + (row.settlement_status === 'completed' ? expected : Number(row.collected_amount || 0));
+  }, 0);
   const needsCashAccount = totalCollected > 0;
-  const availableCustomers = dispatchCustomers.filter(
-    (customer) => !usedCustomerIds.has(Number(customer.id))
-  );
 
   const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts);
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
-
-  const addCustomerMutation = useMutation({
-    mutationFn: (payload) => api.dispatch.settlements.addCustomer(activeSettlement.id, payload),
-    onSuccess: (response, payload) => {
-      const row = response?.data?.dispatch_settlement_customer || {
-        dispatch_customer_id: payload.dispatch_customer_id,
-        collected_amount: payload.collected_amount,
-        notes: payload.notes
-      };
-      setAddedCustomers((prev) => [...prev, row]);
-      setCustomerForm({
-        dispatch_customer_id: '',
-        collected_amount: '',
-        notes: ''
-      });
-      setCustomerErrors({});
-      queryClient.invalidateQueries({ queryKey: ['dispatch', 'settlement', activeSettlement.id] });
-      toast.success('Customer added to settlement');
-    },
-    onError: (error) => {
-      setCustomerErrors(mapFieldErrors(error));
-      toast.error(getErrorMessage(error, 'Could not add customer to settlement.'));
-    }
-  });
 
   const completeMutation = useMutation({
     mutationFn: (payload) => api.dispatch.settlements.complete(activeSettlement.id, payload),
@@ -158,37 +310,20 @@ export function SettlementWorkflowModal({
     }
   });
 
-  function validateCustomer() {
-    const next = {};
-    const customerId = Number(customerForm.dispatch_customer_id);
-    if (!customerForm.dispatch_customer_id || Number.isNaN(customerId) || customerId <= 0) {
-      next.dispatch_customer_id = 'Select a customer to settle.';
-    }
-    const collected = Number(customerForm.collected_amount);
-    if (
-      customerForm.collected_amount === '' ||
-      Number.isNaN(collected) ||
-      collected < 0
-    ) {
-      next.collected_amount = 'Collected amount is required.';
-    }
-    setCustomerErrors(next);
-    return Object.keys(next).length === 0;
-  }
-
-  function handleAddCustomer(event) {
-    event.preventDefault();
-    if (!validateCustomer()) return;
-    const payload = {
-      dispatch_customer_id: Number(customerForm.dispatch_customer_id),
-      collected_amount: Number(customerForm.collected_amount)
-    };
-    if (customerForm.notes?.trim()) payload.notes = customerForm.notes.trim();
-    addCustomerMutation.mutate(payload);
+  function updateRow(index, changes) {
+    setRows((prev) => prev.map((row, rowIndex) => (
+      rowIndex === index ? { ...row, ...changes } : row
+    )));
+    setRowErrors((prev) => ({ ...prev, [index]: undefined }));
   }
 
   function validateComplete() {
     const next = {};
+    const nextRowErrors = {};
+
+    if (selectedRows.length === 0) {
+      next.customers = 'Select at least one customer to settle.';
+    }
     if (needsCashAccount && completeForm.cash_account_id === '') {
       next.cash_account_id = 'Cash account is required when collected amount is greater than zero.';
     } else if (
@@ -197,48 +332,76 @@ export function SettlementWorkflowModal({
     ) {
       next.cash_account_id = 'Cash account ID must be numeric.';
     }
+
+    rows.forEach((row, index) => {
+      if (!row.selected) return;
+      const expected = rowExpected(row);
+      if (row.settlement_status === 'partial') {
+        const collected = Number(row.collected_amount);
+        if (row.collected_amount === '' || Number.isNaN(collected) || collected < 0) {
+          nextRowErrors[index] = { collected_amount: 'Collected amount is required.' };
+        } else if (collected >= expected && expected > 0) {
+          nextRowErrors[index] = { collected_amount: 'Partial amount must be less than expected.' };
+        }
+      }
+      const items = itemsByCustomer.get(Number(row.dispatch_customer_id)) || [];
+      const itemMap = new Map(items.map((item) => [Number(item.id), item]));
+      for (const returnItem of row.return_items || []) {
+        const item = itemMap.get(Number(returnItem.dispatch_item_id));
+        const returnedQuantity = Number(returnItem.returned_quantity || 0);
+        const maxReturn = Math.max(Number(item?.quantity || 0) - Number(item?.returned_quantity || 0), 0);
+        if (returnedQuantity < 0 || returnedQuantity > maxReturn) {
+          nextRowErrors[index] = { collected_amount: 'Return quantity cannot exceed available quantity.' };
+        }
+      }
+    });
+
     setCompleteErrors(next);
-    return Object.keys(next).length === 0;
+    setRowErrors(nextRowErrors);
+    return Object.keys(next).length === 0 && Object.keys(nextRowErrors).length === 0;
   }
 
   function handleComplete(event) {
     event.preventDefault();
-    if (addedCustomers.length === 0) {
-      toast.error('Add at least one customer before completing the settlement.');
-      return;
-    }
     if (!validateComplete()) return;
+
     const payload = {
-      payment_method: completeForm.payment_method
+      payment_method: completeForm.payment_method,
+      cash_account_id: completeForm.cash_account_id !== '' ? Number(completeForm.cash_account_id) : null,
+      due_date: completeForm.due_date || null,
+      notes: completeForm.notes?.trim() ? completeForm.notes.trim() : null,
+      customers: selectedRows.map((row) => ({
+        dispatch_customer_id: Number(row.dispatch_customer_id),
+        settlement_status: row.settlement_status,
+        collected_amount: row.settlement_status === 'completed'
+          ? rowExpected(row)
+          : Number(row.collected_amount || 0),
+        notes: row.notes?.trim() || null,
+        return_items: row.has_return
+          ? (row.return_items || [])
+              .filter((entry) => Number(entry.returned_quantity || 0) > 0)
+              .map((entry) => ({
+                dispatch_item_id: Number(entry.dispatch_item_id),
+                returned_quantity: Number(entry.returned_quantity)
+              }))
+          : []
+      }))
     };
-    if (completeForm.cash_account_id !== '') {
-      payload.cash_account_id = Number(completeForm.cash_account_id);
-    } else {
-      payload.cash_account_id = null;
-    }
-    payload.due_date = completeForm.due_date || null;
-    payload.notes = completeForm.notes?.trim() ? completeForm.notes.trim() : null;
+
     completeMutation.mutate(payload);
   }
-
-  const customerLookup = new Map(
-    dispatchCustomers.map((customer) => [Number(customer.id), customer])
-  );
-  const selectedCustomer = customerLookup.get(Number(customerForm.dispatch_customer_id));
-  const selectedExpectedAmount =
-    selectedCustomer?.net_total_amount ?? selectedCustomer?.customer_total_amount;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      size="lg"
+      size="xl"
       title={
         activeSettlement
           ? `Settle ${activeSettlement.settlement_number || `#${activeSettlement.id}`}`
           : 'Settlement'
       }
-      description="Record what each customer paid and how much remains. Complete the settlement to post payments and outstanding debts."
+      description="Settle customers in one worksheet. Mark complete, partial, or record returned quantities before posting."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={completeMutation.isPending}>
@@ -260,7 +423,7 @@ export function SettlementWorkflowModal({
             form="dispatch-settlement-complete-form"
             leftIcon={CheckCircle2}
             isLoading={completeMutation.isPending}
-            disabled={addedCustomers.length === 0 || cancelMutation.isPending}
+            disabled={selectedRows.length === 0 || cancelMutation.isPending}
           >
             Complete settlement
           </Button>
@@ -268,247 +431,130 @@ export function SettlementWorkflowModal({
       }
     >
       {!activeSettlement ? (
-        <p className="text-sm text-ink-300">
-          Open a settlement first to add customers.
-        </p>
+        <p className="text-sm text-ink-300">Open a settlement first.</p>
       ) : (
-        <div className="space-y-6">
-          <section>
-            <h3 className="font-display text-sm font-semibold text-ink-50">
-              Add customer collection
-            </h3>
-            <p className="mt-1 text-xs text-ink-400">
-              Pick a customer that was on the dispatch and record the amount collected.
+        <form
+          id="dispatch-settlement-complete-form"
+          onSubmit={handleComplete}
+          className="space-y-5"
+          noValidate
+        >
+          {completeErrors.customers && (
+            <p className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+              {completeErrors.customers}
             </p>
-            <form
-              id="dispatch-settlement-customer-form"
-              onSubmit={handleAddCustomer}
-              className="mt-3 space-y-3"
-              noValidate
-            >
-              <Select
-                label="Customer"
-                value={customerForm.dispatch_customer_id}
-                onChange={(event) =>
-                  setCustomerForm((prev) => ({
-                    ...prev,
-                    dispatch_customer_id: event.target.value
-                  }))
-                }
-                error={customerErrors.dispatch_customer_id}
-                required
-              >
-                <option value="">Select customer</option>
-                {availableCustomers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.customer_name || `customer #${customer.customer_id}`}
-                    {(customer.net_total_amount ?? customer.customer_total_amount)
-                      ? ` (expected ${formatNumber(customer.net_total_amount ?? customer.customer_total_amount, {
-                          maximumFractionDigits: 4
-                        })})`
-                      : ''}
-                  </option>
-                ))}
-              </Select>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div
-                  className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
-                  aria-live="polite"
-                >
-                  <p className="text-xs font-medium uppercase tracking-wide text-ink-400">
-                    Expected amount
-                  </p>
-                  <p className="mt-1 font-mono text-sm text-ink-50">
-                    {selectedCustomer
-                      ? formatNumber(selectedExpectedAmount || 0, { maximumFractionDigits: 4 })
-                      : 'Select customer'}
-                  </p>
-                  <p className="mt-1 text-xs text-ink-500">
-                    Computed from dispatch net total.
-                  </p>
-                </div>
-                <Input
-                  label="Collected amount"
-                  type="number"
-                  min="0"
-                  step="0.0001"
-                  value={customerForm.collected_amount}
-                  onChange={(event) =>
-                    setCustomerForm((prev) => ({
-                      ...prev,
-                      collected_amount: event.target.value
-                    }))
-                  }
-                  error={customerErrors.collected_amount}
-                  required
-                />
-              </div>
-              <Textarea
-                label="Notes"
-                value={customerForm.notes}
-                onChange={(event) =>
-                  setCustomerForm((prev) => ({ ...prev, notes: event.target.value }))
-                }
-                rows={2}
-              />
-              <div className="flex justify-end">
-                <Button
-                  type="submit"
-                  variant="secondary"
-                  size="sm"
-                  leftIcon={Plus}
-                  isLoading={addCustomerMutation.isPending}
-                  disabled={availableCustomers.length === 0}
-                >
-                  Add to settlement
-                </Button>
-              </div>
-            </form>
-          </section>
+          )}
 
-          <section>
-            <h3 className="font-display text-sm font-semibold text-ink-50">
-              Customers on this settlement
-            </h3>
-            {addedCustomers.length === 0 ? (
-              <p className="mt-2 text-sm text-ink-300">
-                No customers have been added to this settlement yet.
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-sm font-semibold text-ink-50">Customer settlement</h3>
+                <p className="mt-1 text-xs text-ink-400">
+                  Checked customers will be posted in this settlement.
+                </p>
+              </div>
+              <div className="font-mono text-xs text-ink-200">
+                Total collected {formatNumber(totalCollected, { maximumFractionDigits: 4 })}
+              </div>
+            </div>
+
+            {rows.length === 0 ? (
+              <p className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 text-sm text-ink-300">
+                No unsettled customers are available for this dispatch.
               </p>
             ) : (
-              <ul className="mt-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-2">
-                {addedCustomers.map((row) => {
+              <div className="space-y-3">
+                {rows.map((row, index) => {
                   const customer = customerLookup.get(Number(row.dispatch_customer_id));
                   return (
-                    <li
-                      key={settlementCustomerKey(row)}
-                      className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-ink-50">
-                            {customer?.customer_name || `customer #${row.dispatch_customer_id}`}
-                          </p>
-                          {row.notes && (
-                            <p className="truncate text-xs text-ink-400">{row.notes}</p>
-                          )}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-ink-200">
-                          <span>
-                            Expected{' '}
-                            {formatNumber(row.expected_amount, { maximumFractionDigits: 4 })}
-                          </span>
-                          <span>
-                            Collected{' '}
-                            {formatNumber(row.collected_amount, { maximumFractionDigits: 4 })}
-                          </span>
-                          {row.debt_amount !== undefined && row.debt_amount !== null && (
-                            <span>
-                              Debt {formatNumber(row.debt_amount, { maximumFractionDigits: 4 })}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </li>
+                    <SettlementCustomerRow
+                      key={row.dispatch_customer_id}
+                      customer={customer}
+                      items={itemsByCustomer.get(Number(row.dispatch_customer_id)) || []}
+                      row={row}
+                      errors={rowErrors[index]}
+                      onChange={(changes) => updateRow(index, changes)}
+                    />
                   );
                 })}
-              </ul>
+              </div>
             )}
           </section>
 
-          <section>
-            <h3 className="font-display text-sm font-semibold text-ink-50">Complete settlement</h3>
-            <p className="mt-1 text-xs text-ink-400">
-              Post payments, outstanding debts, and receipts. The dispatch request will move to
-              completed.
-            </p>
-            <form
-              id="dispatch-settlement-complete-form"
-              onSubmit={handleComplete}
-              className="mt-3 space-y-3"
-              noValidate
-            >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Select
-                  label="Payment method"
-                  value={completeForm.payment_method}
-                  onChange={(event) =>
-                    setCompleteForm((prev) => ({
-                      ...prev,
-                      payment_method: event.target.value
-                    }))
-                  }
-                  error={completeErrors.payment_method}
-                >
-                  {PAYMENT_METHODS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  label="Due date"
-                  type="date"
-                  value={completeForm.due_date}
-                  onChange={(event) =>
-                    setCompleteForm((prev) => ({ ...prev, due_date: event.target.value }))
-                  }
-                  error={completeErrors.due_date}
-                  description="Optional. Used for outstanding debts."
-                />
-              </div>
-
-              {canPickCashAccounts ? (
-                <Select
-                  label="Cash account"
-                  value={completeForm.cash_account_id}
-                  onChange={(event) =>
-                    setCompleteForm((prev) => ({
-                      ...prev,
-                      cash_account_id: event.target.value
-                    }))
-                  }
-                  error={completeErrors.cash_account_id}
-                  required={needsCashAccount}
-                  description={needsCashAccount ? undefined : 'Not required when total collected is zero.'}
-                >
-                  <option value="">
-                    {needsCashAccount ? 'Select cash account' : 'No cash account'}
-                  </option>
-                  {cashAccounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.account_name || account.name || `Account #${account.id}`}
-                    </option>
-                  ))}
-                </Select>
-              ) : (
-                <Input
-                  label="Cash account ID"
-                  type="number"
-                  min="1"
-                  value={completeForm.cash_account_id}
-                  onChange={(event) =>
-                    setCompleteForm((prev) => ({
-                      ...prev,
-                      cash_account_id: event.target.value
-                    }))
-                  }
-                  error={completeErrors.cash_account_id}
-                  required={needsCashAccount}
-                  description={needsCashAccount ? 'Numeric only.' : 'Leave blank when total collected is zero.'}
-                />
-              )}
-
-              <Textarea
-                label="Notes"
-                value={completeForm.notes}
+          <section className="space-y-3">
+            <h3 className="font-display text-sm font-semibold text-ink-50">Payment details</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                label="Payment method"
+                value={completeForm.payment_method}
                 onChange={(event) =>
-                  setCompleteForm((prev) => ({ ...prev, notes: event.target.value }))
+                  setCompleteForm((prev) => ({ ...prev, payment_method: event.target.value }))
                 }
-                rows={3}
+                error={completeErrors.payment_method}
+              >
+                {PAYMENT_METHODS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+              <Input
+                label="Due date"
+                type="date"
+                value={completeForm.due_date}
+                onChange={(event) =>
+                  setCompleteForm((prev) => ({ ...prev, due_date: event.target.value }))
+                }
+                error={completeErrors.due_date}
+                description="Optional. Used for remaining payments."
               />
-            </form>
+            </div>
+
+            {canPickCashAccounts ? (
+              <Select
+                label="Cash account"
+                value={completeForm.cash_account_id}
+                onChange={(event) =>
+                  setCompleteForm((prev) => ({ ...prev, cash_account_id: event.target.value }))
+                }
+                error={completeErrors.cash_account_id}
+                required={needsCashAccount}
+                description={needsCashAccount ? undefined : 'Not required when total collected is zero.'}
+              >
+                <option value="">
+                  {needsCashAccount ? 'Select cash account' : 'No cash account'}
+                </option>
+                {cashAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.account_name || account.name || `Account #${account.id}`}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Input
+                label="Cash account ID"
+                type="number"
+                min="1"
+                value={completeForm.cash_account_id}
+                onChange={(event) =>
+                  setCompleteForm((prev) => ({ ...prev, cash_account_id: event.target.value }))
+                }
+                error={completeErrors.cash_account_id}
+                required={needsCashAccount}
+                description={needsCashAccount ? 'Numeric only.' : 'Leave blank when total collected is zero.'}
+              />
+            )}
+
+            <Textarea
+              label="Notes"
+              value={completeForm.notes}
+              onChange={(event) =>
+                setCompleteForm((prev) => ({ ...prev, notes: event.target.value }))
+              }
+              rows={3}
+            />
           </section>
-        </div>
+        </form>
       )}
     </Modal>
   );

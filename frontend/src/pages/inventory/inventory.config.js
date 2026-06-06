@@ -60,6 +60,7 @@ export const MOVEMENT_TYPES = [
   { value: 'dispatch_unreserve', label: 'Dispatch unreserve' },
   { value: 'dispatch_out', label: 'Dispatch out' },
   { value: 'dispatch_return', label: 'Dispatch return' },
+  { value: 'batch_movement', label: 'Batches movement' },
   { value: 'sales_settle', label: 'Sales settle' },
   { value: 'damage', label: 'Damage' },
   { value: 'adjustment', label: 'Adjustment' },

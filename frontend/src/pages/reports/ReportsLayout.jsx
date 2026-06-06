@@ -39,7 +39,6 @@ import {
   COMMISSION_STATUS_OPTIONS,
   DEBT_STATUS_OPTIONS,
   DISPATCH_STATUS_OPTIONS,
-  ITEM_TYPE_OPTIONS,
   MOVEMENT_TYPE_OPTIONS,
   PACKAGING_ASSIGNMENT_STATUS_OPTIONS,
   PO_STATUS_OPTIONS,
@@ -66,7 +65,7 @@ const NUMERIC_FILTERS = new Set([
 ]);
 const HIDDEN_ROW_FIELDS = new Set(['tax_amount']);
 const SUMMARY_DISPLAY_METRICS = {
-  commissions: ['sales_amount', 'target_amount', 'total_commission'],
+  commissions: ['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable'],
   currentStock: ['quantity_on_hand', 'quantity_available', 'stock_value'],
   customerBalances: ['total_remaining_debt', 'available_credit', 'net_customer_balance'],
   debts: ['original_amount', 'paid_amount', 'remaining_amount'],
@@ -75,7 +74,7 @@ const SUMMARY_DISPLAY_METRICS = {
   purchases: ['subtotal', 'amount_paid', 'total_amount'],
   packagingAssignments: ['charcoal_quantity_kg', 'primary_container_count', 'total_packaging_cost'],
   packagingShortages: ['shortage_quantity', 'required_quantity', 'total_cost'],
-  salesmanTargetProgress: ['target_amount', 'achieved_sales_amount'],
+  salesmanTargetProgress: ['base_salary', 'target_amount', 'achieved_sales_amount'],
   sales: ['net_subtotal_amount', 'net_vat_amount', 'net_total_amount'],
   stockMovements: ['quantity_change', 'reserved_quantity_change']
 };
@@ -88,7 +87,6 @@ const FILTER_PARAM = {
   debt_status: 'status',
   dispatch_status: 'status',
   item: 'item_id',
-  item_type: 'item_type',
   item_variant: 'item_variant_id',
   location: 'location_id',
   movement_type: 'movement_type',
@@ -108,7 +106,6 @@ const SELECT_FILTERS = {
   commission_status: COMMISSION_STATUS_OPTIONS,
   debt_status: DEBT_STATUS_OPTIONS,
   dispatch_status: DISPATCH_STATUS_OPTIONS,
-  item_type: ITEM_TYPE_OPTIONS,
   movement_type: MOVEMENT_TYPE_OPTIONS,
   packaging_assignment_status: PACKAGING_ASSIGNMENT_STATUS_OPTIONS,
   po_status: PO_STATUS_OPTIONS,
@@ -123,7 +120,6 @@ const FILTER_LABELS = {
   debt_status: 'Status',
   dispatch_status: 'Status',
   item: 'Item',
-  item_type: 'Item type',
   item_variant: 'Variant',
   location: 'Location',
   movement_type: 'Movement type',

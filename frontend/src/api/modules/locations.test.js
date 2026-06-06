@@ -53,6 +53,7 @@ describe('locations API module', () => {
       'get',
       'list',
       'remove',
+      'sublocations',
       'unassignSublocation',
       'update'
     ]);
@@ -89,6 +90,17 @@ describe('locations API module', () => {
       },
       { method: 'delete', path: '/salesmen/7/sublocations/9', rest: [undefined] }
     ]);
+  });
+
+  it('reads a salesman\'s sublocations via GET /salesmen/:id/sublocations', async () => {
+    const client = buildClientStub();
+    const api = createLocationsApi(client);
+    await api.salesmen.sublocations(7, { status: 'active' });
+    expect(client.calls[0]).toEqual({
+      method: 'get',
+      path: '/salesmen/7/sublocations',
+      rest: [{ params: { status: 'active' } }]
+    });
   });
 
   it('hits /location-targets/:id/sublocation-targets when adding a sublocation target', async () => {

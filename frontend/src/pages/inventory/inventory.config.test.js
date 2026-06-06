@@ -56,6 +56,7 @@ describe('inventory config', () => {
       'dispatch_unreserve',
       'dispatch_out',
       'dispatch_return',
+      'batch_movement',
       'sales_settle',
       'damage',
       'adjustment',

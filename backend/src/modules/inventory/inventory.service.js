@@ -476,7 +476,9 @@ async function listStockBalances(query, actor = {}) {
     pagination
   });
 
-  return pagedResult('stock_balances', result.rows, result.total, pagination);
+  const response = pagedResult('stock_balances', result.rows, result.total, pagination);
+  response.meta.batch_summary = result.batchSummary;
+  return response;
 }
 
 async function listStockMovements(query, actor = {}) {
@@ -503,6 +505,12 @@ async function adjustItemPool(data, userId, audit, actor = {}) {
   const warehouse = await getWarehouse(data.warehouse_id, actor);
   const item = await getItem(data.item_id, actor);
   assertSameStore(item, warehouse.store_id, 'item_id', 'Item does not belong to this store');
+
+  if (item.item_type === 'packaging') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'item_id', message: 'Packaging stock must be adjusted at the variant level' }
+    ]);
+  }
 
   if (item.tracking_type !== 'stocked') {
     throw ApiError.badRequest('Validation failed', [
@@ -587,6 +595,7 @@ async function adjustVariantFromItemPool(data, userId, audit, actor = {}) {
     });
     const currentItemQuantity = decimal(itemBalance.quantity_on_hand || 0);
 
+    let movement;
     if (direction > 0) {
       if (currentItemQuantity.lt(normalizedQuantity)) {
         throw ApiError.conflict('Insufficient item quantity available');
@@ -596,7 +605,7 @@ async function adjustVariantFromItemPool(data, userId, audit, actor = {}) {
         quantity_on_hand: toMoney(currentItemQuantity.minus(normalizedQuantity))
       });
 
-      return stockService.increaseStock(connection, {
+      movement = await stockService.increaseStock(connection, {
         storeId: warehouse.store_id,
         warehouseId: data.warehouse_id,
         itemVariantId: data.item_variant_id,
@@ -608,23 +617,43 @@ async function adjustVariantFromItemPool(data, userId, audit, actor = {}) {
         notes: data.reason,
         createdBy: userId
       });
+    } else {
+      movement = await stockService.decreaseStock(connection, {
+        storeId: warehouse.store_id,
+        warehouseId: data.warehouse_id,
+        itemVariantId: data.item_variant_id,
+        quantity: entryQuantity,
+        unitCost: data.unit_cost,
+        movementType: 'adjustment',
+        referenceType: 'stock_adjustment',
+        referenceId: null,
+        notes: data.reason,
+        createdBy: userId
+      });
+
+      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
+        quantity_on_hand: toMoney(currentItemQuantity.plus(normalizedQuantity))
+      });
     }
 
-    const movement = await stockService.decreaseStock(connection, {
+    const { writeAuditLog } = require('../../middleware/audit.middleware');
+    await writeAuditLog(connection, {
+      userId,
+      module: 'inventory',
+      action: 'stock_adjustment',
+      tableName: 'stock_balances',
+      recordId: movement.stock_balance_id,
       storeId: warehouse.store_id,
-      warehouseId: data.warehouse_id,
-      itemVariantId: data.item_variant_id,
-      quantity: entryQuantity,
-      unitCost: data.unit_cost,
-      movementType: 'adjustment',
-      referenceType: 'stock_adjustment',
-      referenceId: null,
-      notes: data.reason,
-      createdBy: userId
-    });
-
-    await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
-      quantity_on_hand: toMoney(currentItemQuantity.plus(normalizedQuantity))
+      newValues: {
+        warehouse_id: data.warehouse_id,
+        item_variant_id: data.item_variant_id,
+        quantity_change: toMoney(data.quantity_change),
+        quantity_after: movement.quantity_after,
+        stock_movement_id: movement.stock_movement_id
+      },
+      ipAddress: audit && audit.ipAddress,
+      userAgent: audit && audit.userAgent,
+      description: data.reason || 'Manual stock adjustment'
     });
 
     return movement;

@@ -12,7 +12,6 @@ import {
   Select
 } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
-import { ITEM_TYPES } from './inventory.config.js';
 import { formatStockQuantity } from './stockUnits.js';
 import {
   useItemsOptions,
@@ -20,15 +19,12 @@ import {
   useWarehousesOptions
 } from './useInventoryOptions.js';
 
-const ITEM_TYPE_OPTIONS = [{ value: '', label: 'All types' }, ...ITEM_TYPES];
-
 export default function StockBalancesTab() {
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [warehouseId, setWarehouseId] = useState('');
   const [itemId, setItemId] = useState('');
   const [variantId, setVariantId] = useState('');
-  const [itemType, setItemType] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(25);
 
@@ -40,9 +36,8 @@ export default function StockBalancesTab() {
     if (warehouseId) params.warehouse_id = warehouseId;
     if (itemId) params.item_id = itemId;
     if (variantId) params.item_variant_id = variantId;
-    if (itemType) params.item_type = itemType;
     return params;
-  }, [debouncedSearch, warehouseId, itemId, variantId, itemType, page, limit]);
+  }, [debouncedSearch, warehouseId, itemId, variantId, page, limit]);
 
   const balancesQuery = useQuery({
     queryKey: ['inventory', 'balances', queryParams],
@@ -59,6 +54,7 @@ export default function StockBalancesTab() {
 
   const rows = balancesQuery.data?.data?.stock_balances || [];
   const meta = balancesQuery.data?.meta || {};
+  const batchSummary = meta.batch_summary || {};
 
   const columns = useMemo(
     () => [
@@ -85,14 +81,6 @@ export default function StockBalancesTab() {
         cell: (row) => (
           <span className="text-sm text-ink-200">{row.variant_name || '-'}</span>
         )
-      },
-      {
-        id: 'item_type',
-        header: 'Type',
-        cell: (row) =>
-          row.source_type === 'packaging_batch'
-            ? <Badge tone="success">Packaging batch</Badge>
-            : row.item_type ? <Badge tone="brand">{row.item_type}</Badge> : <span>-</span>
       },
       {
         id: 'quantity_on_hand',
@@ -144,6 +132,36 @@ export default function StockBalancesTab() {
 
   return (
     <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs uppercase text-ink-400">Batch stock</p>
+          <p className="mt-1 font-mono text-xl font-semibold text-ink-50">
+            {formatNumber(batchSummary.total_batch_stock || 0, { maximumFractionDigits: 4 })} pc
+          </p>
+          <p className="mt-1 text-xs text-ink-400">
+            {formatNumber(batchSummary.batch_count || 0, { maximumFractionDigits: 0 })} batches
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs uppercase text-ink-400">Batch allocated</p>
+          <p className="mt-1 font-mono text-xl font-semibold text-ink-50">
+            {formatNumber(batchSummary.total_batch_allocated || 0, { maximumFractionDigits: 4 })} pc
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs uppercase text-ink-400">Batch remaining</p>
+          <p className="mt-1 font-mono text-xl font-semibold text-emerald-100">
+            {formatNumber(batchSummary.total_batch_remaining || 0, { maximumFractionDigits: 4 })} pc
+          </p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs uppercase text-ink-400">Batch value</p>
+          <p className="mt-1 font-mono text-xl font-semibold text-ink-50">
+            {formatNumber(batchSummary.total_batch_value || 0, { maximumFractionDigits: 4 })}
+          </p>
+        </div>
+      </div>
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex-1">
           <Input
@@ -200,19 +218,6 @@ export default function StockBalancesTab() {
             {items.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            value={itemType}
-            onChange={(event) => {
-              setItemType(event.target.value);
-              setPage(1);
-            }}
-          >
-            {ITEM_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
               </option>
             ))}
           </Select>

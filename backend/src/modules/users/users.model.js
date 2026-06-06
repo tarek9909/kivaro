@@ -77,8 +77,18 @@ async function listUsers({ filters, pagination }) {
   };
 }
 
-async function findUserById(id) {
-  const rows = await query(
+async function execute(connection, sql, params) {
+  if (connection) {
+    const [rows] = await connection.execute(sql, params);
+    return rows;
+  }
+
+  return query(sql, params);
+}
+
+async function findUserById(id, connection = null) {
+  const rows = await execute(
+    connection,
     `${publicUserSelect}
      WHERE u.id = ? AND u.deleted_at IS NULL
      LIMIT 1`,
@@ -88,8 +98,9 @@ async function findUserById(id) {
   return rows[0] || null;
 }
 
-async function createUser(data) {
-  const result = await query(
+async function createUser(data, connection = null) {
+  const result = await execute(
+    connection,
     `INSERT INTO users (
       role_id,
       store_id,
@@ -112,7 +123,7 @@ async function createUser(data) {
     ]
   );
 
-  return findUserById(result.insertId);
+  return findUserById(result.insertId, connection);
 }
 
 async function updateUser(id, data) {

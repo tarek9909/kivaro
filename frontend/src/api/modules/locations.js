@@ -20,6 +20,7 @@ export function createLocationsApi(client) {
     sublocations,
     salesmen: {
       ...salesmen,
+      sublocations: (id, params, options) => client.get(`/salesmen/${id}/sublocations`, { ...options, params }),
       assignSublocation: (id, payload, options) => client.post(`/salesmen/${id}/sublocations`, payload, options),
       unassignSublocation: (id, sublocationId, options) => (
         client.delete(`/salesmen/${id}/sublocations/${sublocationId}`, options)

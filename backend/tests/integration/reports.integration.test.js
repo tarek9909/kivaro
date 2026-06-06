@@ -33,6 +33,18 @@ describe('reports integration', () => {
     await authRequest(token)
       .post('/api/stock-adjustments')
       .send({
+        target_type: 'item',
+        warehouse_id: fixture.warehouse.id,
+        item_id: fixture.item.id,
+        quantity_change: 7,
+        unit_cost: 2,
+        reason: 'Report item stock'
+      })
+      .expect(201);
+
+    await authRequest(token)
+      .post('/api/stock-adjustments')
+      .send({
         warehouse_id: fixture.warehouse.id,
         item_variant_id: fixture.variant.id,
         quantity_change: 7,

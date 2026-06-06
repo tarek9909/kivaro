@@ -71,13 +71,14 @@ describe('reports config', () => {
       'search',
       'warehouse',
       'item',
-      'item_variant',
-      'item_type'
+      'item_variant'
     ]);
     expect(REPORTS_REGISTRY.customerBalances.filters).toEqual(['search', 'customer']);
     expect(REPORTS_REGISTRY.salesmanTargetProgress.filters).toEqual([
       'search',
       'salesman',
+      'location',
+      'sublocation',
       'date_from',
       'date_to'
     ]);

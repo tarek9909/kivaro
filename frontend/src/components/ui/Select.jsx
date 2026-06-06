@@ -54,6 +54,7 @@ export const Select = forwardRef(function Select(
   // Find currently selected option
   const selectedOption = options.find((opt) => String(opt.value) === String(props.value || ''));
   const displayText = selectedOption ? selectedOption.label : placeholder;
+  const isDisabled = Boolean(props.disabled);
 
   // Filter options based on search query
   const filteredOptions = options.filter((opt) =>
@@ -84,6 +85,7 @@ export const Select = forwardRef(function Select(
   }, [isOpen]);
 
   const handleSelect = (val) => {
+    if (isDisabled) return;
     if (selectRef.current) {
       const nativeSelectValueSetter = Object.getOwnPropertyDescriptor(
         HTMLSelectElement.prototype,
@@ -124,12 +126,16 @@ export const Select = forwardRef(function Select(
         {/* Custom Premium Dropdown Button */}
         <button
           type="button"
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => {
+            if (!isDisabled) setIsOpen(!isOpen);
+          }}
+          disabled={isDisabled}
           aria-haspopup="listbox"
           aria-expanded={isOpen}
           className={cn(
             'group flex h-10 w-full min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-ink-50 transition text-left focus:outline-none focus:border-brand-400/70 focus:bg-white/[0.07]',
             isOpen && 'border-brand-400/70 bg-white/[0.07]',
+            isDisabled && 'cursor-not-allowed opacity-60',
             error && 'border-rose-400/60 focus:border-rose-400/80',
             className
           )}

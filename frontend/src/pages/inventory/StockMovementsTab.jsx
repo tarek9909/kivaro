@@ -23,6 +23,7 @@ import {
 
 const MOVEMENT_TYPE_OPTIONS = [{ value: '', label: 'All movement types' }, ...MOVEMENT_TYPES];
 const REFERENCE_TYPE_OPTIONS = [{ value: '', label: 'All references' }, ...REFERENCE_TYPES];
+const MOVEMENT_TYPE_LABELS = new Map(MOVEMENT_TYPES.map((option) => [option.value, option.label]));
 
 export default function StockMovementsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -118,7 +119,7 @@ export default function StockMovementsTab() {
       {
         id: 'movement_type',
         header: 'Type',
-        cell: (row) => <Badge tone="brand">{row.movement_type}</Badge>
+        cell: (row) => <Badge tone="brand">{MOVEMENT_TYPE_LABELS.get(row.movement_type) || row.movement_type}</Badge>
       },
       {
         id: 'quantity_change',

@@ -151,12 +151,20 @@ describe('packaging service hierarchy calculations', () => {
     });
     inventoryModel.findVariantById.mockResolvedValue({
       id: 4,
+      item_id: 44,
       store_id: 1,
       status: 'active',
       item_type: 'raw_charcoal',
       tracking_type: 'stocked'
     });
     model.getVariantCost.mockResolvedValue(1.25);
+    model.getWarehouseVariantBalances.mockResolvedValue([
+      {
+        item_variant_id: 4,
+        quantity_on_hand: '800.0000',
+        quantity_reserved: '0.0000'
+      }
+    ]);
     model.getGroupComponents.mockResolvedValue([
       component({
         id: 1,
@@ -347,6 +355,7 @@ describe('packaging assignment output handling', () => {
     });
     inventoryModel.findVariantById.mockResolvedValue({
       id: 4,
+      item_id: 44,
       store_id: 1,
       status: 'active',
       item_type: 'raw_charcoal',
@@ -355,7 +364,7 @@ describe('packaging assignment output handling', () => {
     model.createAssignment.mockImplementation(async (payload) => ({ id: 11, ...payload }));
   });
 
-  test('saves packaging assignments as available batches without consuming stock immediately', async () => {
+  test('saves packaging assignments and consumes stock immediately', async () => {
     const createdAssignment = {
       id: 11,
       store_id: 1,
@@ -387,13 +396,28 @@ describe('packaging assignment output handling', () => {
     };
     model.getWarehouseVariantBalances.mockResolvedValue([
       {
+        item_variant_id: 4,
+        quantity_on_hand: '700.0000',
+        quantity_reserved: '0.0000'
+      },
+      {
         item_variant_id: 1,
         quantity_on_hand: '150.0000',
         quantity_reserved: '0.0000'
       }
     ]);
     model.createAssignment.mockResolvedValue(createdAssignment);
-    model.findAssignmentById.mockResolvedValue(createdAssignment);
+    model.findAssignmentById.mockResolvedValue({ ...createdAssignment, status: 'consumed' });
+    stockService.decreaseStock
+      .mockResolvedValueOnce({
+        stock_movement_id: 21,
+        average_cost: '0.5000',
+        quantity_after: '100.0000'
+      })
+      .mockResolvedValueOnce({
+        stock_movement_id: 22,
+        quantity_after: '50.0000'
+      });
 
     const assignment = await service.createAssignment({
       packaging_group_id: 7,
@@ -411,12 +435,49 @@ describe('packaging assignment output handling', () => {
       output_item_variant_id: null,
       primary_container_count: 100,
       produced_quantity: '100.0000',
-      status: 'batched'
+      status: 'calculated'
+    }), expect.anything());
+    expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
+    expect(stockService.decreaseStock).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
+      itemVariantId: 4,
+      quantity: '600.0000',
+      quantityAlreadyNormalized: true
     }));
-    expect(stockService.decreaseStock).not.toHaveBeenCalled();
-    expect(model.updateAssignment).not.toHaveBeenCalled();
-    expect(assignment.status).toBe('batched');
+    expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({
+      status: 'consumed',
+      produced_quantity: '100.0000'
+    }));
+    expect(assignment.status).toBe('consumed');
     expect(assignment.output_item_variant_id).toBeNull();
+  });
+
+  test('rejects packaging assignments when raw charcoal stock is short', async () => {
+    model.getWarehouseVariantBalances.mockResolvedValue([
+      {
+        item_variant_id: 4,
+        quantity_on_hand: '50.0000',
+        quantity_reserved: '0.0000'
+      },
+      {
+        item_variant_id: 1,
+        quantity_on_hand: '150.0000',
+        quantity_reserved: '0.0000'
+      }
+    ]);
+
+    await expect(service.createAssignment({
+      packaging_group_id: 7,
+      warehouse_id: 2,
+      charcoal_variant_id: 4,
+      charcoal_quantity_kg: 70,
+      notes: null
+    }, 9, actor)).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Packaging assignment cannot be saved while raw charcoal stock is short'
+    });
+
+    expect(model.createAssignment).not.toHaveBeenCalled();
+    expect(stockService.decreaseStock).not.toHaveBeenCalled();
   });
 
   test('consumes packaging assignments without producing finished output stock', async () => {
@@ -465,7 +526,6 @@ describe('packaging assignment output handling', () => {
 
     expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
     expect(stockService.decreaseStock).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
-      quantity: '600.0000',
       quantityAlreadyNormalized: true
     }));
     expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({

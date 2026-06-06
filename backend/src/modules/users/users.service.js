@@ -1,7 +1,9 @@
 const bcrypt = require('bcryptjs');
 const ApiError = require('../../utils/ApiError');
 const { getPagination, getPaginationMeta } = require('../../utils/pagination');
+const { withTransaction } = require('../../utils/transaction');
 const roleModel = require('../roles/roles.model');
+const locationModel = require('../locations/locations.model');
 const userModel = require('./users.model');
 
 async function assertRoleAssignable(roleId, actor = {}, targetStoreId = null) {
@@ -67,17 +69,71 @@ async function getUser(id, actor = {}) {
   return user;
 }
 
-async function createUser(data, actor = {}) {
+async function createUser(data, actor = {}, options = {}) {
   const targetStoreId = actor.is_superadmin ? (data.store_id ?? null) : actor.store_id;
-  await assertRoleAssignable(data.role_id, actor, targetStoreId);
+  const role = await assertRoleAssignable(data.role_id, actor, targetStoreId);
+
+  if (data.create_real_salesman && role.name !== 'salesman') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'create_real_salesman', message: 'Only users with the salesman role can be added as salesmen' }
+    ]);
+  }
 
   const passwordHash = await bcrypt.hash(data.password, 12);
+  const { create_real_salesman, ...userData } = data;
 
-  return userModel.createUser({
-    ...data,
+  const createLinkedRecords = async (connection = null) => {
+    const user = await userModel.createUser({
+      ...userData,
+      store_id: targetStoreId,
+      password_hash: passwordHash
+    }, connection);
+
+    if (create_real_salesman) {
+      await locationModel.createSalesman({
+        store_id: targetStoreId,
+        user_id: user.id,
+        full_name: user.full_name,
+        phone: user.phone,
+        email: user.email,
+        status: user.status
+      }, connection);
+    }
+
+    return user;
+  };
+
+  if (options.connection) {
+    return createLinkedRecords(options.connection);
+  }
+
+  if (create_real_salesman) {
+    return withTransaction(createLinkedRecords);
+  }
+
+  return createLinkedRecords();
+}
+
+async function createSalesmanUser(data, actor = {}, options = {}) {
+  const targetStoreId = actor.is_superadmin ? (data.store_id ?? null) : actor.store_id;
+  const role = await roleModel.findRoleByNameInStore('salesman', targetStoreId);
+
+  if (!role || role.status !== 'active') {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'create_login_user', message: 'Active salesman role does not exist' }
+    ]);
+  }
+
+  return createUser({
+    role_id: role.id,
     store_id: targetStoreId,
-    password_hash: passwordHash
-  });
+    full_name: data.full_name,
+    username: data.username,
+    email: data.email,
+    phone: data.phone,
+    password: data.password,
+    status: data.status || 'active'
+  }, actor, options);
 }
 
 async function updateUser(id, data, actor = {}) {
@@ -126,6 +182,7 @@ async function deleteUser(id, actor = {}) {
 
 module.exports = {
   createUser,
+  createSalesmanUser,
   deleteUser,
   getUser,
   listUsers,

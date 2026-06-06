@@ -5,6 +5,24 @@ import { api } from '@/api/index.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import { Button, Input, Modal, Textarea } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
+import {
+  formatStockQuantity,
+  getEntryUnitLabel
+} from '@/pages/inventory/stockUnits.js';
+
+function formatEntryQuantity(value, item) {
+  const unit = getEntryUnitLabel(item);
+  const formatted = formatNumber(value, { maximumFractionDigits: 4 });
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function stockEquivalent(value, item) {
+  const quantity = Number(value);
+  if (!item || Number.isNaN(quantity) || item.base_unit_type !== 'weight') {
+    return '';
+  }
+  return formatStockQuantity(quantity * Number(item.base_unit_conversion_to_base || 1), item);
+}
 
 function todayString() {
   const now = new Date();
@@ -20,8 +38,9 @@ function buildLines(purchaseOrder) {
     return {
       purchase_order_item_id: item.id,
       item_name: item.item_name,
-      variant_name: item.variant_name,
-      sku: item.sku,
+      base_unit_symbol: item.base_unit_symbol,
+      base_unit_type: item.base_unit_type,
+      base_unit_conversion_to_base: item.base_unit_conversion_to_base,
       ordered_quantity: Number(item.ordered_quantity),
       received_quantity: Number(item.received_quantity || 0),
       remaining,
@@ -134,7 +153,7 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
           ? `Receive PO ${purchaseOrder.po_number || `#${purchaseOrder.id}`}`
           : 'Receive purchase order'
       }
-      description="Post a receipt against the order. Quantities are in the item variant's base unit and default to the remaining amount on each line."
+      description="Post a receipt against the order. Quantities are in the item's base unit and default to the remaining amount on each line."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -185,34 +204,31 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
               <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-ink-50">{line.item_name}</p>
-                  <p className="truncate font-mono text-xs text-ink-400">
-                    {line.variant_name} - {line.sku}
-                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 text-xs text-ink-300">
                   <span>
                     Ordered{' '}
                     <span className="font-mono text-ink-100">
-                      {formatNumber(line.ordered_quantity, { maximumFractionDigits: 4 })}
+                      {formatEntryQuantity(line.ordered_quantity, line)}
                     </span>
                   </span>
                   <span>
                     Received{' '}
                     <span className="font-mono text-ink-100">
-                      {formatNumber(line.received_quantity, { maximumFractionDigits: 4 })}
+                      {formatEntryQuantity(line.received_quantity, line)}
                     </span>
                   </span>
                   <span>
                     Remaining{' '}
                     <span className="font-mono text-ink-100">
-                      {formatNumber(line.remaining, { maximumFractionDigits: 4 })}
+                      {formatEntryQuantity(line.remaining, line)}
                     </span>
                   </span>
                 </div>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
-                  label="Receive quantity (base unit)"
+                  label={`Receive quantity${getEntryUnitLabel(line) ? ` (${getEntryUnitLabel(line)})` : ''}`}
                   type="number"
                   min="0"
                   step="0.0001"
@@ -225,7 +241,9 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
                   description={
                     line.remaining <= 0
                       ? 'Already fully received.'
-                      : 'Set to 0 to skip this line.'
+                      : stockEquivalent(line.receive_quantity, line)
+                        ? `Stock will show as ${stockEquivalent(line.receive_quantity, line)}.`
+                        : 'Set to 0 to skip this line.'
                   }
                 />
                 <Input

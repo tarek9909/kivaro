@@ -23,6 +23,10 @@ import {
 } from '@/components/ui/index.js';
 import { formatDate, formatDateTime, formatNumber } from '@/lib/formatters.js';
 import {
+  formatStockQuantity,
+  getEntryUnitLabel
+} from '@/pages/inventory/stockUnits.js';
+import {
   PURCHASE_ORDER_STATUSES,
   PURCHASES_PERMISSIONS,
   getAvailableActions,
@@ -46,6 +50,22 @@ function Field({ label, value }) {
       </span>
       <span className="break-words text-sm text-ink-100">{value || '-'}</span>
     </div>
+  );
+}
+
+function formatEntryQuantity(value, item) {
+  const unit = getEntryUnitLabel(item);
+  const formatted = formatNumber(value, { maximumFractionDigits: 4 });
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function formatStoredQuantity(value, item) {
+  if (item?.base_unit_type !== 'weight') {
+    return '';
+  }
+  return formatStockQuantity(
+    Number(value || 0) * Number(item.base_unit_conversion_to_base || 1),
+    item
   );
 }
 
@@ -278,15 +298,22 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
                     <tr key={item.id} className="border-b border-white/5 last:border-0">
                       <td className="px-3 py-2 align-top">
                         <p className="truncate font-medium text-ink-50">{item.item_name}</p>
-                        <p className="truncate font-mono text-xs text-ink-400">
-                          {item.variant_name} - {item.sku}
-                        </p>
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                        {formatNumber(item.ordered_quantity, { maximumFractionDigits: 4 })}
+                        {formatEntryQuantity(item.ordered_quantity, item)}
+                        {formatStoredQuantity(item.ordered_quantity, item) ? (
+                          <span className="block text-[10px] text-ink-400">
+                            {formatStoredQuantity(item.ordered_quantity, item)}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                        {formatNumber(item.received_quantity, { maximumFractionDigits: 4 })}
+                        {formatEntryQuantity(item.received_quantity, item)}
+                        {formatStoredQuantity(item.received_quantity, item) ? (
+                          <span className="block text-[10px] text-ink-400">
+                            {formatStoredQuantity(item.received_quantity, item)}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
                         {formatNumber(item.unit_cost, { maximumFractionDigits: 4 })}
@@ -308,19 +335,22 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
                 >
                   <div className="min-w-0">
                     <p className="font-medium text-ink-50">{item.item_name}</p>
-                    <p className="font-mono text-[10px] text-ink-400">
-                      {item.variant_name} - {item.sku}
-                    </p>
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-2 border-t border-white/5 font-mono text-[11px] text-ink-200">
                     <div className="flex justify-between">
                       <span className="text-ink-400">Ordered:</span>
-                      <span className="text-ink-100">{formatNumber(item.ordered_quantity, { maximumFractionDigits: 4 })}</span>
+                      <span className="text-ink-100">{formatEntryQuantity(item.ordered_quantity, item)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-ink-400">Received:</span>
-                      <span className="text-ink-100">{formatNumber(item.received_quantity, { maximumFractionDigits: 4 })}</span>
+                      <span className="text-ink-100">{formatEntryQuantity(item.received_quantity, item)}</span>
                     </div>
+                    {formatStoredQuantity(item.received_quantity, item) ? (
+                      <div className="col-span-2 flex justify-between">
+                        <span className="text-ink-400">Stock display:</span>
+                        <span className="text-ink-100">{formatStoredQuantity(item.received_quantity, item)}</span>
+                      </div>
+                    ) : null}
                     <div className="flex justify-between">
                       <span className="text-ink-400">Cost:</span>
                       <span className="text-ink-100">{formatNumber(item.unit_cost, { maximumFractionDigits: 4 })}</span>

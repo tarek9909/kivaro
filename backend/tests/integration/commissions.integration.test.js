@@ -193,8 +193,92 @@ describe('commission integration', () => {
        WHERE sublocation_target_id = ? AND salesman_id = ? AND status = 'active'`,
       [sublocationTargetResponse.body.data.sublocation_target.id, market.salesman.id]
     );
-    expect(supersededTarget.status).toBe('closed');
+    expect(supersededTarget.status).toBe('active');
     expect(activeTargets).toHaveLength(1);
+  });
+
+  test('target generation updates existing assigned salesman targets and creates only missing targets', async () => {
+    if (!dbReady) return;
+
+    const market = await createLocationFixture(token, 'target_reconcile');
+
+    const locationTargetResponse = await authRequest(token)
+      .post('/api/location-targets')
+      .send({
+        location_id: market.location.id,
+        target_period: 'monthly',
+        period_start: '2026-06-01',
+        period_end: '2026-06-30',
+        target_amount: 100,
+        status: 'active'
+      })
+      .expect(201);
+
+    const sublocationTargetResponse = await authRequest(token)
+      .post(`/api/location-targets/${locationTargetResponse.body.data.location_target.id}/sublocation-targets`)
+      .send({
+        sublocation_id: market.sublocation.id,
+        target_amount: 100,
+        status: 'active'
+      })
+      .expect(201);
+
+    const firstGenerate = await authRequest(token)
+      .post(`/api/sublocation-targets/${sublocationTargetResponse.body.data.sublocation_target.id}/generate-salesman-targets`)
+      .expect(200);
+    const originalTarget = firstGenerate.body.data.salesman_targets[0];
+
+    await dbQuery(
+      'UPDATE salesman_targets SET achieved_sales_amount = 25 WHERE id = ?',
+      [originalTarget.id]
+    );
+
+    const secondSalesman = await authRequest(token)
+      .post('/api/salesmen')
+      .send({
+        full_name: 'Target Reconcile Salesman 2',
+        email: `reconcile_2_${Date.now()}@example.com`,
+        joined_at: '2026-06-01'
+      })
+      .expect(201);
+
+    await authRequest(token)
+      .post(`/api/salesmen/${secondSalesman.body.data.salesman.id}/sublocations`)
+      .send({
+        sublocation_id: market.sublocation.id,
+        assigned_at: '2026-06-01'
+      })
+      .expect(201);
+
+    const secondGenerate = await authRequest(token)
+      .post(`/api/sublocation-targets/${sublocationTargetResponse.body.data.sublocation_target.id}/generate-salesman-targets`)
+      .expect(200);
+
+    expect(secondGenerate.body.data.salesman_targets).toHaveLength(2);
+    const targets = await dbQuery(
+      `SELECT id, salesman_id, target_amount, achieved_sales_amount, status
+       FROM salesman_targets
+       WHERE sublocation_target_id = ? AND status = 'active'
+       ORDER BY salesman_id ASC`,
+      [sublocationTargetResponse.body.data.sublocation_target.id]
+    );
+    expect(targets).toHaveLength(2);
+    expect(targets.map((target) => Number(target.target_amount))).toEqual([50, 50]);
+    expect(targets.find((target) => Number(target.id) === Number(originalTarget.id))).toMatchObject({
+      status: 'active'
+    });
+    expect(Number(targets.find((target) => Number(target.id) === Number(originalTarget.id)).achieved_sales_amount)).toBe(25);
+
+    await authRequest(token)
+      .post(`/api/sublocation-targets/${sublocationTargetResponse.body.data.sublocation_target.id}/generate-salesman-targets`)
+      .expect(200);
+    const activeAfterThirdGenerate = await dbQuery(
+      `SELECT id
+       FROM salesman_targets
+       WHERE sublocation_target_id = ? AND status = 'active'`,
+      [sublocationTargetResponse.body.data.sublocation_target.id]
+    );
+    expect(activeAfterThirdGenerate).toHaveLength(2);
   });
 
   test('target generation requires full allocation and splits rounding exactly', async () => {

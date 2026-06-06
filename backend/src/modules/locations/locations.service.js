@@ -3,6 +3,7 @@ const { decimal } = require('../../utils/money');
 const { assertRowInScope, assertSameStore, scopedData, scopedQuery } = require('../../utils/storeScope');
 const { withTransaction } = require('../../utils/transaction');
 const model = require('./locations.model');
+const userService = require('../users/users.service');
 
 async function mustFind(method, id, message, actor = {}) {
   const row = await method(id);
@@ -15,6 +16,41 @@ async function createSublocation(data, userId, actor = {}) {
   const location = await mustFind(model.findLocationById, scoped.location_id, 'Location not found', actor);
   assertSameStore(location, scoped.store_id, 'location_id', 'Location does not belong to this store');
   return model.createSublocation({ ...scoped, created_by: userId });
+}
+
+async function createSalesman(data, userId, actor = {}) {
+  const { create_login_user, password, ...salesmanData } = data;
+  const scoped = scopedData(salesmanData, actor);
+  const linkedUserId = scoped.user_id || null;
+
+  if (create_login_user) {
+    if (linkedUserId) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'create_login_user', message: 'Salesman is already linked to a user account' }
+      ]);
+    }
+
+    return withTransaction(async (connection) => {
+      const user = await userService.createSalesmanUser({
+        store_id: scoped.store_id,
+        full_name: scoped.full_name,
+        phone: scoped.phone,
+        email: scoped.email,
+        password,
+        status: scoped.status
+      }, actor, { connection });
+
+      return model.createSalesman({
+        ...scoped,
+        user_id: user.id
+      }, connection);
+    });
+  }
+
+  return model.createSalesman({
+    ...scoped,
+    user_id: linkedUserId
+  });
 }
 
 async function updateSublocation(id, data, actor = {}) {
@@ -33,6 +69,11 @@ async function assignSalesmanSublocation(salesmanId, data, actor = {}) {
   const salesman = await mustFind(model.findSalesmanById, salesmanId, 'Salesman not found', actor);
   const sublocation = await mustFind(model.findSublocationById, data.sublocation_id, 'Sublocation not found', actor);
   assertSameStore(sublocation, salesman.store_id, 'sublocation_id', 'Sublocation does not belong to this store');
+  const existing = await model.findActiveSalesmanSublocation(salesmanId, data.sublocation_id);
+
+  if (existing) {
+    throw ApiError.conflict('Salesman is already assigned to this sublocation');
+  }
 
   return model.assignSalesmanSublocation({
     salesman_id: salesmanId,
@@ -42,8 +83,70 @@ async function assignSalesmanSublocation(salesmanId, data, actor = {}) {
   });
 }
 
+function addMonthsClamped(date, months) {
+  const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate()));
+  if (next.getUTCDate() !== date.getUTCDate()) {
+    next.setUTCDate(0);
+  }
+  return next;
+}
+
+function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeDateInput(value) {
+  if (value instanceof Date) {
+    return formatDate(value);
+  }
+  return String(value).slice(0, 10);
+}
+
+function calculatePeriodEnd(targetPeriod, periodStart) {
+  if (!periodStart) {
+    return periodStart;
+  }
+
+  const start = new Date(`${normalizeDateInput(periodStart)}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime())) {
+    return periodStart;
+  }
+
+  const end = new Date(start);
+  if (targetPeriod === 'weekly') {
+    end.setUTCDate(end.getUTCDate() + 6);
+  } else if (targetPeriod === 'monthly') {
+    const next = addMonthsClamped(start, 1);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDate(next);
+  } else if (targetPeriod === 'quarterly') {
+    const next = addMonthsClamped(start, 3);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDate(next);
+  } else if (targetPeriod === 'yearly') {
+    const next = addMonthsClamped(start, 12);
+    next.setUTCDate(next.getUTCDate() - 1);
+    return formatDate(next);
+  }
+
+  return formatDate(end);
+}
+
+function withCalculatedTargetEnd(data, current = {}) {
+  const targetPeriod = data.target_period || current.target_period || 'monthly';
+  const periodStart = data.period_start || current.period_start;
+  if (!periodStart) {
+    return data;
+  }
+
+  return {
+    ...data,
+    period_end: calculatePeriodEnd(targetPeriod, periodStart)
+  };
+}
+
 async function createLocationTarget(data, userId, actor = {}) {
-  const scoped = scopedData(data, actor);
+  const scoped = scopedData(withCalculatedTargetEnd(data), actor);
   const location = await mustFind(model.findLocationById, scoped.location_id, 'Location not found', actor);
   assertSameStore(location, scoped.store_id, 'location_id', 'Location does not belong to this store');
   return model.createLocationTarget({ ...scoped, created_by: userId });
@@ -56,7 +159,8 @@ async function updateLocationTarget(id, data, actor = {}) {
     throw ApiError.conflict('Closed targets cannot be modified');
   }
 
-  const { store_id, location_id, ...updates } = data;
+  const calculated = withCalculatedTargetEnd(data, target);
+  const { store_id, location_id, ...updates } = calculated;
   return model.updateLocationTarget(id, updates);
 }
 
@@ -132,7 +236,7 @@ async function generateSalesmanTargets(sublocationTargetId, actor = {}) {
   }
 
   await withTransaction(async (connection) => {
-    await model.replaceSalesmanTargets(
+    await model.reconcileSalesmanTargets(
       connection,
       sublocationTargetId,
       assignments,
@@ -148,7 +252,7 @@ module.exports = {
   assignSalesmanSublocation,
   createLocation: (data, userId, actor = {}) => model.createLocation({ ...scopedData(data, actor), created_by: userId }),
   createLocationTarget,
-  createSalesman: (data, userId, actor = {}) => model.createSalesman(scopedData(data, actor)),
+  createSalesman,
   createSublocation,
   createSublocationTarget,
   deleteLocation: async (id, actor = {}) => { await mustFind(model.findLocationById, id, 'Location not found', actor); await model.deactivateLocation(id); },
@@ -161,6 +265,10 @@ module.exports = {
     sublocation_targets: await model.getSublocationTargetsByLocationTarget(id)
   }),
   getSalesman: (id, actor = {}) => mustFind(model.findSalesmanById, id, 'Salesman not found', actor),
+  listSalesmanSublocations: async (id, query = {}, actor = {}) => {
+    await mustFind(model.findSalesmanById, id, 'Salesman not found', actor);
+    return model.listSalesmanSublocations(id, query);
+  },
   getSublocation: (id, actor = {}) => mustFind(model.findSublocationById, id, 'Sublocation not found', actor),
   listLocationTargets: (query, actor = {}) => model.listLocationTargets(scopedQuery(query, actor)),
   listLocations: (query, actor = {}) => model.listLocations(scopedQuery(query, actor)),
@@ -184,4 +292,8 @@ module.exports = {
     return model.updateSalesman(id, updates);
   },
   updateSublocation
+};
+
+module.exports._private = {
+  calculatePeriodEnd
 };

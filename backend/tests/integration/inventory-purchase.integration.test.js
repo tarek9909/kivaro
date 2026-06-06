@@ -25,7 +25,7 @@ describe('inventory and purchase integration', () => {
     await closeIntegrationPool();
   });
 
-  test('purchase approval records a supplier payment and partial receiving creates stock movements', async () => {
+  test('purchase approval records a supplier payment and partial receiving increases item stock', async () => {
     if (!dbReady) return;
 
     const fixture = await createInventoryFixture(token, 'inventory_purchase');
@@ -54,7 +54,7 @@ describe('inventory and purchase integration', () => {
         order_date: '2026-05-26',
         items: [
           {
-            item_variant_id: fixture.variant.id,
+            item_id: fixture.item.id,
             ordered_quantity: 5,
             unit_cost: 3
           }
@@ -64,6 +64,8 @@ describe('inventory and purchase integration', () => {
 
     const purchaseOrder = poResponse.body.data.purchase_order;
     const purchaseOrderItem = purchaseOrder.items[0];
+    expect(Number(purchaseOrderItem.item_id)).toBe(Number(fixture.item.id));
+    expect(purchaseOrderItem.item_variant_id).toBeNull();
 
     await authRequest(token)
       .post('/api/supplier-payments')
@@ -87,7 +89,7 @@ describe('inventory and purchase integration', () => {
         order_date: '2026-05-26',
         items: [
           {
-            item_variant_id: fixture.variant.id,
+            item_id: fixture.item.id,
             ordered_quantity: 1,
             unit_cost: 3
           }
@@ -180,17 +182,15 @@ describe('inventory and purchase integration', () => {
     expect(paidClosedResponse.body.data.purchase_order.status).toBe('closed');
     expect(Number(paidClosedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
 
-    const movements = await dbQuery(
-      `SELECT movement_type, quantity_change
-       FROM stock_movements
-       WHERE warehouse_id = ? AND item_variant_id = ?
+    const itemBalances = await dbQuery(
+      `SELECT quantity_on_hand
+       FROM item_stock_balances
+       WHERE warehouse_id = ? AND item_id = ?
        ORDER BY id ASC`,
-      [fixture.warehouse.id, fixture.variant.id]
+      [fixture.warehouse.id, fixture.item.id]
     );
 
-    expect(movements.map((movement) => movement.movement_type)).toEqual(
-      expect.arrayContaining(['purchase_receive'])
-    );
+    expect(Number(itemBalances[0]?.quantity_on_hand)).toBe(2);
   });
 
   test('non-stocked variants are rejected from stock-moving flows', async () => {
@@ -263,7 +263,7 @@ describe('inventory and purchase integration', () => {
         order_date: '2026-05-26',
         items: [
           {
-            item_variant_id: variantId,
+            item_id: itemResponse.body.data.item.id,
             ordered_quantity: 1,
             unit_cost: 1
           }
@@ -293,5 +293,90 @@ describe('inventory and purchase integration', () => {
         unit_cost: 0
       })
       .expect(400);
+  });
+
+  test('purchase receiving normalizes item base units into kg stock', async () => {
+    if (!dbReady) return;
+
+    const warehouseResponse = await authRequest(token)
+      .post('/api/warehouses')
+      .send({
+        name: `Ton Purchase Warehouse ${Date.now()}`,
+        code: `TPW_${Date.now()}`
+      })
+      .expect(201);
+    const itemResponse = await authRequest(token)
+      .post('/api/items')
+      .send({
+        category_id: 1,
+        base_unit_id: 3,
+        name: `Ton Charcoal ${Date.now()}`,
+        code: `TON_CHAR_${Date.now()}`,
+        item_type: 'raw_charcoal',
+        tracking_type: 'stocked',
+        default_cost: 300,
+        default_selling_price: 500,
+        reorder_level: 0
+      })
+      .expect(201);
+    const supplierResponse = await authRequest(token)
+      .post('/api/suppliers')
+      .send({ name: `Ton Supplier ${Date.now()}` })
+      .expect(201);
+    const cashAccountResponse = await authRequest(token)
+      .post('/api/cash-accounts')
+      .send({
+        account_name: `Ton Purchase Cash ${Date.now()}`,
+        account_type: 'cash',
+        opening_balance: 1000
+      })
+      .expect(201);
+
+    const poResponse = await authRequest(token)
+      .post('/api/purchase-orders')
+      .send({
+        supplier_id: supplierResponse.body.data.supplier.id,
+        warehouse_id: warehouseResponse.body.data.warehouse.id,
+        cash_account_id: cashAccountResponse.body.data.cash_account.id,
+        payment_method: 'cash',
+        order_date: '2026-05-26',
+        items: [
+          {
+            item_id: itemResponse.body.data.item.id,
+            ordered_quantity: 2,
+            unit_cost: 300
+          }
+        ]
+      })
+      .expect(201);
+
+    const purchaseOrder = poResponse.body.data.purchase_order;
+    const purchaseOrderItem = purchaseOrder.items[0];
+    expect(purchaseOrderItem.base_unit_symbol).toBe('ton');
+    expect(Number(purchaseOrderItem.ordered_quantity)).toBe(2);
+
+    await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/submit`).expect(200);
+    await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/approve`).expect(200);
+    await authRequest(token)
+      .post(`/api/purchase-orders/${purchaseOrder.id}/receipts`)
+      .send({
+        received_date: '2026-05-26',
+        items: [
+          {
+            purchase_order_item_id: purchaseOrderItem.id,
+            received_quantity: 2,
+            unit_cost: 300
+          }
+        ]
+      })
+      .expect(201);
+
+    const itemBalances = await dbQuery(
+      `SELECT quantity_on_hand
+       FROM item_stock_balances
+       WHERE warehouse_id = ? AND item_id = ?`,
+      [warehouseResponse.body.data.warehouse.id, itemResponse.body.data.item.id]
+    );
+    expect(Number(itemBalances[0]?.quantity_on_hand)).toBe(2000);
   });
 });

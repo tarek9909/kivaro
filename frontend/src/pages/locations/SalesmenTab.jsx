@@ -15,7 +15,7 @@ import {
   Pagination,
   Select
 } from '@/components/ui/index.js';
-import { formatDate } from '@/lib/formatters.js';
+import { formatCurrency, formatDate } from '@/lib/formatters.js';
 import {
   LOCATIONS_PERMISSIONS,
   STATUS_FILTER_OPTIONS
@@ -95,10 +95,29 @@ export default function SalesmenTab() {
         )
       },
       {
+        id: 'base_salary',
+        header: 'Base salary',
+        align: 'right',
+        cell: (row) => (
+          <span className="font-mono text-sm text-ink-100">
+            {formatCurrency(row.base_salary || 0)}
+          </span>
+        )
+      },
+      {
         id: 'joined_at',
         header: 'Joined',
         cell: (row) => (
           <span className="text-sm text-ink-200">{formatDate(row.joined_at)}</span>
+        )
+      },
+      {
+        id: 'active_sublocations',
+        header: 'Assignments',
+        cell: (row) => (
+          <span className="line-clamp-2 text-xs text-ink-200">
+            {row.active_sublocations || '-'}
+          </span>
         )
       },
       {

@@ -29,4 +29,17 @@ describe('ReportsLayout helpers', () => {
       }
     })).toEqual(['net_total_amount', 'total_collected', 'total_debt']);
   });
+
+  it('includes salary metrics in commission summaries', () => {
+    expect(getSummaryMetricKeys('commissions', {
+      metrics: ['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable'],
+      totals: {
+        sales_amount: 1000,
+        target_amount: 900,
+        base_salary: 300,
+        total_commission: 50,
+        total_payable: 350
+      }
+    })).toEqual(['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable']);
+  });
 });

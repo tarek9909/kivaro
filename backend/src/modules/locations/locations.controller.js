@@ -41,6 +41,14 @@ async function assignSalesmanSublocation(req, res) {
   successResponse(res, { statusCode: 201, message: 'Salesman assigned to sublocation', data: { assignment } });
 }
 
+async function listSalesmanSublocations(req, res) {
+  const assignments = await service.listSalesmanSublocations(req.params.id, req.query, req.user);
+  successResponse(res, {
+    message: 'Salesman assignments fetched',
+    data: { assignments }
+  });
+}
+
 async function unassignSalesmanSublocation(req, res) {
   await service.unassignSalesmanSublocation(req.params.id, req.params.sublocationId, req.user);
   successResponse(res, { message: 'Salesman unassigned from sublocation', data: {} });
@@ -85,6 +93,7 @@ module.exports = {
   listLocationSublocations,
   listLocationTargets: list(service.listLocationTargets, 'location_targets', 'Location targets fetched'),
   listLocations: list(service.listLocations, 'locations', 'Locations fetched'),
+  listSalesmanSublocations,
   listSalesmen: list(service.listSalesmen, 'salesmen', 'Salesmen fetched'),
   listSublocations: list(service.listSublocations, 'sublocations', 'Sublocations fetched'),
   updateLocation: update(service.updateLocation, 'location', 'Location updated'),

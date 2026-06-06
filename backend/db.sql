@@ -209,6 +209,7 @@ CREATE TABLE salesmen (
     email VARCHAR(150) NULL,
     vehicle_number VARCHAR(100) NULL,
     national_id VARCHAR(100) NULL,
+    base_salary DECIMAL(18,4) NOT NULL DEFAULT 0,
     status ENUM('active','inactive') NOT NULL DEFAULT 'active',
     joined_at DATE NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -434,6 +435,35 @@ CREATE TABLE item_stock_balances (
     CONSTRAINT chk_item_stock_quantity_allocated CHECK (quantity_allocated >= 0)
 ) ENGINE=InnoDB;
 
+CREATE TABLE item_stock_adjustments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    store_id BIGINT UNSIGNED NULL,
+    warehouse_id BIGINT UNSIGNED NOT NULL,
+    item_id BIGINT UNSIGNED NOT NULL,
+    quantity_change DECIMAL(18,4) NOT NULL,
+    quantity_before DECIMAL(18,4) NOT NULL,
+    quantity_after DECIMAL(18,4) NOT NULL,
+    unit_cost DECIMAL(18,4) NULL,
+    notes TEXT NULL,
+    created_by BIGINT UNSIGNED NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_item_stock_adjustments_store
+        FOREIGN KEY (store_id) REFERENCES stores(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_item_stock_adjustments_warehouse
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_item_stock_adjustments_item
+        FOREIGN KEY (item_id) REFERENCES items(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_item_stock_adjustments_created_by
+        FOREIGN KEY (created_by) REFERENCES users(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    INDEX idx_item_stock_adjustments_store_created (store_id, created_at),
+    INDEX idx_item_stock_adjustments_warehouse (warehouse_id),
+    INDEX idx_item_stock_adjustments_item (item_id)
+) ENGINE=InnoDB;
+
 CREATE TABLE stock_balances (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     warehouse_id BIGINT UNSIGNED NOT NULL,
@@ -542,7 +572,8 @@ CREATE TABLE purchase_orders (
 CREATE TABLE purchase_order_items (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     purchase_order_id BIGINT UNSIGNED NOT NULL,
-    item_variant_id BIGINT UNSIGNED NOT NULL,
+    item_id BIGINT UNSIGNED NOT NULL,
+    item_variant_id BIGINT UNSIGNED NULL,
     ordered_quantity DECIMAL(18,4) NOT NULL,
     received_quantity DECIMAL(18,4) NOT NULL DEFAULT 0,
     unit_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
@@ -552,6 +583,9 @@ CREATE TABLE purchase_order_items (
     CONSTRAINT fk_purchase_order_items_po
         FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_purchase_order_items_item
+        FOREIGN KEY (item_id) REFERENCES items(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT fk_purchase_order_items_variant
         FOREIGN KEY (item_variant_id) REFERENCES item_variants(id)
         ON DELETE RESTRICT ON UPDATE CASCADE,
@@ -582,7 +616,8 @@ CREATE TABLE purchase_receipt_items (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     purchase_receipt_id BIGINT UNSIGNED NOT NULL,
     purchase_order_item_id BIGINT UNSIGNED NOT NULL,
-    item_variant_id BIGINT UNSIGNED NOT NULL,
+    item_id BIGINT UNSIGNED NOT NULL,
+    item_variant_id BIGINT UNSIGNED NULL,
     received_quantity DECIMAL(18,4) NOT NULL,
     unit_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -591,6 +626,9 @@ CREATE TABLE purchase_receipt_items (
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_purchase_receipt_items_po_item
         FOREIGN KEY (purchase_order_item_id) REFERENCES purchase_order_items(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_purchase_receipt_items_item
+        FOREIGN KEY (item_id) REFERENCES items(id)
         ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT fk_purchase_receipt_items_variant
         FOREIGN KEY (item_variant_id) REFERENCES item_variants(id)
@@ -874,6 +912,47 @@ CREATE TABLE packaging_group_assignments (
     INDEX idx_packaging_group_assignments_charcoal_variant (charcoal_variant_id),
     INDEX idx_packaging_group_assignments_output_variant (output_item_variant_id),
     INDEX idx_packaging_group_assignments_production_batch (production_batch_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE packaging_batch_movements (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    store_id BIGINT UNSIGNED NULL,
+    packaging_assignment_id BIGINT UNSIGNED NOT NULL,
+    warehouse_id BIGINT UNSIGNED NOT NULL,
+    item_variant_id BIGINT UNSIGNED NULL,
+    movement_type VARCHAR(100) NOT NULL DEFAULT 'batch_movement',
+    quantity_change DECIMAL(18,4) NOT NULL,
+    quantity_before DECIMAL(18,4) NOT NULL DEFAULT 0,
+    quantity_after DECIMAL(18,4) NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(18,4) NULL,
+    reference_type VARCHAR(100) NULL,
+    reference_id BIGINT UNSIGNED NULL,
+    dispatch_item_id BIGINT UNSIGNED NULL,
+    notes TEXT NULL,
+    created_by BIGINT UNSIGNED NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_batch_movements_assignment (packaging_assignment_id),
+    INDEX idx_batch_movements_store_created (store_id, created_at),
+    INDEX idx_batch_movements_reference (reference_type, reference_id),
+    INDEX idx_batch_movements_variant (item_variant_id),
+    CONSTRAINT fk_batch_movements_store
+        FOREIGN KEY (store_id) REFERENCES stores(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_batch_movements_assignment
+        FOREIGN KEY (packaging_assignment_id) REFERENCES packaging_group_assignments(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_batch_movements_warehouse
+        FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT fk_batch_movements_variant
+        FOREIGN KEY (item_variant_id) REFERENCES item_variants(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_batch_movements_dispatch_item
+        FOREIGN KEY (dispatch_item_id) REFERENCES dispatch_items(id)
+        ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT fk_batch_movements_created_by
+        FOREIGN KEY (created_by) REFERENCES users(id)
+        ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- ============================================================
@@ -1783,7 +1862,10 @@ SELECT
     progress.store_id,
     progress.salesman_id,
     progress.salesman_name,
+    progress.base_salary,
+    progress.location_id,
     progress.location_name,
+    progress.sublocation_id,
     progress.sublocation_name,
     progress.target_period,
     progress.period_start,
@@ -1800,7 +1882,10 @@ FROM (
         st.store_id,
         s.id AS salesman_id,
         s.full_name AS salesman_name,
+        s.base_salary,
+        l.id AS location_id,
         l.name AS location_name,
+        sl.id AS sublocation_id,
         sl.name AS sublocation_name,
         lt.target_period,
         lt.period_start,

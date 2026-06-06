@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link2, Unlink } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
@@ -11,6 +11,7 @@ import {
   Modal,
   Select
 } from '@/components/ui/index.js';
+import { formatDate } from '@/lib/formatters.js';
 import { LOCATIONS_PERMISSIONS } from './locations.config.js';
 import { useSublocationsList } from './useLocationsOptions.js';
 
@@ -28,9 +29,7 @@ function todayString() {
  *   POST   /salesmen/:id/sublocations  { sublocation_id, assigned_at }
  *   DELETE /salesmen/:id/sublocations/:sublocationId
  *
- * It does NOT expose a list of a salesman's current sublocations, so the
- * UI does not pretend to know the active set; the operator picks a
- * sublocation and chooses Assign or Unassign.
+ * Shows current assignments so operators can avoid duplicate active routes.
  */
 export function SalesmanAssignmentModal({ open, onClose, salesman }) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -49,11 +48,18 @@ export function SalesmanAssignmentModal({ open, onClose, salesman }) {
   }, [open, salesman?.id]);
 
   const sublocationsQuery = useSublocationsList(open && canPickSublocations);
+  const assignmentsQuery = useQuery({
+    queryKey: ['locations', 'salesmen', salesman?.id, 'sublocations'],
+    queryFn: () => api.locations.salesmen.sublocations(salesman.id),
+    enabled: Boolean(open && salesman?.id)
+  });
   const sublocations = sublocationsQuery.data?.data?.sublocations || [];
+  const assignments = assignmentsQuery.data?.data?.assignments || [];
 
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['locations', 'salesmen'] });
     queryClient.invalidateQueries({ queryKey: ['locations', 'options', 'salesmen'] });
+    queryClient.invalidateQueries({ queryKey: ['locations', 'salesmen', salesman?.id, 'sublocations'] });
   }
 
   const assignMutation = useMutation({
@@ -148,6 +154,38 @@ export function SalesmanAssignmentModal({ open, onClose, salesman }) {
       }
     >
       <div className="space-y-4">
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ink-400">
+            Current assignments
+          </p>
+          {assignmentsQuery.isPending ? (
+            <p className="mt-2 text-sm text-ink-300">Loading assignments...</p>
+          ) : assignmentsQuery.isError ? (
+            <p className="mt-2 text-sm text-rose-300">
+              {getErrorMessage(assignmentsQuery.error, 'Could not load assignments.')}
+            </p>
+          ) : assignments.length ? (
+            <ul className="mt-2 space-y-2">
+              {assignments.map((assignment) => (
+                <li
+                  key={assignment.id}
+                  className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                >
+                  <span className="text-ink-100">
+                    {assignment.location_name ? `${assignment.location_name} - ` : ''}
+                    {assignment.sublocation_name}
+                  </span>
+                  <span className="text-xs text-ink-400">
+                    {assignment.status}
+                    {assignment.assigned_at ? ` from ${formatDate(assignment.assigned_at)}` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-ink-300">No assignments yet.</p>
+          )}
+        </div>
         {canPickSublocations ? (
           <Select
             label="Sublocation"

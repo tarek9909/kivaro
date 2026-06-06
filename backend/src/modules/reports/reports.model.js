@@ -26,6 +26,8 @@ const customerBalances = viewReport('v_customer_balances', [
 
 const salesmanTargetProgress = viewReport('v_salesman_target_progress', [
   { key: 'salesman_id', column: 'salesman_id' },
+  { key: 'location_id', column: 'location_id' },
+  { key: 'sublocation_id', column: 'sublocation_id' },
   { key: 'date_from', column: 'period_start', operator: 'date_gte' },
   { key: 'date_to', column: 'period_end', operator: 'date_lte' },
   { key: 'search', type: 'search', fields: ['salesman_name', 'location_name', 'sublocation_name'] }
@@ -223,8 +225,9 @@ const packagingShortages = (input, actor = {}) => listRecords({
 
 const commissions = (input, actor = {}) => listRecords({
   select: `SELECT cc.id, s.full_name AS salesman_name, sl.name AS sublocation_name,
-    cc.period_start, cc.period_end, cc.target_amount, cc.sales_amount,
-    cc.total_commission, cc.status, cc.created_at`,
+    cc.period_start, cc.period_end, s.base_salary, cc.target_amount, cc.sales_amount,
+    cc.total_commission, (s.base_salary + cc.total_commission) AS total_payable,
+    cc.status, cc.created_at`,
   from: 'commission_calculations cc',
   joins: `
     JOIN salesmen s ON s.id = cc.salesman_id

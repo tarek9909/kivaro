@@ -7,7 +7,8 @@ import {
   Button,
   Input,
   Modal,
-  Select
+  Select,
+  Switch
 } from '@/components/ui/index.js';
 import { STATUSES } from './locations.config.js';
 
@@ -22,8 +23,11 @@ function emptyForm(salesman) {
     email: salesman?.email ?? '',
     vehicle_number: salesman?.vehicle_number ?? '',
     national_id: salesman?.national_id ?? '',
+    base_salary: salesman?.base_salary ?? 0,
     joined_at: salesman?.joined_at ? String(salesman.joined_at).slice(0, 10) : '',
-    status: salesman?.status ?? 'active'
+    status: salesman?.status ?? 'active',
+    create_login_user: false,
+    password: ''
   };
 }
 
@@ -48,6 +52,7 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
       toast.success(isEdit ? 'Salesman updated' : 'Salesman created');
       queryClient.invalidateQueries({ queryKey: ['locations', 'salesmen'] });
       queryClient.invalidateQueries({ queryKey: ['locations', 'options', 'salesmen'] });
+      queryClient.invalidateQueries({ queryKey: ['users'] });
       onClose?.();
     },
     onError: (error) => {
@@ -57,7 +62,12 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
   });
 
   function handleChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'create_login_user' && value ? { user_id: '' } : {}),
+      ...(field === 'create_login_user' && !value ? { password: '' } : {})
+    }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
@@ -70,6 +80,12 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
     if (form.user_id && Number.isNaN(Number(form.user_id))) {
       next.user_id = 'User ID must be numeric.';
     }
+    if (form.base_salary === '' || Number.isNaN(Number(form.base_salary)) || Number(form.base_salary) < 0) {
+      next.base_salary = 'Base salary cannot be negative.';
+    }
+    if (!isEdit && form.create_login_user && (!form.password || form.password.length < 8)) {
+      next.password = 'Password must be at least 8 characters.';
+    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -77,16 +93,22 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
   function handleSubmit(event) {
     event.preventDefault();
     if (!validate()) return;
-    mutation.mutate({
+    const payload = {
       user_id: form.user_id ? Number(form.user_id) : null,
       full_name: form.full_name.trim(),
       phone: form.phone?.trim() || null,
       email: form.email?.trim() || null,
       vehicle_number: form.vehicle_number?.trim() || null,
       national_id: form.national_id?.trim() || null,
+      base_salary: Number(form.base_salary) || 0,
       joined_at: form.joined_at || null,
       status: form.status
-    });
+    };
+    if (!isEdit && form.create_login_user) {
+      payload.create_login_user = true;
+      payload.password = form.password;
+    }
+    mutation.mutate(payload);
   }
 
   return (
@@ -144,6 +166,16 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
             error={errors.national_id}
           />
         </div>
+        <Input
+          label="Base salary"
+          type="number"
+          min="0"
+          step="0.0001"
+          value={form.base_salary}
+          onChange={(event) => handleChange('base_salary', event.target.value)}
+          error={errors.base_salary}
+          description="Monthly base salary used in salesman reports."
+        />
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="User ID"
@@ -153,6 +185,7 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
             onChange={(event) => handleChange('user_id', event.target.value)}
             error={errors.user_id}
             description="Optional. Link to a system user account."
+            disabled={!isEdit && form.create_login_user}
           />
           <Input
             label="Joined date"
@@ -162,6 +195,26 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
             error={errors.joined_at}
           />
         </div>
+        {!isEdit && (
+          <Switch
+            checked={form.create_login_user}
+            onChange={(checked) => handleChange('create_login_user', checked)}
+            label="Create login user"
+            description="Add this salesman to Users with the salesman role and link the records automatically."
+          />
+        )}
+        {!isEdit && form.create_login_user && (
+          <Input
+            label="Password"
+            type="password"
+            value={form.password}
+            onChange={(event) => handleChange('password', event.target.value)}
+            error={errors.password}
+            autoComplete="new-password"
+            description="Minimum 8 characters."
+            required
+          />
+        )}
         <Select
           label="Status"
           value={form.status}

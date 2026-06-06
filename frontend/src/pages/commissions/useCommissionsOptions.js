@@ -11,3 +11,12 @@ export function useCommissionRulesList(enabled = true) {
     enabled
   });
 }
+
+export function useSalesmanTargetsOptions(enabled = true) {
+  return useQuery({
+    queryKey: ['commissions', 'options', 'salesman-targets'],
+    queryFn: () => api.reports.salesmanTargetProgress.get({ page: 1, limit: 250 }),
+    staleTime: 60_000,
+    enabled
+  });
+}

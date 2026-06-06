@@ -54,6 +54,7 @@ export function AddDispatchItemModal({
     () => assignments.find((assignment) => String(assignment.id) === String(form.packaging_assignment_id)),
     [assignments, form.packaging_assignment_id]
   );
+  const selectedAssignmentVariantId = selectedAssignment?.output_item_variant_id || selectedAssignment?.charcoal_variant_id || '';
   const vatQuery = useQuery({
     queryKey: ['vat-settings'],
     queryFn: () => api.settings.vat.get(),
@@ -83,8 +84,9 @@ export function AddDispatchItemModal({
 
   function validate() {
     const next = {};
-    const variantId = Number(form.item_variant_id);
-    if (!form.item_variant_id || Number.isNaN(variantId) || variantId <= 0) {
+    const effectiveVariantId = selectedAssignmentVariantId || form.item_variant_id;
+    const variantId = Number(effectiveVariantId);
+    if (!effectiveVariantId || Number.isNaN(variantId) || variantId <= 0) {
       next.item_variant_id = 'Variant is required.';
     }
     const qty = Number(form.quantity);
@@ -108,12 +110,16 @@ export function AddDispatchItemModal({
     event.preventDefault();
     if (!validate()) return;
     const payload = {
-      item_variant_id: Number(form.item_variant_id),
       quantity: Number(form.quantity),
       unit_price: Number(form.unit_price)
     };
     if (form.packaging_assignment_id) {
       payload.packaging_assignment_id = Number(form.packaging_assignment_id);
+      if (selectedAssignmentVariantId) {
+        payload.item_variant_id = Number(selectedAssignmentVariantId);
+      }
+    } else {
+      payload.item_variant_id = Number(form.item_variant_id);
     }
     if (form.unit_cost !== '') payload.unit_cost = Number(form.unit_cost);
     mutation.mutate(payload);
@@ -147,32 +153,60 @@ export function AddDispatchItemModal({
         className="space-y-4"
         noValidate
       >
+        {dispatchCustomer && (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">
+              Customer
+            </p>
+            <p className="mt-1 font-medium text-ink-50">
+              {dispatchCustomer.customer_name || `Customer #${dispatchCustomer.customer_id}`}
+            </p>
+            <p className="mt-0.5 text-xs text-ink-400">
+              {dispatchCustomer.location_name || '-'}
+              {dispatchCustomer.sublocation_name ? ` - ${dispatchCustomer.sublocation_name}` : ''}
+            </p>
+          </div>
+        )}
         {canPickInventory && (
           <Select
-            label="Assignment batch"
+            label="Batch assigned to this customer"
             value={form.packaging_assignment_id}
             onChange={(event) => {
+              const nextAssignment = assignments.find((assignment) => String(assignment.id) === String(event.target.value));
               setForm((prev) => ({
                 ...prev,
-                packaging_assignment_id: event.target.value
+                packaging_assignment_id: event.target.value,
+                item_variant_id: nextAssignment?.output_item_variant_id || nextAssignment?.charcoal_variant_id || prev.item_variant_id
               }));
               setErrors((prev) => ({ ...prev, packaging_assignment_id: undefined, item_variant_id: undefined, quantity: undefined }));
             }}
-            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} primary containers available / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : undefined}
+            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} containers available for assignment / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : 'Optional. Use when this customer is receiving from a prepared packaging batch.'}
           >
-            <option value="">No packaging batch</option>
+            <option value="">No batch</option>
             {assignments.map((assignment) => (
               <option
                 key={assignment.id}
                 value={assignment.id}
                 disabled={Number(assignment.available_quantity || 0) <= 0}
               >
-                Batch #{assignment.id} - {assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available / cost {formatNumber(assignment.calculation_json?.cost_per_primary_container ?? assignment.cost_per_kg, { maximumFractionDigits: 4 })})
+                Batch #{assignment.id} - {assignment.output_item_name || assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available)
               </option>
             ))}
           </Select>
         )}
-        {canPickInventory ? (
+        {selectedAssignment ? (
+          <Input
+            label="Batch item"
+            value={[
+              selectedAssignment.output_item_name,
+              selectedAssignment.output_variant_name || selectedAssignment.charcoal_variant_name,
+              selectedAssignment.output_sku || selectedAssignment.charcoal_sku
+            ].filter(Boolean).join(' - ') || `Variant #${selectedAssignmentVariantId}`}
+            readOnly
+            error={errors.item_variant_id}
+            description="Determined by the selected batch."
+          />
+        ) : canPickInventory ? (
           <Select
             label="Variant"
             value={form.item_variant_id}
@@ -205,7 +239,7 @@ export function AddDispatchItemModal({
         )}
         <div className="grid gap-4 sm:grid-cols-3">
           <Input
-            label={selectedAssignment ? 'Primary containers' : 'Quantity (base unit)'}
+            label={selectedAssignment ? 'Containers for customer' : 'Quantity (base unit)'}
             type="number"
             min="0"
             step="0.0001"

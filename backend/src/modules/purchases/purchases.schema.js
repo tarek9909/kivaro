@@ -28,7 +28,7 @@ const supplierBody = z.object({
 });
 
 const poItem = z.object({
-  item_variant_id: z.coerce.number().int().positive(),
+  item_id: z.coerce.number().int().positive(),
   ordered_quantity: z.coerce.number().positive(),
   unit_cost: z.coerce.number().min(0),
   notes: z.string().trim().optional().nullable()

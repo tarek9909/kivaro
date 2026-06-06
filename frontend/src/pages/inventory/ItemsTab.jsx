@@ -19,7 +19,6 @@ import {
 } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
 import {
-  PRODUCT_ITEM_TYPES,
   STATUSES,
   TRACKING_TYPES,
   INVENTORY_PERMISSIONS
@@ -28,7 +27,6 @@ import { useCategoriesOptions, useUnitsOptions, useWarehousesOptions } from './u
 import { formatStockQuantity } from './stockUnits.js';
 
 const STATUS_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUSES];
-const ITEM_TYPE_OPTIONS = [{ value: '', label: 'All product types' }, ...PRODUCT_ITEM_TYPES];
 
 function emptyForm(item) {
   return {
@@ -90,7 +88,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     if (!form.code?.trim()) next.code = 'Code is required.';
     if (!form.category_id) next.category_id = 'Category is required.';
     if (!form.base_unit_id) next.base_unit_id = 'Base unit is required.';
-    if (!form.item_type) next.item_type = 'Item type is required.';
     if (form.default_cost !== '' && Number(form.default_cost) < 0) {
       next.default_cost = 'Default cost cannot be negative.';
     }
@@ -205,19 +202,7 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
           </Select>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Select
-            label="Item type"
-            value={form.item_type}
-            onChange={(event) => handleChange('item_type', event.target.value)}
-            error={errors.item_type}
-          >
-            {PRODUCT_ITEM_TYPES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+        <div className="grid gap-4 md:grid-cols-2">
           <Select
             label="Tracking"
             value={form.tracking_type}
@@ -328,7 +313,6 @@ export default function ItemsTab() {
 
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  const [itemType, setItemType] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
@@ -345,14 +329,10 @@ export default function ItemsTab() {
     const params = { page, limit };
     if (debouncedSearch) params.search = debouncedSearch;
     if (status) params.status = status;
-    if (itemType) {
-      params.item_type = itemType;
-    } else {
-      params.exclude_item_type = 'packaging';
-    }
+    params.exclude_item_type = 'packaging';
     if (categoryId) params.category_id = categoryId;
     return params;
-  }, [debouncedSearch, status, itemType, categoryId, page, limit]);
+  }, [debouncedSearch, status, categoryId, page, limit]);
 
   const listQuery = useQuery({
     queryKey: ['inventory', 'items', queryParams],
@@ -412,11 +392,6 @@ export default function ItemsTab() {
         cell: (row) => (
           <span className="text-sm text-ink-200">{row.category_name || '-'}</span>
         )
-      },
-      {
-        id: 'item_type',
-        header: 'Type',
-        cell: (row) => <Badge tone="brand">{row.item_type}</Badge>
       },
       {
         id: 'tracking_type',
@@ -538,20 +513,7 @@ export default function ItemsTab() {
             : 'max-h-0 opacity-0 p-0 border-transparent overflow-hidden'
         }`}
       >
-        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-          <Select
-            value={itemType}
-            onChange={(event) => {
-              setItemType(event.target.value);
-              setPage(1);
-            }}
-          >
-            {ITEM_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+        <div className="grid gap-3 sm:grid-cols-2">
           <Select
             value={categoryId}
             onChange={(event) => {

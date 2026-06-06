@@ -200,6 +200,11 @@ async function listItems({ filters, pagination }) {
     params.push(filters.item_type);
   }
 
+  if (filters.tracking_type) {
+    conditions.push('i.tracking_type = ?');
+    params.push(filters.tracking_type);
+  }
+
   if (filters.exclude_item_type) {
     conditions.push('i.item_type <> ?');
     params.push(filters.exclude_item_type);
@@ -568,6 +573,27 @@ async function findVariantById(id, connection = null) {
   return rows[0] || null;
 }
 
+async function findActiveStockedVariantByItemId(itemId, connection = null) {
+  const sql = `SELECT iv.id, iv.store_id, iv.item_id, iv.variant_name, iv.sku, iv.attributes_json,
+       iv.cost, iv.selling_price, iv.status, i.name AS item_name, i.item_type, i.tracking_type, i.base_unit_id,
+       u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
+       u.conversion_to_base AS base_unit_conversion_to_base, iv.created_at, iv.updated_at
+     FROM item_variants iv
+     JOIN items i ON i.id = iv.item_id
+     JOIN units u ON u.id = i.base_unit_id
+     WHERE iv.item_id = ?
+       AND iv.status = 'active'
+       AND i.status = 'active'
+       AND i.tracking_type = 'stocked'
+     ORDER BY iv.id ASC
+     LIMIT 1`;
+  const rows = connection
+    ? (await connection.execute(sql, [itemId]))[0]
+    : await query(sql, [itemId]);
+
+  return rows[0] || null;
+}
+
 async function createVariant(data, connection = null) {
   const executor = connection || { execute: (sql, params) => query(sql, params).then((result) => [result]) };
   const [result] = await executor.execute(
@@ -790,8 +816,14 @@ async function listStockBalances({ filters, pagination }) {
       CONCAT('PA-', pga.id) AS sku,
       'pc' AS unit_symbol,
       pga.produced_quantity AS quantity_on_hand,
-      COALESCE(allocated.allocated_quantity, 0) AS quantity_reserved,
-      GREATEST(pga.produced_quantity - COALESCE(allocated.allocated_quantity, 0), 0) AS quantity_available,
+      CASE
+        WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
+        ELSE COALESCE(allocated.allocated_quantity, 0)
+      END AS quantity_reserved,
+      GREATEST(pga.produced_quantity - CASE
+        WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
+        ELSE COALESCE(allocated.allocated_quantity, 0)
+      END, 0) AS quantity_available,
       COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_primary_container')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_packaging_group')), pga.cost_per_kg) AS average_cost,
       pga.produced_quantity * COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_primary_container')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.cost_per_packaging_group')), pga.cost_per_kg) AS stock_value
     FROM packaging_group_assignments pga
@@ -808,6 +840,13 @@ async function listStockBalances({ filters, pagination }) {
         AND dr.status <> 'cancelled'
       GROUP BY di.packaging_assignment_id
     ) allocated ON allocated.packaging_assignment_id = pga.id
+    LEFT JOIN (
+      SELECT packaging_assignment_id,
+        COUNT(*) AS movement_count,
+        GREATEST(-SUM(quantity_change), 0) AS allocated_quantity
+      FROM packaging_batch_movements
+      GROUP BY packaging_assignment_id
+    ) batch_movements ON batch_movements.packaging_assignment_id = pga.id
     ${batchWhere}`;
   const params = [...stockParams, ...batchParams];
   const countRows = await query(
@@ -823,69 +862,163 @@ async function listStockBalances({ filters, pagination }) {
 
   return {
     rows,
-    total: Number(countRows[0]?.total || 0)
+    total: Number(countRows[0]?.total || 0),
+    batchSummary: await getBatchStockSummary(batchSelect, batchParams)
+  };
+}
+
+async function getBatchStockSummary(batchSelect, params) {
+  const rows = await query(
+    `SELECT
+       COUNT(*) AS batch_count,
+       COALESCE(SUM(quantity_on_hand), 0) AS total_batch_stock,
+       COALESCE(SUM(quantity_reserved), 0) AS total_batch_allocated,
+       COALESCE(SUM(quantity_available), 0) AS total_batch_remaining,
+       COALESCE(SUM(stock_value), 0) AS total_batch_value
+     FROM (${batchSelect}) batches`,
+    params
+  ) || [];
+
+  return {
+    batch_count: Number(rows[0]?.batch_count || 0),
+    total_batch_stock: rows[0]?.total_batch_stock || '0.0000',
+    total_batch_allocated: rows[0]?.total_batch_allocated || '0.0000',
+    total_batch_remaining: rows[0]?.total_batch_remaining || '0.0000',
+    total_batch_value: rows[0]?.total_batch_value || '0.0000'
   };
 }
 
 async function listStockMovements({ filters, pagination }) {
-  const conditions = [];
-  const params = [];
+  const stockConditions = [];
+  const stockParams = [];
+  const batchConditions = [];
+  const batchParams = [];
 
   if (filters.warehouse_id) {
-    conditions.push('sm.warehouse_id = ?');
-    params.push(filters.warehouse_id);
+    stockConditions.push('sm.warehouse_id = ?');
+    stockParams.push(filters.warehouse_id);
+    batchConditions.push('bm.warehouse_id = ?');
+    batchParams.push(filters.warehouse_id);
   }
 
   if (filters.item_variant_id) {
-    conditions.push('sm.item_variant_id = ?');
-    params.push(filters.item_variant_id);
+    stockConditions.push('sm.item_variant_id = ?');
+    stockParams.push(filters.item_variant_id);
+    batchConditions.push('bm.item_variant_id = ?');
+    batchParams.push(filters.item_variant_id);
   }
 
   if (filters.movement_type) {
-    conditions.push('sm.movement_type = ?');
-    params.push(filters.movement_type);
+    if (filters.movement_type === 'batch_movement') {
+      stockConditions.push('1 = 0');
+      batchConditions.push('bm.movement_type = ?');
+      batchParams.push(filters.movement_type);
+    } else {
+      stockConditions.push('sm.movement_type = ?');
+      stockParams.push(filters.movement_type);
+      batchConditions.push('1 = 0');
+    }
   }
 
   if (filters.reference_type) {
-    conditions.push('sm.reference_type = ?');
-    params.push(filters.reference_type);
+    stockConditions.push('sm.reference_type = ?');
+    stockParams.push(filters.reference_type);
+    batchConditions.push('bm.reference_type = ?');
+    batchParams.push(filters.reference_type);
   }
   if (filters.store_id) {
-    conditions.push('sm.store_id = ?');
-    params.push(filters.store_id);
+    stockConditions.push('sm.store_id = ?');
+    stockParams.push(filters.store_id);
+    batchConditions.push('bm.store_id = ?');
+    batchParams.push(filters.store_id);
   }
 
   if (filters.date_from) {
-    conditions.push('DATE(sm.created_at) >= ?');
-    params.push(filters.date_from);
+    stockConditions.push('DATE(sm.created_at) >= ?');
+    stockParams.push(filters.date_from);
+    batchConditions.push('DATE(bm.created_at) >= ?');
+    batchParams.push(filters.date_from);
   }
 
   if (filters.date_to) {
-    conditions.push('DATE(sm.created_at) <= ?');
-    params.push(filters.date_to);
+    stockConditions.push('DATE(sm.created_at) <= ?');
+    stockParams.push(filters.date_to);
+    batchConditions.push('DATE(bm.created_at) <= ?');
+    batchParams.push(filters.date_to);
   }
 
-  return listWithCount({
-    select: `SELECT
-      sm.id, sm.store_id, sm.warehouse_id, w.name AS warehouse_name, sm.item_variant_id, iv.variant_name,
+  if (filters.search) {
+    const term = `%${filters.search}%`;
+    stockConditions.push('(i.name LIKE ? OR iv.variant_name LIKE ? OR iv.sku LIKE ? OR sm.reference_type LIKE ?)');
+    stockParams.push(term, term, term, term);
+    batchConditions.push(`(pg.name LIKE ? OR ov.variant_name LIKE ? OR ov.sku LIKE ? OR CONCAT('PA-', pga.id) LIKE ? OR bm.reference_type LIKE ?)`);
+    batchParams.push(term, term, term, term, term);
+  }
+
+  const stockWhere = stockConditions.length ? `WHERE ${stockConditions.join(' AND ')}` : '';
+  const batchWhere = batchConditions.length ? `WHERE ${batchConditions.join(' AND ')}` : '';
+  const stockSelect = `SELECT
+      CONCAT('stock-', sm.id) AS id,
+      sm.id AS movement_id, sm.store_id, sm.warehouse_id, w.name AS warehouse_name, sm.item_variant_id, iv.variant_name,
       iv.sku, i.name AS item_name, sm.movement_type, sm.quantity_change, sm.quantity_before,
       sm.quantity_after, sm.reserved_quantity_change, sm.reserved_quantity_before,
       sm.reserved_quantity_after, sm.unit_cost, sm.reference_type, sm.reference_id, sm.notes,
       CASE WHEN u.unit_type = 'weight' THEN 'kg' ELSE u.symbol END AS base_unit_symbol,
-      u.unit_type AS base_unit_type, sm.created_by, sm.created_at`,
-    from: 'stock_movements sm',
-    joins: `
+      u.unit_type AS base_unit_type, sm.created_by, sm.created_at
+    FROM stock_movements sm
       JOIN warehouses w ON w.id = sm.warehouse_id
       JOIN item_variants iv ON iv.id = sm.item_variant_id
       JOIN items i ON i.id = iv.item_id
-      JOIN units u ON u.id = i.base_unit_id`,
-    conditions,
-    params,
-    search: filters.search,
-    searchFields: ['i.name', 'iv.variant_name', 'iv.sku', 'sm.reference_type'],
-    orderBy: 'ORDER BY sm.created_at DESC, sm.id DESC',
-    pagination
-  });
+      JOIN units u ON u.id = i.base_unit_id
+    ${stockWhere}`;
+  const batchSelect = `SELECT
+      CONCAT('batch-', bm.id) AS id,
+      bm.id AS movement_id,
+      bm.store_id,
+      bm.warehouse_id,
+      w.name AS warehouse_name,
+      bm.item_variant_id,
+      COALESCE(ov.variant_name, JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_variant_name')), JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_name'))) AS variant_name,
+      COALESCE(ov.sku, CONCAT('PA-', pga.id)) AS sku,
+      COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pga.calculation_json, '$.primary_container_item_name')), pg.name) AS item_name,
+      bm.movement_type,
+      bm.quantity_change,
+      bm.quantity_before,
+      bm.quantity_after,
+      0 AS reserved_quantity_change,
+      0 AS reserved_quantity_before,
+      0 AS reserved_quantity_after,
+      bm.unit_cost,
+      bm.reference_type,
+      bm.reference_id,
+      bm.notes,
+      'pc' AS base_unit_symbol,
+      'quantity' AS base_unit_type,
+      bm.created_by,
+      bm.created_at
+    FROM packaging_batch_movements bm
+      JOIN packaging_group_assignments pga ON pga.id = bm.packaging_assignment_id
+      JOIN packaging_groups pg ON pg.id = pga.packaging_group_id
+      JOIN warehouses w ON w.id = bm.warehouse_id
+      LEFT JOIN item_variants ov ON ov.id = bm.item_variant_id
+    ${batchWhere}`;
+  const params = [...stockParams, ...batchParams];
+
+  const countRows = await query(
+    `SELECT COUNT(*) AS total FROM (${stockSelect} UNION ALL ${batchSelect}) movements`,
+    params
+  );
+  const rows = await query(
+    `SELECT * FROM (${stockSelect} UNION ALL ${batchSelect}) movements
+     ORDER BY created_at DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, pagination.limit, pagination.offset]
+  );
+
+  return {
+    rows,
+    total: Number(countRows[0]?.total || 0)
+  };
 }
 
 async function listStockAdjustments({ filters, pagination }) {
@@ -1211,6 +1344,7 @@ module.exports = {
   hardDeleteItemCascade,
   hardDeleteVariant,
   findCategoryById,
+  findActiveStockedVariantByItemId,
   findItemById,
   findUnitById,
   findVariantById,

@@ -1,5 +1,5 @@
 const { query } = require('../../bootstrap/db');
-const { insertRecord, listRecords, updateRecord } = require('../../utils/crud');
+const { insertRecord, listRecords, nullable, updateRecord } = require('../../utils/crud');
 
 const groupSelect = `SELECT
   pg.id, pg.store_id, pg.name, pg.code, pg.charcoal_variant_id,
@@ -126,7 +126,10 @@ async function listAssignments(input) {
       pga.output_item_variant_id, ov.variant_name AS output_variant_name, ov.sku AS output_sku,
       oi.name AS output_item_name,
       pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
-      GREATEST(pga.produced_quantity - COALESCE(allocated.allocated_quantity, 0), 0) AS available_quantity,
+      GREATEST(pga.produced_quantity - CASE
+        WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
+        ELSE COALESCE(allocated.allocated_quantity, 0)
+      END, 0) AS available_quantity,
       pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
       pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
       pga.notes, pga.created_by, pga.created_at`,
@@ -145,7 +148,14 @@ async function listAssignments(input) {
         WHERE di.packaging_assignment_id IS NOT NULL
           AND dr.status <> 'cancelled'
         GROUP BY di.packaging_assignment_id
-      ) allocated ON allocated.packaging_assignment_id = pga.id`,
+      ) allocated ON allocated.packaging_assignment_id = pga.id
+      LEFT JOIN (
+        SELECT packaging_assignment_id,
+          COUNT(*) AS movement_count,
+          GREATEST(-SUM(quantity_change), 0) AS allocated_quantity
+        FROM packaging_batch_movements
+        GROUP BY packaging_assignment_id
+      ) batch_movements ON batch_movements.packaging_assignment_id = pga.id`,
     filters: [
       { key: 'store_id', column: 'pga.store_id' },
       { key: 'status', column: 'pga.status' },
@@ -160,11 +170,40 @@ async function listAssignments(input) {
   }, input);
 }
 
-async function createAssignment(data) {
+async function createAssignment(data, connection = null) {
   const payload = {
     ...data,
     calculation_json: data.calculation_json ? JSON.stringify(data.calculation_json) : null
   };
+
+  if (connection) {
+    const [result] = await connection.execute(
+      `INSERT INTO packaging_group_assignments (
+        store_id, packaging_group_id, warehouse_id, charcoal_variant_id, output_item_variant_id,
+        charcoal_quantity_kg, primary_container_count, produced_quantity, total_packaging_cost,
+        cost_per_kg, status, production_batch_id, calculation_json, notes, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nullable(payload.store_id),
+        payload.packaging_group_id,
+        payload.warehouse_id,
+        payload.charcoal_variant_id,
+        nullable(payload.output_item_variant_id),
+        payload.charcoal_quantity_kg,
+        payload.primary_container_count,
+        payload.produced_quantity,
+        payload.total_packaging_cost,
+        payload.cost_per_kg,
+        payload.status,
+        nullable(payload.production_batch_id),
+        payload.calculation_json,
+        nullable(payload.notes),
+        nullable(payload.created_by)
+      ]
+    );
+
+    return { id: result.insertId, ...payload };
+  }
 
   return insertRecord('packaging_group_assignments', payload);
 }
@@ -180,7 +219,10 @@ async function findAssignmentById(id) {
        pga.id, pga.store_id, pga.packaging_group_id, pga.warehouse_id,
        pga.charcoal_variant_id, pga.output_item_variant_id,
        pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
-       GREATEST(pga.produced_quantity - COALESCE(allocated.allocated_quantity, 0), 0) AS available_quantity,
+       GREATEST(pga.produced_quantity - CASE
+         WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
+         ELSE COALESCE(allocated.allocated_quantity, 0)
+       END, 0) AS available_quantity,
        pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
        pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
        pga.notes, pga.created_by, pga.created_at
@@ -194,8 +236,34 @@ async function findAssignmentById(id) {
          AND dr.status <> 'cancelled'
        GROUP BY di.packaging_assignment_id
      ) allocated ON allocated.packaging_assignment_id = pga.id
+     LEFT JOIN (
+       SELECT packaging_assignment_id,
+         COUNT(*) AS movement_count,
+         GREATEST(-SUM(quantity_change), 0) AS allocated_quantity
+       FROM packaging_batch_movements
+       GROUP BY packaging_assignment_id
+     ) batch_movements ON batch_movements.packaging_assignment_id = pga.id
      WHERE pga.id = ?
      LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+async function lockAssignmentById(connection, id) {
+  const [rows] = await connection.execute(
+    `SELECT
+       pga.id, pga.store_id, pga.packaging_group_id, pga.warehouse_id,
+       pga.charcoal_variant_id, pga.output_item_variant_id,
+       pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
+       pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
+       pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
+       pga.notes, pga.created_by, pga.created_at
+     FROM packaging_group_assignments pga
+     WHERE pga.id = ?
+     LIMIT 1
+     FOR UPDATE`,
     [id]
   );
 
@@ -221,6 +289,7 @@ async function updateAssignment(connection, id, data) {
       `UPDATE packaging_group_assignments SET ${assignments} WHERE id = ?`,
       [...params, id]
     );
+    return { id, ...data };
   } else {
     await query(
       `UPDATE packaging_group_assignments SET ${assignments} WHERE id = ?`,
@@ -270,9 +339,55 @@ async function getAssignmentAllocatedQuantity(id, connection = null) {
   return Number(rows[0]?.allocated_quantity || 0);
 }
 
+async function getAssignmentBatchMovementQuantity(id, connection = null) {
+  const sql = `SELECT
+      COUNT(*) AS movement_count,
+      COALESCE(SUM(quantity_change), 0) AS net_quantity_change
+     FROM packaging_batch_movements
+     WHERE packaging_assignment_id = ?`;
+  const rows = connection
+    ? (await connection.execute(sql, [id]))[0]
+    : await query(sql, [id]);
+
+  return {
+    movement_count: Number(rows[0]?.movement_count || 0),
+    net_quantity_change: Number(rows[0]?.net_quantity_change || 0),
+    allocated_quantity: Math.max(0, -Number(rows[0]?.net_quantity_change || 0))
+  };
+}
+
+async function createBatchMovement(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO packaging_batch_movements (
+      store_id, packaging_assignment_id, warehouse_id, item_variant_id, movement_type,
+      quantity_change, quantity_before, quantity_after, unit_cost, reference_type,
+      reference_id, dispatch_item_id, notes, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      nullable(data.store_id),
+      data.packaging_assignment_id,
+      data.warehouse_id,
+      nullable(data.item_variant_id),
+      data.movement_type || 'batch_movement',
+      data.quantity_change,
+      data.quantity_before,
+      data.quantity_after,
+      nullable(data.unit_cost),
+      nullable(data.reference_type),
+      nullable(data.reference_id),
+      nullable(data.dispatch_item_id),
+      nullable(data.notes),
+      nullable(data.created_by)
+    ]
+  );
+
+  return result.insertId;
+}
+
 module.exports = {
   countComponentChildren,
   createAssignment,
+  createBatchMovement,
   createComponent,
   createGroup,
   deleteAssignment,
@@ -283,11 +398,13 @@ module.exports = {
   findGroupById,
   getGroupComponents,
   getAssignmentAllocatedQuantity,
+  getAssignmentBatchMovementQuantity,
   getVariantCost,
   getWarehouseVariantBalances,
   hardDeleteGroup,
   listAssignments,
   listGroups,
+  lockAssignmentById,
   updateComponent,
   updateAssignment,
   updateGroup

@@ -55,6 +55,17 @@ function renderModal() {
               customer_total_amount: '12.0000',
               net_total_amount: '10.0000'
             }
+          ],
+          items: [
+            {
+              id: 9,
+              dispatch_customer_id: 5,
+              item_name: 'Charcoal',
+              variant_name: 'Bag',
+              quantity: '2.0000',
+              returned_quantity: '0.0000',
+              line_total: '10.0000'
+            }
           ]
         }}
       />
@@ -76,32 +87,31 @@ describe('SettlementWorkflowModal', () => {
         }
       }
     });
-    api.dispatch.settlements.addCustomer.mockResolvedValue({
-      data: {
-        dispatch_settlement_customer: {
-          id: 100,
-          dispatch_customer_id: 5,
-          expected_amount: '10.0000',
-          collected_amount: '4.0000',
-          debt_amount: '6.0000'
-        }
-      }
-    });
+    api.dispatch.settlements.complete.mockResolvedValue({ data: { dispatch_request: { id: 7 } } });
   });
 
-  it('submits settlement customers without an expected amount override', async () => {
+  it('submits checked customers in one bulk completion payload', async () => {
     const user = userEvent.setup();
     renderModal();
 
-    await user.selectOptions(screen.getByLabelText('Customer'), '5');
-    await user.type(screen.getByLabelText('Collected amount'), '4');
-    await user.click(screen.getByRole('button', { name: /add to settlement/i }));
+    await user.click(screen.getByLabelText('Partial'));
+    await user.clear(screen.getByLabelText('Collected'));
+    await user.type(screen.getByLabelText('Collected'), '4');
+    await user.type(screen.getByLabelText('Cash account ID'), '3');
+    await user.click(screen.getByRole('button', { name: /complete settlement/i }));
 
     await waitFor(() => {
-      expect(api.dispatch.settlements.addCustomer).toHaveBeenCalledWith(91, {
-        dispatch_customer_id: 5,
-        collected_amount: 4
-      });
+      expect(api.dispatch.settlements.complete).toHaveBeenCalledWith(91, expect.objectContaining({
+        cash_account_id: 3,
+        customers: [
+          expect.objectContaining({
+            dispatch_customer_id: 5,
+            settlement_status: 'partial',
+            collected_amount: 4,
+            return_items: []
+          })
+        ]
+      }));
     });
   });
 });

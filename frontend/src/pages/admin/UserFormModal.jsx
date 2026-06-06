@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/Modal.jsx';
 import { Input } from '@/components/ui/Input.jsx';
 import { Select } from '@/components/ui/Select.jsx';
 import { Button } from '@/components/ui/Button.jsx';
+import { Switch } from '@/components/ui/Switch.jsx';
 import { cn } from '@/lib/cn.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 
@@ -17,6 +18,7 @@ function emptyState(roles, defaults) {
     email: defaults?.email ?? '',
     phone: defaults?.phone ?? '',
     password: '',
+    create_real_salesman: false,
     status: defaults?.status ?? 'active'
   };
 }
@@ -44,6 +46,8 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
     onSuccess: () => {
       toast.success(isEdit ? 'User updated' : 'User created');
       queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['locations', 'salesmen'] });
+      queryClient.invalidateQueries({ queryKey: ['locations', 'options', 'salesmen'] });
       onClose?.();
     },
     onError: (error) => {
@@ -54,7 +58,13 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
   });
 
   function handleChange(field, value) {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'role_id' && roles.find((role) => String(role.id) === String(value))?.name !== 'salesman'
+        ? { create_real_salesman: false }
+        : {})
+    }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
 
@@ -86,6 +96,9 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
       phone: form.phone?.trim() || null,
       status: form.status
     };
+    if (!isEdit && selectedRole?.name === 'salesman' && form.create_real_salesman) {
+      payload.create_real_salesman = true;
+    }
     if (form.password) payload.password = form.password;
     if (!isEdit && !form.password) {
       // create requires password (validated above) but defensive guard
@@ -93,6 +106,9 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
     }
     mutation.mutate(payload);
   }
+
+  const selectedRole = roles.find((role) => String(role.id) === String(form.role_id));
+  const isSalesmanRole = selectedRole?.name === 'salesman';
 
   return (
     <Modal
@@ -184,6 +200,14 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
             </option>
           ))}
         </Select>
+        {!isEdit && isSalesmanRole && (
+          <Switch
+            checked={form.create_real_salesman}
+            onChange={(checked) => handleChange('create_real_salesman', checked)}
+            label="Add as real salesman"
+            description="Create a linked salesman record automatically for dispatch, targets, commissions, and customer assignment."
+          />
+        )}
         <Input
           label={isEdit ? 'New password (optional)' : 'Password'}
           type="password"

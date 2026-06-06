@@ -111,6 +111,20 @@ async function createInventoryFixture(token, prefix = 'fixture') {
     })
     .expect(201);
 
+  if (['dispatch', 'production', 'audit', 'return', 'packaging'].some(k => prefix.includes(k))) {
+    await authRequest(token)
+      .post('/api/stock-adjustments')
+      .send({
+        target_type: 'item',
+        warehouse_id: warehouseResponse.body.data.warehouse.id,
+        item_id: itemResponse.body.data.item.id,
+        quantity_change: 1000,
+        unit_cost: 2,
+        reason: 'Initial item pool stock for test fixture'
+      })
+      .expect(201);
+  }
+
   return {
     warehouse: warehouseResponse.body.data.warehouse,
     item: itemResponse.body.data.item,

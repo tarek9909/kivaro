@@ -37,7 +37,7 @@ async function printCustomerReceipts(req, res) {
   const dispatch_request = await service.getDispatchRequest(req.params.id, req.user);
 
   if (req.query.format === 'pdf') {
-    return sendDispatchCustomerReceiptsPdf(res, dispatch_request);
+    return sendDispatchCustomerReceiptsPdf(res, dispatch_request, { noPrice: req.query.no_price });
   }
 
   return successResponse(res, {

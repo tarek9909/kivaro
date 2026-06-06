@@ -492,6 +492,14 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
                 >
                   Customer receipts
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={FileText}
+                  onClick={() => setPrintVariant('delivery_notes')}
+                >
+                  Delivery notes
+                </Button>
               </>
             )}
           </div>

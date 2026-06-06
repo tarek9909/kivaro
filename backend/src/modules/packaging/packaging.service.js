@@ -419,6 +419,9 @@ function calculateRequirements(group, charcoalQuantityKg, balances = [], options
       Number(balance.quantity_on_hand || 0) - Number(balance.quantity_reserved || 0)
     ])
   );
+  const charcoalAvailableQuantity = options.stockChecked
+    ? options.charcoalAvailableQuantity || 0
+    : null;
 
   function assign(component, parentQuantity) {
     let requiredQuantity;
@@ -480,6 +483,10 @@ function calculateRequirements(group, charcoalQuantityKg, balances = [], options
     packaging_group_id: group.id,
     packaging_group_name: group.name,
     charcoal_quantity_kg: toMoney(charcoalQuantityKg),
+    charcoal_available_quantity: charcoalAvailableQuantity === null ? null : toMoney(charcoalAvailableQuantity),
+    charcoal_shortage_quantity: charcoalAvailableQuantity === null
+      ? null
+      : toMoney(Math.max(0, Number(charcoalQuantityKg) - charcoalAvailableQuantity)),
     primary_container_component_id: primary.id,
     primary_container_item_name: primary.item_name,
     primary_container_variant_name: primary.variant_name,
@@ -500,6 +507,10 @@ function calculateRequirements(group, charcoalQuantityKg, balances = [], options
 }
 
 function assertNoRequirementShortages(calculation) {
+  if (decimal(calculation.charcoal_shortage_quantity || 0).gt(0)) {
+    throw ApiError.conflict('Packaging assignment cannot be saved while raw charcoal stock is short');
+  }
+
   const hasShortage = (calculation.requirements || []).some((requirement) => {
     const quantity = decimal(requirement.required_quantity || 0);
     if (quantity.lte(0)) return false;
@@ -521,13 +532,102 @@ async function calculateGroup(groupId, data, actor = {}, warehouseId = null) {
     await validateVariant(charcoalVariantId, 'charcoal_variant_id', group.store_id);
   }
   const variantIds = group.components.map((component) => Number(component.item_variant_id));
+  if (charcoalVariantId) {
+    variantIds.push(Number(charcoalVariantId));
+  }
   const balances = warehouseId
     ? await model.getWarehouseVariantBalances(warehouseId, [...new Set(variantIds)])
     : [];
+  const charcoalVariantAvailable = balances
+    .filter((balance) => Number(balance.item_variant_id) === Number(charcoalVariantId))
+    .reduce((sum, balance) => sum.plus(decimal(balance.quantity_on_hand || 0).minus(balance.quantity_reserved || 0)), decimal(0));
 
   const charcoalQuantityKg = normalizeWeightToKg(data.charcoal_quantity_kg, data.charcoal_quantity_unit || 'kg');
   const charcoalUnitCost = charcoalVariantId ? await model.getVariantCost(charcoalVariantId, warehouseId) : 0;
-  return calculateRequirements(group, charcoalQuantityKg, balances, { charcoalUnitCost });
+  return calculateRequirements(group, charcoalQuantityKg, balances, {
+    charcoalUnitCost,
+    charcoalAvailableQuantity: charcoalVariantAvailable,
+    stockChecked: Boolean(warehouseId)
+  });
+}
+
+async function decreaseRawCharcoalStock(connection, assignment, data = {}, userId) {
+  const rawMovement = await stockService.decreaseStock(connection, {
+    storeId: assignment.store_id,
+    warehouseId: assignment.warehouse_id,
+    itemVariantId: assignment.charcoal_variant_id,
+    quantity: assignment.charcoal_quantity_kg,
+    quantityAlreadyNormalized: true,
+    unitCost: null,
+    movementType: 'production_consume',
+    referenceType: 'packaging_assignment_raw',
+    referenceId: assignment.id,
+    notes: data.notes || assignment.notes || 'Packaging assignment raw charcoal consumption',
+    createdBy: userId
+  });
+
+  return [{
+    role: 'raw_charcoal',
+    item_variant_id: assignment.charcoal_variant_id,
+    required_quantity: toMoney(assignment.charcoal_quantity_kg),
+    stock_movement_id: rawMovement.stock_movement_id,
+    quantity_after: rawMovement.quantity_after
+  }];
+}
+
+async function consumeAssignmentStock(connection, assignment, data = {}, userId) {
+  const calculation = parseJson(assignment.calculation_json, assignment.calculation_json);
+  const requirements = calculation?.requirements || [];
+
+  if (!requirements.length) {
+    throw ApiError.conflict('Packaging assignment has no calculated requirements');
+  }
+
+  const movements = [];
+  movements.push(...await decreaseRawCharcoalStock(connection, assignment, data, userId));
+
+  for (const requirement of requirements) {
+    const quantity = decimal(requirement.required_quantity || 0);
+    if (quantity.lte(0)) continue;
+    if (!requirement.parent_component_id && !Number(requirement.capacity_kg || 0)) continue;
+
+    const movement = await stockService.decreaseStock(connection, {
+      storeId: assignment.store_id,
+      warehouseId: assignment.warehouse_id,
+      itemVariantId: requirement.item_variant_id,
+      quantity,
+      unitCost: requirement.unit_cost,
+      movementType: 'production_consume',
+      referenceType: 'packaging_assignment',
+      referenceId: assignment.id,
+      notes: data.notes || assignment.notes || 'Packaging assignment consumption',
+      createdBy: userId
+    });
+
+    movements.push({
+      role: 'packaging',
+      component_id: requirement.component_id,
+      item_variant_id: requirement.item_variant_id,
+      required_quantity: toMoney(quantity),
+      stock_movement_id: movement.stock_movement_id,
+      quantity_after: movement.quantity_after
+    });
+  }
+
+  const producedQuantity = decimal(assignment.primary_container_count || calculation.primary_container_count || 0);
+  if (producedQuantity.lte(0)) {
+    throw ApiError.conflict('Primary container count must be greater than zero');
+  }
+
+  await model.updateAssignment(connection, assignment.id, {
+    status: 'consumed',
+    produced_quantity: toMoney(producedQuantity),
+    consumed_at: new Date(),
+    consumed_by: userId,
+    consumed_movements_json: movements
+  });
+
+  return movements;
 }
 
 async function createAssignment(data, userId, actor = {}) {
@@ -554,25 +654,30 @@ async function createAssignment(data, userId, actor = {}) {
   }, actor, scoped.warehouse_id);
   assertNoRequirementShortages(calculation);
 
-  const assignment = await model.createAssignment({
-    store_id: scoped.store_id,
-    packaging_group_id: scoped.packaging_group_id,
-    warehouse_id: scoped.warehouse_id,
-    charcoal_variant_id: scoped.charcoal_variant_id,
-    output_item_variant_id: scoped.output_item_variant_id || null,
-    charcoal_quantity_kg: toMoney(charcoalQuantityKg),
-    primary_container_count: calculation.primary_container_count,
-    total_packaging_cost: calculation.total_packaging_cost,
-    cost_per_kg: calculation.cost_per_kg,
-    status: 'batched',
-    produced_quantity: toMoney(calculation.primary_container_count),
-    production_batch_id: scoped.production_batch_id || null,
-    calculation_json: calculation,
-    notes: scoped.notes,
-    created_by: userId
+  const assignmentId = await withTransaction(async (connection) => {
+    const assignment = await model.createAssignment({
+      store_id: scoped.store_id,
+      packaging_group_id: scoped.packaging_group_id,
+      warehouse_id: scoped.warehouse_id,
+      charcoal_variant_id: scoped.charcoal_variant_id,
+      output_item_variant_id: scoped.output_item_variant_id || null,
+      charcoal_quantity_kg: toMoney(charcoalQuantityKg),
+      primary_container_count: calculation.primary_container_count,
+      total_packaging_cost: calculation.total_packaging_cost,
+      cost_per_kg: calculation.cost_per_kg,
+      status: 'calculated',
+      produced_quantity: toMoney(calculation.primary_container_count),
+      production_batch_id: scoped.production_batch_id || null,
+      calculation_json: calculation,
+      notes: scoped.notes,
+      created_by: userId
+    }, connection);
+
+    await consumeAssignmentStock(connection, assignment, { notes: scoped.notes }, userId);
+    return assignment.id;
   });
 
-  return getAssignment(assignment.id, actor);
+  return getAssignment(assignmentId, actor);
 }
 
 async function getAssignment(id, actor = {}) {
@@ -593,75 +698,8 @@ async function consumeAssignment(id, data = {}, userId, actor = {}) {
     throw ApiError.conflict('Only calculated or batched packaging assignments can be consumed');
   }
 
-  const calculation = assignment.calculation_json;
-  const requirements = calculation?.requirements || [];
-
-  if (!requirements.length) {
-    throw ApiError.conflict('Packaging assignment has no calculated requirements');
-  }
-
-  const movements = [];
   await withTransaction(async (connection) => {
-    const rawMovement = await stockService.decreaseStock(connection, {
-      storeId: assignment.store_id,
-      warehouseId: assignment.warehouse_id,
-      itemVariantId: assignment.charcoal_variant_id,
-      quantity: assignment.charcoal_quantity_kg,
-      quantityAlreadyNormalized: true,
-      unitCost: null,
-      movementType: 'production_consume',
-      referenceType: 'packaging_assignment_raw',
-      referenceId: assignment.id,
-      notes: data.notes || assignment.notes || 'Packaging assignment raw charcoal consumption',
-      createdBy: userId
-    });
-    movements.push({
-      role: 'raw_charcoal',
-      item_variant_id: assignment.charcoal_variant_id,
-      required_quantity: toMoney(assignment.charcoal_quantity_kg),
-      stock_movement_id: rawMovement.stock_movement_id,
-      quantity_after: rawMovement.quantity_after
-    });
-
-    for (const requirement of requirements) {
-      const quantity = decimal(requirement.required_quantity || 0);
-      if (quantity.lte(0)) continue;
-      if (!requirement.parent_component_id && !Number(requirement.capacity_kg || 0)) continue;
-
-      const movement = await stockService.decreaseStock(connection, {
-        storeId: assignment.store_id,
-        warehouseId: assignment.warehouse_id,
-        itemVariantId: requirement.item_variant_id,
-        quantity,
-        unitCost: requirement.unit_cost,
-        movementType: 'production_consume',
-        referenceType: 'packaging_assignment',
-        referenceId: assignment.id,
-        notes: data.notes || assignment.notes || 'Packaging assignment consumption',
-        createdBy: userId
-      });
-
-      movements.push({
-        role: 'packaging',
-        component_id: requirement.component_id,
-        item_variant_id: requirement.item_variant_id,
-        required_quantity: toMoney(quantity),
-        stock_movement_id: movement.stock_movement_id,
-        quantity_after: movement.quantity_after
-      });
-    }
-
-    const producedQuantity = decimal(assignment.primary_container_count || calculation.primary_container_count || 0);
-    if (producedQuantity.lte(0)) {
-      throw ApiError.conflict('Primary container count must be greater than zero');
-    }
-    await model.updateAssignment(connection, id, {
-      status: 'consumed',
-      produced_quantity: toMoney(producedQuantity),
-      consumed_at: new Date(),
-      consumed_by: userId,
-      consumed_movements_json: movements
-    });
+    await consumeAssignmentStock(connection, assignment, data, userId);
   });
 
   return getAssignment(id, actor);

@@ -155,13 +155,8 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
   const dispatch = await model.findDispatchRequestById(dispatchCustomer.dispatch_request_id);
   if (dispatch.status !== 'draft') throw ApiError.conflict('Items can only be added to draft dispatch requests');
 
-  const variant = await inventoryModel.findVariantById(data.item_variant_id);
-  if (!variant) throw ApiError.badRequest('Validation failed', [{ field: 'item_variant_id', message: 'Item variant not found' }]);
-  assertSameStore(variant, dispatch.store_id, 'item_variant_id', 'Item variant does not belong to this store');
-  assertActive(variant, 'item_variant_id', 'Item variant');
-  assertStockedVariant(variant);
-
   let assignmentCost = null;
+  let itemVariantId = data.item_variant_id;
   if (data.packaging_assignment_id) {
     const assignment = await packagingModel.findAssignmentById(data.packaging_assignment_id);
     if (!assignment) {
@@ -185,6 +180,18 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
     if (decimal(data.quantity).gt(availableQuantity)) {
       throw ApiError.conflict(`Only ${toMoney(availableQuantity)} primary containers are available from this assignment`);
     }
+    const assignmentVariantId = assignment.output_item_variant_id || assignment.charcoal_variant_id;
+    if (!assignmentVariantId) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'packaging_assignment_id', message: 'Packaging assignment does not have an item variant to dispatch' }
+      ]);
+    }
+    if (itemVariantId && Number(itemVariantId) !== Number(assignmentVariantId)) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'item_variant_id', message: 'Variant must match the selected packaging batch item' }
+      ]);
+    }
+    itemVariantId = assignmentVariantId;
     const calculation = typeof assignment.calculation_json === 'string'
       ? JSON.parse(assignment.calculation_json || '{}')
       : assignment.calculation_json || {};
@@ -192,6 +199,12 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
       || calculation.cost_per_packaging_group
       || assignment.cost_per_kg;
   }
+
+  const variant = await inventoryModel.findVariantById(itemVariantId);
+  if (!variant) throw ApiError.badRequest('Validation failed', [{ field: 'item_variant_id', message: 'Item variant not found' }]);
+  assertSameStore(variant, dispatch.store_id, 'item_variant_id', 'Item variant does not belong to this store');
+  assertActive(variant, 'item_variant_id', 'Item variant');
+  assertStockedVariant(variant);
 
   const unitCost = data.unit_cost ?? assignmentCost ?? variant.cost;
   const vatSettings = await settingsService.getVatSettings({ ...actor, query: { store_id: dispatch.store_id } });
@@ -201,7 +214,7 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
   const item = await model.createDispatchItem({
     dispatch_customer_id: dispatchCustomerId,
     dispatch_request_id: dispatchCustomer.dispatch_request_id,
-    item_variant_id: data.item_variant_id,
+    item_variant_id: itemVariantId,
     packaging_assignment_id: data.packaging_assignment_id || null,
     quantity: data.quantity,
     unit_price: data.unit_price,
@@ -297,6 +310,17 @@ async function dispatchStock(id, userId, actor = {}) {
         createdBy: userId
       });
       await model.updateDispatchItemUnitCost(connection, id, item.item_variant_id, movement.average_cost);
+    }
+
+    const batchItems = await model.aggregateDispatchAssignmentItems(id, connection);
+    for (const item of batchItems) {
+      await createBatchMovement(connection, item.packaging_assignment_id, decimal(item.quantity).neg(), {
+        unit_cost: item.unit_cost,
+        reference_type: 'dispatch_request',
+        reference_id: id,
+        notes: 'Dispatch packaging batch stock',
+        created_by: userId
+      });
     }
 
     await connection.execute(
@@ -402,6 +426,15 @@ async function createReturn(dispatchId, data, userId, actor = {}) {
         notes: data.reason,
         createdBy: userId
       });
+    } else {
+      await createBatchMovement(connection, dispatchItem.packaging_assignment_id, decimal(data.returned_quantity), {
+        unit_cost: dispatchItem.unit_cost,
+        reference_type: 'dispatch_return',
+        reference_id: returnId,
+        dispatch_item_id: dispatchItem.id,
+        notes: data.reason,
+        created_by: userId
+      });
     }
   });
 
@@ -501,6 +534,167 @@ async function addSettlementCustomer(settlementId, data, actor = {}) {
   return row;
 }
 
+async function createBatchMovement(connection, assignmentId, quantityChange, data = {}) {
+  const assignment = await packagingModel.lockAssignmentById(connection, assignmentId);
+  if (!assignment) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'packaging_assignment_id', message: 'Packaging assignment not found' }
+    ]);
+  }
+
+  const movementTotals = await packagingModel.getAssignmentBatchMovementQuantity(assignmentId, connection);
+  const quantityBefore = decimal(assignment.produced_quantity || 0).plus(movementTotals.net_quantity_change || 0);
+  const nextQuantity = quantityBefore.plus(quantityChange);
+
+  if (nextQuantity.lt(0)) {
+    throw ApiError.conflict(`Only ${toMoney(quantityBefore)} primary containers remain in this packaging batch`);
+  }
+  if (nextQuantity.gt(assignment.produced_quantity || 0)) {
+    throw ApiError.conflict('Returned batch quantity cannot exceed dispatched batch quantity');
+  }
+
+  return packagingModel.createBatchMovement(connection, {
+    store_id: assignment.store_id,
+    packaging_assignment_id: assignment.id,
+    warehouse_id: assignment.warehouse_id,
+    item_variant_id: assignment.output_item_variant_id || assignment.charcoal_variant_id,
+    movement_type: 'batch_movement',
+    quantity_change: toMoney(quantityChange),
+    quantity_before: toMoney(quantityBefore),
+    quantity_after: toMoney(nextQuantity),
+    unit_cost: data.unit_cost,
+    reference_type: data.reference_type,
+    reference_id: data.reference_id,
+    dispatch_item_id: data.dispatch_item_id,
+    notes: data.notes,
+    created_by: data.created_by
+  });
+}
+
+async function recordSettlementReturn(connection, settlement, dispatch, data, userId) {
+  const dispatchItem = await model.lockDispatchItem(connection, data.dispatch_item_id);
+  if (!dispatchItem || Number(dispatchItem.dispatch_request_id) !== Number(dispatch.id)) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'return_items', message: 'Return item does not belong to this dispatch' }
+    ]);
+  }
+  if (Number(dispatchItem.dispatch_customer_id) !== Number(data.dispatch_customer_id)) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'return_items', message: 'Return item does not belong to this customer' }
+    ]);
+  }
+
+  const returnedQuantity = decimal(data.returned_quantity || 0);
+  if (returnedQuantity.lte(0)) return;
+
+  const remainingReturnable = decimal(dispatchItem.quantity).minus(dispatchItem.returned_quantity);
+  if (returnedQuantity.gt(remainingReturnable)) {
+    throw ApiError.conflict('Returned quantity cannot exceed dispatched item quantity');
+  }
+
+  assertStockedVariant(await inventoryModel.findVariantById(dispatchItem.item_variant_id));
+
+  const returnId = await model.createDispatchReturn(connection, {
+    store_id: settlement.store_id,
+    dispatch_request_id: dispatch.id,
+    dispatch_item_id: dispatchItem.id,
+    item_variant_id: dispatchItem.item_variant_id,
+    returned_quantity: toMoney(returnedQuantity),
+    reason: data.reason || 'Settlement return',
+    created_by: userId
+  });
+
+  if (!dispatchItem.packaging_assignment_id) {
+    await stockService.increaseStock(connection, {
+      storeId: settlement.store_id,
+      warehouseId: dispatch.warehouse_id,
+      itemVariantId: dispatchItem.item_variant_id,
+      quantity: returnedQuantity,
+      unitCost: dispatchItem.unit_cost,
+      movementType: 'dispatch_return',
+      referenceType: 'dispatch_return',
+      referenceId: returnId,
+      notes: data.reason || 'Settlement return',
+      createdBy: userId
+    });
+  } else {
+    await createBatchMovement(connection, dispatchItem.packaging_assignment_id, returnedQuantity, {
+      unit_cost: dispatchItem.unit_cost,
+      reference_type: 'dispatch_return',
+      reference_id: returnId,
+      dispatch_item_id: dispatchItem.id,
+      notes: data.reason || 'Settlement return',
+      created_by: userId
+    });
+  }
+}
+
+async function addBulkSettlementCustomers(connection, settlement, dispatch, customersPayload = [], userId) {
+  if (!Array.isArray(customersPayload) || customersPayload.length === 0) return;
+
+  const payloadIds = customersPayload.map((customer) => Number(customer.dispatch_customer_id));
+  if (new Set(payloadIds).size !== payloadIds.length) {
+    throw ApiError.conflict('Settlement cannot include duplicate dispatch customers');
+  }
+
+  const existingCustomers = await model.getSettlementCustomers(settlement.id, connection, { forUpdate: true });
+  if (existingCustomers.length > 0) {
+    throw ApiError.conflict('Draft settlement already has customers. Complete it without a bulk customer payload.');
+  }
+
+  for (const customer of customersPayload) {
+    for (const returnItem of customer.return_items || []) {
+      await recordSettlementReturn(connection, settlement, dispatch, {
+        ...returnItem,
+        dispatch_customer_id: customer.dispatch_customer_id,
+        reason: customer.notes
+      }, userId);
+    }
+  }
+
+  const effectiveCustomers = await model.getDispatchCustomers(settlement.dispatch_request_id, connection);
+  const effectiveCustomerMap = new Map(
+    effectiveCustomers.map((customer) => [Number(customer.id), customer])
+  );
+
+  for (const customer of customersPayload) {
+    const dispatchCustomer = effectiveCustomerMap.get(Number(customer.dispatch_customer_id));
+    if (!dispatchCustomer) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'customers', message: 'Dispatch customer does not belong to this settlement dispatch' }
+      ]);
+    }
+    if (await model.findPostedSettlementCustomer(settlement.dispatch_request_id, customer.dispatch_customer_id, connection)) {
+      throw ApiError.conflict('Dispatch customer has already been settled');
+    }
+
+    const expected = decimal(dispatchCustomer.net_total_amount ?? dispatchCustomer.customer_total_amount);
+    const collected = customer.settlement_status === 'completed'
+      ? expected
+      : decimal(customer.collected_amount || 0);
+    if (customer.settlement_status === 'partial' && collected.gte(expected) && expected.gt(0)) {
+      throw ApiError.conflict('Partial settlement collected amount must be less than expected amount');
+    }
+    if (collected.gt(expected)) throw ApiError.conflict('Collected amount cannot exceed expected amount');
+
+    const debt = expected.minus(collected);
+    const settlementStatus = debt.eq(0) ? 'paid' : collected.eq(0) ? 'debt' : 'partial_debt';
+
+    await model.addSettlementCustomer({
+      dispatch_settlement_id: settlement.id,
+      dispatch_customer_id: customer.dispatch_customer_id,
+      customer_id: dispatchCustomer.customer_id,
+      expected_amount: toMoney(expected),
+      collected_amount: toMoney(collected),
+      debt_amount: toMoney(debt),
+      settlement_status: settlementStatus,
+      notes: customer.notes
+    }, connection);
+  }
+
+  await model.updateSettlementTotals(connection, settlement.id);
+}
+
 async function completeSettlement(settlementId, data, userId, actor = {}) {
   await withTransaction(async (connection) => {
     const settlement = await model.lockSettlement(connection, settlementId);
@@ -508,6 +702,8 @@ async function completeSettlement(settlementId, data, userId, actor = {}) {
     if (settlement.status !== 'draft') throw ApiError.conflict('Only draft settlements can be completed');
 
     const dispatch = await model.lockDispatchRequest(connection, settlement.dispatch_request_id);
+    assertRowInScope(dispatch, actor, 'Dispatch request not found');
+    await addBulkSettlementCustomers(connection, settlement, dispatch, data.customers, userId);
     const customers = await model.getSettlementCustomers(settlementId, connection, { forUpdate: true });
 
     if (customers.length === 0) throw ApiError.conflict('Settlement must include at least one customer');

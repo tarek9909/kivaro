@@ -5,7 +5,6 @@ import {
   COMMISSION_STATUS_OPTIONS,
   DEBT_STATUS_OPTIONS,
   DISPATCH_STATUS_OPTIONS,
-  ITEM_TYPE_OPTIONS,
   MOVEMENT_TYPE_OPTIONS,
   PO_STATUS_OPTIONS,
   REFERENCE_TYPE_OPTIONS
@@ -236,21 +235,7 @@ export function ReportFilters({ filters, values, onChange }) {
                     onChange={set('supplier_id')}
                   />
                 );
-              case 'item_type':
-                return (
-                  <Select
-                    key={key}
-                    label="Item type"
-                    value={values.item_type || ''}
-                    onChange={(event) => set('item_type')(event.target.value)}
-                  >
-                    {ITEM_TYPE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                );
+
               case 'movement_type':
                 return (
                   <Select

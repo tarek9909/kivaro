@@ -24,6 +24,7 @@ router.delete('/sublocations/:id', requirePermission('locations.manage'), valida
 
 router.get('/salesmen', requirePermission('salesmen.manage'), validate(schemas.listSchema), asyncHandler(controller.listSalesmen));
 router.post('/salesmen', requirePermission('salesmen.manage'), validate(schemas.createSalesmanSchema), asyncHandler(controller.createSalesman));
+router.get('/salesmen/:id/sublocations', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.listSalesmanSublocations));
 router.get('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.getSalesman));
 router.patch('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.updateSalesmanSchema), asyncHandler(controller.updateSalesman));
 router.delete('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.deleteSalesman));

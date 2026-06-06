@@ -16,9 +16,13 @@ import { formatNumber } from '@/lib/formatters.js';
 import { useCashAccountsOptions, useSuppliersOptions } from './usePurchasesOptions.js';
 import { PAYMENT_METHODS, PURCHASES_PERMISSIONS } from './purchases.config.js';
 import {
-  useVariantsOptions,
+  useItemsOptions,
   useWarehousesOptions
 } from '@/pages/inventory/useInventoryOptions.js';
+import {
+  formatStockQuantity,
+  getEntryUnitLabel
+} from '@/pages/inventory/stockUnits.js';
 
 const INVENTORY_VIEW = 'inventory.view';
 
@@ -31,7 +35,7 @@ function todayString() {
 
 function emptyItem() {
   return {
-    item_variant_id: '',
+    item_id: '',
     ordered_quantity: '',
     unit_cost: '',
     notes: ''
@@ -60,6 +64,14 @@ function parseLineTotal(item) {
   return qty * cost;
 }
 
+function stockEquivalent(quantity, item) {
+  const qty = Number(quantity);
+  if (!item || Number.isNaN(qty) || qty <= 0 || item.base_unit_type !== 'weight') {
+    return '';
+  }
+  return formatStockQuantity(qty * Number(item.base_unit_conversion_to_base || 1), item);
+}
+
 export function PurchaseOrderFormModal({ open, onClose }) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canLoadInventoryOptions = hasPermission(INVENTORY_VIEW);
@@ -77,12 +89,12 @@ export function PurchaseOrderFormModal({ open, onClose }) {
 
   const suppliersQuery = useSuppliersOptions(open);
   const warehousesQuery = useWarehousesOptions(open && canLoadInventoryOptions);
-  const variantsQuery = useVariantsOptions(open && canLoadInventoryOptions, { tracking_type: 'stocked' });
+  const itemsQuery = useItemsOptions(open && canLoadInventoryOptions, { tracking_type: 'stocked' });
   const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
 
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
   const warehouses = warehousesQuery.data?.data?.warehouses || [];
-  const variants = variantsQuery.data?.data?.item_variants || [];
+  const items = itemsQuery.data?.data?.items || [];
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   const subtotal = useMemo(
@@ -113,7 +125,14 @@ export function PurchaseOrderFormModal({ open, onClose }) {
   function updateItem(index, field, value) {
     setForm((prev) => {
       const items = prev.items.slice();
-      items[index] = { ...items[index], [field]: value };
+      const nextItem = { ...items[index], [field]: value };
+      if (field === 'item_id') {
+        const selected = itemsQuery.data?.data?.items?.find((option) => String(option.id) === String(value));
+        if (selected && nextItem.unit_cost === '') {
+          nextItem.unit_cost = selected.default_cost ?? '';
+        }
+      }
+      items[index] = nextItem;
       return { ...prev, items };
     });
     const errorKey = `items.${index}.${field}`;
@@ -159,9 +178,9 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       next.items = 'At least one line item is required.';
     } else {
       form.items.forEach((item, index) => {
-        const variantId = Number(item.item_variant_id);
-        if (!item.item_variant_id || Number.isNaN(variantId) || variantId <= 0) {
-          next[`items.${index}.item_variant_id`] = 'Variant is required.';
+        const itemId = Number(item.item_id);
+        if (!item.item_id || Number.isNaN(itemId) || itemId <= 0) {
+          next[`items.${index}.item_id`] = 'Item is required.';
         }
         const qty = Number(item.ordered_quantity);
         if (!item.ordered_quantity || Number.isNaN(qty) || qty <= 0) {
@@ -192,7 +211,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       tax_amount: 0,
       notes: form.notes?.trim() || null,
       items: form.items.map((item) => ({
-        item_variant_id: Number(item.item_variant_id),
+        item_id: Number(item.item_id),
         ordered_quantity: Number(item.ordered_quantity),
         unit_cost: Number(item.unit_cost),
         notes: item.notes?.trim() || null
@@ -206,7 +225,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       onClose={onClose}
       size="xl"
       title="New purchase order"
-      description="Define header details, then add at least one line item. Quantities are entered in each item variant's base unit."
+      description="Define header details, then add at least one line item. Quantities are entered in each item's base unit."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -364,9 +383,12 @@ export function PurchaseOrderFormModal({ open, onClose }) {
           )}
           <div className="space-y-3">
             {form.items.map((item, index) => {
-              const variantError = errors[`items.${index}.item_variant_id`];
+              const itemError = errors[`items.${index}.item_id`];
               const qtyError = errors[`items.${index}.ordered_quantity`];
               const costError = errors[`items.${index}.unit_cost`];
+              const selectedItem = items.find((option) => String(option.id) === String(item.item_id));
+              const unitLabel = getEntryUnitLabel(selectedItem);
+              const storedQuantity = stockEquivalent(item.ordered_quantity, selectedItem);
               return (
                 <div
                   key={index}
@@ -388,36 +410,36 @@ export function PurchaseOrderFormModal({ open, onClose }) {
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     {canLoadInventoryOptions ? (
                       <Select
-                        label="Variant"
-                        value={item.item_variant_id}
+                        label="Item"
+                        value={item.item_id}
                         onChange={(event) =>
-                          updateItem(index, 'item_variant_id', event.target.value)
+                          updateItem(index, 'item_id', event.target.value)
                         }
-                        error={variantError}
+                        error={itemError}
                         required
                       >
-                        <option value="">Select variant</option>
-                        {variants.map((variant) => (
-                          <option key={variant.id} value={variant.id}>
-                            {variant.item_name} - {variant.variant_name} ({variant.sku})
+                        <option value="">Select item</option>
+                        {items.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.name}{option.code ? ` (${option.code})` : ''}{getEntryUnitLabel(option) ? ` - ${getEntryUnitLabel(option)}` : ''}
                           </option>
                         ))}
                       </Select>
                     ) : (
                       <Input
-                        label="Variant ID"
+                        label="Item ID"
                         type="number"
                         min="1"
-                        value={item.item_variant_id}
+                        value={item.item_id}
                         onChange={(event) =>
-                          updateItem(index, 'item_variant_id', event.target.value)
+                          updateItem(index, 'item_id', event.target.value)
                         }
-                        error={variantError}
+                        error={itemError}
                         required
                       />
                     )}
                     <Input
-                      label="Quantity (base unit)"
+                      label={`Quantity${unitLabel ? ` (${unitLabel})` : ''}`}
                       type="number"
                       min="0"
                       step="0.0001"
@@ -427,6 +449,13 @@ export function PurchaseOrderFormModal({ open, onClose }) {
                       }
                       error={qtyError}
                       required
+                      description={
+                        storedQuantity
+                          ? `Stock will show as ${storedQuantity}.`
+                          : unitLabel
+                            ? `Item base unit: ${unitLabel}.`
+                            : undefined
+                      }
                     />
                     <Input
                       label="Unit cost"

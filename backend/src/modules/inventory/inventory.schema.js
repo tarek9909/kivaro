@@ -16,6 +16,7 @@ const movementType = z.enum([
   'dispatch_unreserve',
   'dispatch_out',
   'dispatch_return',
+  'batch_movement',
   'sales_settle',
   'damage',
   'adjustment',
@@ -90,6 +91,7 @@ const listItemSchema = z.object({
     ...paginationQuery,
     status: status.optional(),
     item_type: itemType.optional(),
+    tracking_type: trackingType.optional(),
     exclude_item_type: itemType.optional(),
     category_id: z.coerce.number().int().positive().optional()
   })

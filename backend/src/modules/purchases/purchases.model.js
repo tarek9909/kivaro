@@ -75,12 +75,15 @@ async function findPurchaseOrderById(id) {
 async function getPurchaseOrderItems(id) {
   return query(
     `SELECT
-      poi.id, poi.purchase_order_id, poi.item_variant_id, iv.variant_name, iv.sku,
+      poi.id, poi.purchase_order_id, poi.item_id, poi.item_variant_id, iv.variant_name, iv.sku,
+      i.base_unit_id, u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
+      u.conversion_to_base AS base_unit_conversion_to_base,
       i.name AS item_name, poi.ordered_quantity, poi.received_quantity,
       poi.unit_cost, poi.line_total, poi.notes, poi.created_at
      FROM purchase_order_items poi
-     JOIN item_variants iv ON iv.id = poi.item_variant_id
-     JOIN items i ON i.id = iv.item_id
+     JOIN items i ON i.id = poi.item_id
+     JOIN units u ON u.id = i.base_unit_id
+     LEFT JOIN item_variants iv ON iv.id = poi.item_variant_id
      WHERE poi.purchase_order_id = ?
      ORDER BY poi.id ASC`,
     [id]
@@ -142,11 +145,12 @@ async function createPurchaseOrder(connection, data) {
 async function createPurchaseOrderItem(connection, data) {
   await connection.execute(
     `INSERT INTO purchase_order_items (
-      purchase_order_id, item_variant_id, ordered_quantity, unit_cost, line_total, notes
-    ) VALUES (?, ?, ?, ?, ?, ?)`,
+      purchase_order_id, item_id, item_variant_id, ordered_quantity, unit_cost, line_total, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       data.purchase_order_id,
-      data.item_variant_id,
+      data.item_id,
+      nullable(data.item_variant_id),
       data.ordered_quantity,
       data.unit_cost,
       data.line_total,
@@ -194,9 +198,12 @@ async function lockPurchaseOrder(connection, id) {
 
 async function lockPurchaseOrderItems(connection, purchaseOrderId) {
   const [rows] = await connection.execute(
-    `SELECT *
-     FROM purchase_order_items
-     WHERE purchase_order_id = ?
+    `SELECT poi.*, i.base_unit_id, u.symbol AS base_unit_symbol,
+       u.unit_type AS base_unit_type, u.conversion_to_base AS base_unit_conversion_to_base
+     FROM purchase_order_items poi
+     JOIN items i ON i.id = poi.item_id
+     JOIN units u ON u.id = i.base_unit_id
+     WHERE poi.purchase_order_id = ?
      FOR UPDATE`,
     [purchaseOrderId]
   );
@@ -225,12 +232,13 @@ async function createReceipt(connection, data) {
 async function createReceiptItem(connection, data) {
   await connection.execute(
     `INSERT INTO purchase_receipt_items (
-      purchase_receipt_id, purchase_order_item_id, item_variant_id, received_quantity, unit_cost
-    ) VALUES (?, ?, ?, ?, ?)`,
+      purchase_receipt_id, purchase_order_item_id, item_id, item_variant_id, received_quantity, unit_cost
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
     [
       data.purchase_receipt_id,
       data.purchase_order_item_id,
-      data.item_variant_id,
+      data.item_id,
+      nullable(data.item_variant_id),
       data.received_quantity,
       data.unit_cost
     ]

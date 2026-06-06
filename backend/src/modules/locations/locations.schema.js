@@ -38,16 +38,32 @@ const sublocationBody = z.object({
   status: status.default('active')
 });
 
-const salesmanBody = z.object({
+const salesmanBaseBody = z.object({
   user_id: z.coerce.number().int().positive().optional().nullable(),
   full_name: z.string().trim().min(1).max(150),
   phone: z.string().trim().optional().nullable(),
   email: z.string().trim().email().optional().nullable(),
   vehicle_number: z.string().trim().optional().nullable(),
   national_id: z.string().trim().optional().nullable(),
+  base_salary: z.coerce.number().min(0).default(0),
   status: status.default('active'),
   store_id: z.coerce.number().int().positive().optional(),
   joined_at: z.string().trim().optional().nullable()
+});
+
+const salesmanCreateBody = salesmanBaseBody.extend({
+  create_login_user: z.coerce.boolean().default(false),
+  password: z.string().min(8).optional()
+});
+
+const salesmanBody = salesmanCreateBody.superRefine((body, ctx) => {
+  if (body.create_login_user && !body.password) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['password'],
+      message: 'Password is required when creating a user account.'
+    });
+  }
 });
 
 const assignSchema = z.object({
@@ -62,7 +78,7 @@ const locationTargetBody = z.object({
   location_id: z.coerce.number().int().positive(),
   target_period: z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'yearly']).default('monthly'),
   period_start: z.string().trim().min(1),
-  period_end: z.string().trim().min(1),
+  period_end: z.string().trim().optional().nullable(),
   target_amount: z.coerce.number().min(0),
   store_id: z.coerce.number().int().positive().optional(),
   status: targetStatus.default('draft')
@@ -96,6 +112,6 @@ module.exports = {
   sublocationTargetSchema,
   updateLocationSchema: updateSchema(locationBody),
   updateLocationTargetSchema: updateSchema(locationTargetBody),
-  updateSalesmanSchema: updateSchema(salesmanBody),
+  updateSalesmanSchema: updateSchema(salesmanBaseBody),
   updateSublocationSchema: updateSchema(sublocationBody)
 };

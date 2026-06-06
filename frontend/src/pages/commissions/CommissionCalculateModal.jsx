@@ -11,7 +11,7 @@ import {
   Select
 } from '@/components/ui/index.js';
 import { COMMISSIONS_PERMISSIONS } from './commissions.config.js';
-import { useCommissionRulesList } from './useCommissionsOptions.js';
+import { useCommissionRulesList, useSalesmanTargetsOptions } from './useCommissionsOptions.js';
 
 function emptyForm() {
   return { salesman_target_id: '', commission_rule_id: '' };
@@ -39,6 +39,9 @@ export function CommissionCalculateModal({ open, onClose }) {
 
   const rulesQuery = useCommissionRulesList(open && canPickRules);
   const rules = rulesQuery.data?.data?.commission_rules || [];
+
+  const targetsQuery = useSalesmanTargetsOptions(open);
+  const targets = targetsQuery.data?.data?.salesman_target_progress || [];
 
   const mutation = useMutation({
     mutationFn: (payload) => api.commissions.calculations.calculate(payload),
@@ -100,18 +103,22 @@ export function CommissionCalculateModal({ open, onClose }) {
         className="space-y-4"
         noValidate
       >
-        <Input
-          label="Salesman target ID"
-          type="number"
-          min="1"
+        <Select
+          label="Salesman target"
           value={form.salesman_target_id}
           onChange={(event) =>
             setForm((prev) => ({ ...prev, salesman_target_id: event.target.value }))
           }
           error={errors.salesman_target_id}
           required
-          description="Numeric only. Pick the target ID from the Locations targets workspace."
-        />
+        >
+          <option value="">Select salesman target</option>
+          {targets.map((target) => (
+            <option key={target.salesman_target_id} value={target.salesman_target_id}>
+              {target.salesman_name} ({target.location_name}{target.sublocation_name ? ` - ${target.sublocation_name}` : ''}) - Target: {target.target_amount} ({target.target_period})
+            </option>
+          ))}
+        </Select>
         {canPickRules ? (
           <Select
             label="Commission rule"

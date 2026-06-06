@@ -132,23 +132,20 @@ describe('dispatch settlement integration', () => {
 
     const settlementId = settlementResponse.body.data.dispatch_settlement.id;
 
-    const settlementCustomerResponse = await authRequest(token)
-      .post(`/api/dispatch-settlements/${settlementId}/customers`)
-      .send({
-        dispatch_customer_id: dispatchCustomerResponse.body.data.dispatch_customer.id,
-        expected_amount: 1,
-        collected_amount: 4,
-        notes: 'Partial payment'
-      })
-      .expect(201);
-    expect(Number(settlementCustomerResponse.body.data.dispatch_settlement_customer.expected_amount)).toBe(11);
-
     await authRequest(token)
       .post(`/api/dispatch-settlements/${settlementId}/complete`)
       .send({
         payment_method: 'cash',
         cash_account_id: cashAccountId,
-        due_date: '2026-06-26'
+        due_date: '2026-06-26',
+        customers: [
+          {
+            dispatch_customer_id: dispatchCustomerResponse.body.data.dispatch_customer.id,
+            settlement_status: 'partial',
+            collected_amount: 4,
+            notes: 'Partial payment'
+          }
+        ]
       })
       .expect(200);
 
@@ -328,6 +325,45 @@ describe('dispatch settlement integration', () => {
         reason: 'After cancelling draft settlement'
       })
       .expect(201);
+
+    const settlementReturnResponse = await authRequest(token)
+      .post(`/api/dispatch-requests/${dispatchId}/settlements`)
+      .send({ settlement_date: '2026-05-28' })
+      .expect(201);
+
+    await authRequest(token)
+      .post(`/api/dispatch-settlements/${settlementReturnResponse.body.data.dispatch_settlement.id}/complete`)
+      .send({
+        payment_method: 'cash',
+        customers: [
+          {
+            dispatch_customer_id: dispatchCustomerResponse.body.data.dispatch_customer.id,
+            settlement_status: 'completed',
+            return_items: [
+              {
+                dispatch_item_id: itemResponse.body.data.dispatch_item.id,
+                returned_quantity: 1
+              }
+            ],
+            notes: 'Returned during settlement'
+          }
+        ]
+      })
+      .expect(200);
+
+    const [settledCustomer] = await dbQuery(
+      'SELECT expected_amount, collected_amount, debt_amount FROM dispatch_settlement_customers WHERE dispatch_settlement_id = ?',
+      [settlementReturnResponse.body.data.dispatch_settlement.id]
+    );
+    expect(Number(settledCustomer.expected_amount)).toBe(0);
+    expect(Number(settledCustomer.collected_amount)).toBe(0);
+    expect(Number(settledCustomer.debt_amount)).toBe(0);
+
+    const [finalBalance] = await dbQuery(
+      'SELECT quantity_on_hand FROM stock_balances WHERE warehouse_id = ? AND item_variant_id = ?',
+      [inventory.warehouse.id, inventory.variant.id]
+    );
+    expect(Number(finalBalance.quantity_on_hand)).toBe(10);
   });
 
   test('dispatch submit rejects orphan customers and customer add enforces salesman territory', async () => {

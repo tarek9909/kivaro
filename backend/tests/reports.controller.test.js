@@ -32,4 +32,36 @@ describe('reports summary metrics', () => {
     expect(summary.totals.vat_rate).toBeUndefined();
     expect(summary.metrics).toContain('net_total_amount');
   });
+
+  test('summarizes salary and salary plus commission in commission reports', () => {
+    const summary = _private.buildSummary([
+      {
+        target_amount: 1000,
+        sales_amount: 1200,
+        base_salary: 300,
+        total_commission: 60,
+        total_payable: 360
+      },
+      {
+        target_amount: 800,
+        sales_amount: 700,
+        base_salary: 250,
+        total_commission: 35,
+        total_payable: 285
+      }
+    ], 'commissions');
+
+    expect(summary.totals).toMatchObject({
+      base_salary: 550,
+      total_commission: 95,
+      total_payable: 645
+    });
+    expect(summary.metrics).toEqual([
+      'target_amount',
+      'sales_amount',
+      'base_salary',
+      'total_commission',
+      'total_payable'
+    ]);
+  });
 });

@@ -37,6 +37,16 @@ const VARIANTS = {
     suggestedFileName: (request) =>
       `dispatch-receipts-${request?.dispatch_number || request?.id || 'document'}.pdf`,
     queryKey: 'receipts'
+  },
+  delivery_notes: {
+    title: 'Customer delivery notes',
+    description:
+      'Printable delivery notes (no price) for each customer on the dispatch. Use Download PDF for a printable file.',
+    fetcher: (id) => api.dispatch.requests.printCustomerReceipts(id, { no_price: true }),
+    blobFetcher: (id) => api.dispatch.requests.printCustomerReceiptsPdf(id, { params: { no_price: true } }),
+    suggestedFileName: (request) =>
+      `dispatch-delivery-notes-${request?.dispatch_number || request?.id || 'document'}.pdf`,
+    queryKey: 'delivery_notes'
   }
 };
 
@@ -268,7 +278,7 @@ function SummaryDocument({ dispatchRequest }) {
   );
 }
 
-function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
+function ReceiptsDocument({ dispatchRequest, customerReceipts, noPrice }) {
   const receipts = customerReceipts && customerReceipts.length > 0
     ? customerReceipts
     : (dispatchRequest?.customers || []);
@@ -279,7 +289,7 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
 
   return (
     <DocumentShell>
-      <DocumentHeader eyebrow="Customer receipts" dispatchRequest={dispatchRequest} />
+      <DocumentHeader eyebrow={noPrice ? "Customer delivery notes" : "Customer receipts"} dispatchRequest={dispatchRequest} />
 
       <section className="mt-4 grid gap-3 sm:grid-cols-2">
         <DocumentField label="Salesman" value={dispatchRequest?.salesman_name} />
@@ -307,10 +317,14 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
                 <header className="flex flex-wrap items-start justify-between gap-3 border-b border-white/5 pb-3">
                   <div className="min-w-0">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-ink-400">
-                      Receipt
+                      {noPrice ? 'Delivery Note' : 'Receipt'}
                     </p>
                     <p className="mt-1 font-medium text-ink-50">
-                      {receipt.receipt_number || `customer #${receipt.customer_id || receipt.dispatch_customer_id}`}
+                      {noPrice 
+                        ? (receipt.receipt_number 
+                          ? `DEL-${receipt.receipt_number.split('-').slice(1).join('-')}` 
+                          : `DEL-${receipt.id || receipt.dispatch_customer_id}`)
+                        : (receipt.receipt_number || `customer #${receipt.customer_id || receipt.dispatch_customer_id}`)}
                     </p>
                     <p className="mt-1 text-xs text-ink-300">
                       {receipt.customer_name || ''}
@@ -320,7 +334,7 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
                       {receipt.sublocation_name ? ` - ${receipt.sublocation_name}` : ''}
                     </p>
                   </div>
-                  {receipt.payment_status && (
+                  {!noPrice && receipt.payment_status && (
                     <Badge
                       tone={
                         receipt.payment_status === 'paid'
@@ -337,48 +351,50 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
                   )}
                 </header>
 
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                  <DocumentField
-                    label="Subtotal"
-                    value={
-                      receipt.subtotal_amount !== undefined && receipt.subtotal_amount !== null
-                        ? formatNumber(receipt.subtotal_amount, { maximumFractionDigits: 4 })
-                        : undefined
-                    }
-                  />
-                  <DocumentField
-                    label="VAT"
-                    value={
-                      receipt.vat_amount !== undefined && receipt.vat_amount !== null
-                        ? formatNumber(receipt.vat_amount, { maximumFractionDigits: 4 })
-                        : undefined
-                    }
-                  />
-                  <DocumentField
-                    label="Total"
-                    value={
-                      total !== undefined && total !== null
-                        ? formatNumber(total, { maximumFractionDigits: 4 })
-                        : undefined
-                    }
-                  />
-                  <DocumentField
-                    label="Paid"
-                    value={
-                      paid !== undefined && paid !== null
-                        ? formatNumber(paid, { maximumFractionDigits: 4 })
-                        : undefined
-                    }
-                  />
-                  <DocumentField
-                    label="Remaining"
-                    value={
-                      remaining !== undefined && remaining !== null
-                        ? formatNumber(remaining, { maximumFractionDigits: 4 })
-                        : undefined
-                    }
-                  />
-                </div>
+                {!noPrice && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <DocumentField
+                      label="Subtotal"
+                      value={
+                        receipt.subtotal_amount !== undefined && receipt.subtotal_amount !== null
+                          ? formatNumber(receipt.subtotal_amount, { maximumFractionDigits: 4 })
+                          : undefined
+                      }
+                    />
+                    <DocumentField
+                      label="VAT"
+                      value={
+                        receipt.vat_amount !== undefined && receipt.vat_amount !== null
+                          ? formatNumber(receipt.vat_amount, { maximumFractionDigits: 4 })
+                          : undefined
+                      }
+                    />
+                    <DocumentField
+                      label="Total"
+                      value={
+                        total !== undefined && total !== null
+                          ? formatNumber(total, { maximumFractionDigits: 4 })
+                          : undefined
+                      }
+                    />
+                    <DocumentField
+                      label="Paid"
+                      value={
+                        paid !== undefined && paid !== null
+                          ? formatNumber(paid, { maximumFractionDigits: 4 })
+                          : undefined
+                      }
+                    />
+                    <DocumentField
+                      label="Remaining"
+                      value={
+                        remaining !== undefined && remaining !== null
+                          ? formatNumber(remaining, { maximumFractionDigits: 4 })
+                          : undefined
+                      }
+                    />
+                  </div>
+                )}
 
                 {Array.isArray(receipt.items) && receipt.items.length > 0 && (
                   <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-white/[0.02]">
@@ -387,10 +403,14 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
                         <tr className="border-b border-white/5">
                           <th className="px-3 py-2 font-medium">Variant</th>
                           <th className="px-3 py-2 text-right font-medium">Qty</th>
-                          <th className="px-3 py-2 text-right font-medium">Unit price</th>
-                          <th className="px-3 py-2 text-right font-medium">Subtotal</th>
-                          <th className="px-3 py-2 text-right font-medium">VAT</th>
-                          <th className="px-3 py-2 text-right font-medium">Line total</th>
+                          {!noPrice && (
+                            <>
+                              <th className="px-3 py-2 text-right font-medium">Unit price</th>
+                              <th className="px-3 py-2 text-right font-medium">Subtotal</th>
+                              <th className="px-3 py-2 text-right font-medium">VAT</th>
+                              <th className="px-3 py-2 text-right font-medium">Line total</th>
+                            </>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
@@ -408,18 +428,22 @@ function ReceiptsDocument({ dispatchRequest, customerReceipts }) {
                             <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
                               {formatNumber(item.quantity, { maximumFractionDigits: 4 })}
                             </td>
-                            <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                              {formatNumber(item.unit_price, { maximumFractionDigits: 4 })}
-                            </td>
-                            <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                              {formatNumber(item.subtotal_amount ?? item.line_total, { maximumFractionDigits: 4 })}
-                            </td>
-                            <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                              {formatNumber(item.vat_amount || 0, { maximumFractionDigits: 4 })}
-                            </td>
-                            <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
-                              {formatNumber(item.line_total, { maximumFractionDigits: 4 })}
-                            </td>
+                            {!noPrice && (
+                              <>
+                                <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
+                                  {formatNumber(item.unit_price, { maximumFractionDigits: 4 })}
+                                </td>
+                                <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
+                                  {formatNumber(item.subtotal_amount ?? item.line_total, { maximumFractionDigits: 4 })}
+                                </td>
+                                <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
+                                  {formatNumber(item.vat_amount || 0, { maximumFractionDigits: 4 })}
+                                </td>
+                                <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
+                                  {formatNumber(item.line_total, { maximumFractionDigits: 4 })}
+                                </td>
+                              </>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -514,10 +538,11 @@ export function DispatchPrintModal({ open, onClose, dispatchRequest, variant = '
           description={getErrorMessage(dataQuery.error)}
           onRetry={() => dataQuery.refetch()}
         />
-      ) : variant === 'receipts' ? (
+      ) : variant === 'receipts' || variant === 'delivery_notes' ? (
         <ReceiptsDocument
           dispatchRequest={fetchedRequest}
           customerReceipts={customerReceipts}
+          noPrice={variant === 'delivery_notes'}
         />
       ) : (
         <SummaryDocument dispatchRequest={fetchedRequest} />

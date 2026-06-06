@@ -6,7 +6,6 @@ const { withTransaction } = require('../../utils/transaction');
 const { writeAuditLog } = require('../../middleware/audit.middleware');
 const accountingModel = require('../accounting/accounting.model');
 const inventoryModel = require('../inventory/inventory.model');
-const stockService = require('../inventory/stock.service');
 const purchaseModel = require('./purchases.model');
 
 async function getSupplier(id, actor = {}) {
@@ -25,14 +24,98 @@ function assertActive(row, field, label) {
   return row;
 }
 
-function assertStockedVariant(variant, field = 'items.item_variant_id') {
-  if (variant?.tracking_type !== 'stocked') {
+function assertStockedItem(item, field = 'items.item_id') {
+  if (item?.tracking_type !== 'stocked') {
     throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Item variant must belong to a stocked item' }
+      { field, message: 'Item must be stocked' }
     ]);
   }
 
-  return variant;
+  return item;
+}
+
+function normalizeItemQuantity(item, quantity, field) {
+  const value = decimal(quantity);
+  if (item?.base_unit_type === 'quantity' && !value.isInteger()) {
+    throw ApiError.badRequest('Validation failed', [
+      { field, message: 'Piece-based quantities must be whole numbers' }
+    ]);
+  }
+
+  if (item?.base_unit_type === 'weight') {
+    return value.mul(item.base_unit_conversion_to_base || 1);
+  }
+
+  return value;
+}
+
+function normalizeItemUnitCost(item, unitCost) {
+  if (unitCost === null || unitCost === undefined) {
+    return unitCost;
+  }
+
+  if (item?.base_unit_type === 'weight') {
+    return decimal(unitCost).div(item.base_unit_conversion_to_base || 1);
+  }
+
+  return decimal(unitCost);
+}
+
+async function resolvePurchaseOrderItems(items, storeId) {
+  const resolvedItems = [];
+
+  for (const [index, item] of items.entries()) {
+    const field = 'items.item_id';
+    const stockItem = await inventoryModel.findItemById(item.item_id);
+
+    if (!stockItem) {
+      throw ApiError.badRequest('Validation failed', [
+        {
+          field,
+          message: `Item ${item.item_id} does not exist`
+        }
+      ]);
+    }
+
+    assertSameStore(stockItem, storeId, field, `Item ${item.item_id} does not belong to this store`);
+    assertActive(stockItem, field, `Item ${item.item_id}`);
+    assertStockedItem(stockItem, field);
+    normalizeItemQuantity(stockItem, item.ordered_quantity, `items.${index}.ordered_quantity`);
+    resolvedItems.push({
+      ...item,
+      item_id: stockItem.id,
+      item_variant_id: null
+    });
+  }
+
+  return resolvedItems;
+}
+
+async function increaseItemStock(connection, data) {
+  const normalizedQuantity = normalizeItemQuantity(data.item, data.quantity, data.field || 'items.received_quantity');
+  const normalizedUnitCost = normalizeItemUnitCost(data.item, data.unitCost);
+  const balance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
+    store_id: data.storeId,
+    warehouse_id: data.warehouseId,
+    item_id: data.itemId
+  });
+  const quantityBefore = decimal(balance.quantity_on_hand || 0);
+  const quantityAfter = quantityBefore.plus(normalizedQuantity);
+
+  await inventoryModel.updateItemStockBalance(connection, balance.id, {
+    quantity_on_hand: toMoney(quantityAfter)
+  });
+  await inventoryModel.createItemStockAdjustment(connection, {
+    store_id: data.storeId,
+    warehouse_id: data.warehouseId,
+    item_id: data.itemId,
+    quantity_change: toMoney(normalizedQuantity),
+    quantity_before: toMoney(quantityBefore),
+    quantity_after: toMoney(quantityAfter),
+    unit_cost: normalizedUnitCost === null || normalizedUnitCost === undefined ? normalizedUnitCost : toMoney(normalizedUnitCost),
+    notes: data.notes,
+    created_by: data.createdBy
+  });
 }
 
 async function createSupplier(data, userId, actor = {}) {
@@ -136,24 +219,10 @@ async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
   assertSameStore(cashAccount, scoped.store_id, 'cash_account_id', 'Cash account does not belong to this store');
   assertActive(cashAccount, 'cash_account_id', 'Cash account');
 
-  for (const item of scoped.items) {
-    const variant = await inventoryModel.findVariantById(item.item_variant_id);
-
-    if (!variant) {
-      throw ApiError.badRequest('Validation failed', [
-        {
-          field: 'items.item_variant_id',
-          message: `Item variant ${item.item_variant_id} does not exist`
-        }
-      ]);
-    }
-    assertSameStore(variant, scoped.store_id, 'items.item_variant_id', `Item variant ${item.item_variant_id} does not belong to this store`);
-    assertActive(variant, 'items.item_variant_id', `Item variant ${item.item_variant_id}`);
-    assertStockedVariant(variant);
-  }
+  const resolvedItems = await resolvePurchaseOrderItems(scoped.items, scoped.store_id);
 
   const totals = calculateOrderTotals(
-    scoped.items,
+    resolvedItems,
     scoped.discount_amount,
     scoped.tax_amount
   );
@@ -174,10 +243,11 @@ async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
       created_by: userId
     });
 
-    for (const item of scoped.items) {
+    for (const item of resolvedItems) {
       await purchaseModel.createPurchaseOrderItem(connection, {
         purchase_order_id: id,
-        item_variant_id: item.item_variant_id,
+        item_id: item.item_id,
+        item_variant_id: null,
         ordered_quantity: item.ordered_quantity,
         unit_cost: item.unit_cost,
         line_total: toMoney(decimal(item.ordered_quantity).mul(item.unit_cost)),
@@ -364,7 +434,7 @@ async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
       received_by: userId
     });
 
-    for (const item of data.items) {
+    for (const [index, item] of data.items.entries()) {
       const poItem = poItemById.get(Number(item.purchase_order_item_id));
 
       if (!poItem) {
@@ -382,15 +452,19 @@ async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
         throw ApiError.conflict('Cannot receive more than ordered quantity');
       }
 
-      assertStockedVariant(
-        await inventoryModel.findVariantById(poItem.item_variant_id),
-        'items.item_variant_id'
+      const stockItem = assertStockedItem(
+        await inventoryModel.findItemById(poItem.item_id),
+        'items.item_id'
       );
+      assertSameStore(stockItem, scopedOrder.store_id, 'items.item_id', 'Item does not belong to this store');
+      assertActive(stockItem, 'items.item_id', 'Item');
+      normalizeItemQuantity(stockItem, item.received_quantity, `items.${index}.received_quantity`);
 
       await purchaseModel.createReceiptItem(connection, {
         purchase_receipt_id: newReceiptId,
         purchase_order_item_id: poItem.id,
-        item_variant_id: poItem.item_variant_id,
+        item_id: poItem.item_id,
+        item_variant_id: null,
         received_quantity: item.received_quantity,
         unit_cost: item.unit_cost ?? poItem.unit_cost
       });
@@ -401,15 +475,14 @@ async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
       );
       poItem.received_quantity = toMoney(decimal(poItem.received_quantity).plus(item.received_quantity));
 
-      await stockService.increaseStock(connection, {
+      await increaseItemStock(connection, {
         storeId: scopedOrder.store_id,
         warehouseId: purchaseOrder.warehouse_id,
-        itemVariantId: poItem.item_variant_id,
+        itemId: poItem.item_id,
+        item: stockItem,
         quantity: item.received_quantity,
         unitCost: item.unit_cost ?? poItem.unit_cost,
-        movementType: 'purchase_receive',
-        referenceType: 'purchase_receipt',
-        referenceId: newReceiptId,
+        field: `items.${index}.received_quantity`,
         notes: data.notes,
         createdBy: userId
       });

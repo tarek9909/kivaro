@@ -272,6 +272,7 @@ describe('inventory service stock adjustments', () => {
     inventoryModel.findItemById.mockResolvedValue({
       id: 10,
       store_id: 1,
+      item_type: 'finished_product',
       tracking_type: 'stocked',
       base_unit_type: 'weight',
       base_unit_conversion_to_base: 1000
@@ -293,6 +294,31 @@ describe('inventory service stock adjustments', () => {
       quantity_on_hand: '1400.0000'
     });
     expect(result.target_type).toBe('item');
+  });
+
+  test('rejects packaging item pool adjustments', async () => {
+    inventoryModel.findItemById.mockResolvedValue({
+      id: 12,
+      store_id: 1,
+      item_type: 'packaging',
+      tracking_type: 'stocked',
+      base_unit_type: 'quantity',
+      base_unit_conversion_to_base: 1
+    });
+
+    await expect(service.adjustStock({
+      target_type: 'item',
+      warehouse_id: 3,
+      item_id: 12,
+      quantity_change: 10,
+      reason: 'packaging pool adjustment'
+    }, 5, null, { store_id: 1 })).rejects.toMatchObject({
+      statusCode: 400,
+      errors: [
+        { field: 'item_id', message: 'Packaging stock must be adjusted at the variant level' }
+      ]
+    });
+    expect(inventoryModel.getOrCreateItemStockBalanceForUpdate).not.toHaveBeenCalled();
   });
 
   test('increasing variant stock subtracts from item pool', async () => {

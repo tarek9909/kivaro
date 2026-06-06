@@ -11,7 +11,7 @@ function assertCanExport(user = {}) {
 }
 
 const SUMMARY_METRICS = {
-  commissions: ['target_amount', 'sales_amount', 'total_commission'],
+  commissions: ['target_amount', 'sales_amount', 'base_salary', 'total_commission', 'total_payable'],
   current_stock: ['quantity_on_hand', 'quantity_reserved', 'quantity_available', 'stock_value'],
   customer_balances: [
     'total_debt_subtotal',
@@ -55,7 +55,7 @@ const SUMMARY_METRICS = {
   purchases: ['subtotal', 'discount_amount', 'tax_amount', 'total_amount', 'amount_paid'],
   packaging_assignments: ['charcoal_quantity_kg', 'primary_container_count', 'total_packaging_cost', 'cost_per_kg'],
   packaging_shortages: ['required_quantity', 'available_quantity', 'shortage_quantity', 'total_cost'],
-  salesman_target_progress: ['target_amount', 'achieved_sales_amount'],
+  salesman_target_progress: ['base_salary', 'target_amount', 'achieved_sales_amount'],
   sales: [
     'quantity',
     'subtotal_amount',

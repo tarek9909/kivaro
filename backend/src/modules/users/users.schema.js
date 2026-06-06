@@ -33,7 +33,8 @@ const createUserSchema = z.object({
     email: z.string().trim().email().optional().nullable(),
     phone: optionalText,
     password: z.string().min(8),
-    status: userStatus.default('active')
+    status: userStatus.default('active'),
+    create_real_salesman: z.coerce.boolean().default(false)
   })
 });
 

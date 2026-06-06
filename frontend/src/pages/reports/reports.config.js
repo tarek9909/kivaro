@@ -46,7 +46,7 @@ export const REPORTS_REGISTRY = {
     description: 'Live stock balances per warehouse and variant.',
     rowsKey: 'current_stock',
     csvFilename: 'current-stock.csv',
-    filters: ['search', 'warehouse', 'item', 'item_variant', 'item_type']
+    filters: ['search', 'warehouse', 'item', 'item_variant']
   },
   customerBalances: {
     id: 'customer-balances',
@@ -64,7 +64,7 @@ export const REPORTS_REGISTRY = {
     description: 'Target versus achieved sales by salesman and period.',
     rowsKey: 'salesman_target_progress',
     csvFilename: 'salesman-target-progress.csv',
-    filters: ['search', 'salesman', 'date_from', 'date_to']
+    filters: ['search', 'salesman', 'location', 'sublocation', 'date_from', 'date_to']
   },
   dispatchSummary: {
     id: 'dispatch-summary',
@@ -238,17 +238,9 @@ export const COMMISSION_STATUS_OPTIONS = [
 export const PACKAGING_ASSIGNMENT_STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'calculated', label: 'Calculated' },
+  { value: 'batched', label: 'Batched' },
   { value: 'consumed', label: 'Consumed' },
   { value: 'cancelled', label: 'Cancelled' }
-];
-
-export const ITEM_TYPE_OPTIONS = [
-  { value: '', label: 'All item types' },
-  { value: 'raw_charcoal', label: 'Raw charcoal' },
-  { value: 'packaging', label: 'Packaging' },
-  { value: 'finished_product', label: 'Finished product' },
-  { value: 'service', label: 'Service' },
-  { value: 'other', label: 'Other' }
 ];
 
 export const MOVEMENT_TYPE_OPTIONS = [
