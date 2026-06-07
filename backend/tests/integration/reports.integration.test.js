@@ -87,6 +87,12 @@ describe('reports integration', () => {
       .send({ name: `P&L Expenses ${Date.now()}` })
       .expect(201);
 
+    const baselineResponse = await authRequest(token)
+      .get('/api/reports/profit-loss')
+      .expect(200);
+    const [baselineRow] = baselineResponse.body.data.profit_loss;
+    const baselineOperatingExpenses = Number(baselineRow.operating_expenses);
+
     await authRequest(token)
       .post('/api/expenses')
       .send({
@@ -98,6 +104,33 @@ describe('reports integration', () => {
         description: 'P&L expense'
       })
       .expect(201);
+
+    const editedExpenseResponse = await authRequest(token)
+      .post('/api/expenses')
+      .send({
+        expense_category_id: categoryResponse.body.data.expense_category.id,
+        expense_date: '2026-05-21',
+        amount: 9,
+        payment_method: 'cash',
+        cash_account_id: accountResponse.body.data.cash_account.id,
+        description: 'P&L edited expense'
+      })
+      .expect(201);
+
+    await authRequest(token)
+      .patch(`/api/expenses/${editedExpenseResponse.body.data.expense.id}`)
+      .send({
+        amount: 4,
+        cash_account_id: accountResponse.body.data.cash_account.id,
+        description: 'P&L edited expense adjusted'
+      })
+      .expect(200);
+
+    const netExpenseResponse = await authRequest(token)
+      .get('/api/reports/profit-loss')
+      .expect(200);
+    const [netExpenseRow] = netExpenseResponse.body.data.profit_loss;
+    expect(Number(netExpenseRow.operating_expenses) - baselineOperatingExpenses).toBeCloseTo(9, 4);
 
     await dbQuery(
       `INSERT INTO dispatch_requests (

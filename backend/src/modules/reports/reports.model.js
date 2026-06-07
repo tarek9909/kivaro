@@ -43,43 +43,48 @@ const dispatchSummaryBase = viewReport('v_dispatch_summary', [
 const dispatchSummary = (input = {}, actor = {}) =>
   dispatchSummaryBase(input, actor);
 
-const sales = (input, actor = {}) => listRecords({
-  select: `SELECT dr.id AS dispatch_request_id, dr.dispatch_number, dr.request_date,
-    dr.status, s.full_name AS salesman_name, c.name AS customer_name,
-    l.name AS location_name, sl.name AS sublocation_name, i.name AS item_name,
-    iv.variant_name, di.quantity, di.unit_price, di.subtotal_amount, di.vat_rate,
-    di.vat_amount, di.line_total, di.returned_quantity,
-    CASE WHEN di.quantity > 0 THEN di.subtotal_amount * di.returned_quantity / di.quantity ELSE 0 END AS returned_subtotal_amount,
-    CASE WHEN di.quantity > 0 THEN di.vat_amount * di.returned_quantity / di.quantity ELSE 0 END AS returned_vat_amount,
-    CASE WHEN di.quantity > 0 THEN di.line_total * di.returned_quantity / di.quantity ELSE 0 END AS returned_total_amount,
-    CASE WHEN di.quantity > 0 THEN di.subtotal_amount - (di.subtotal_amount * di.returned_quantity / di.quantity) ELSE di.subtotal_amount END AS net_subtotal_amount,
-    CASE WHEN di.quantity > 0 THEN di.vat_amount - (di.vat_amount * di.returned_quantity / di.quantity) ELSE di.vat_amount END AS net_vat_amount,
-    CASE WHEN di.quantity > 0 THEN di.line_total - (di.line_total * di.returned_quantity / di.quantity) ELSE di.line_total END AS net_total_amount,
-    dc.collected_amount, dc.debt_amount, dc.payment_status`,
-  from: 'dispatch_items di',
-  joins: `
-    JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
-    JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id
-    JOIN customers c ON c.id = dc.customer_id
-    JOIN locations l ON l.id = dc.location_id
-    JOIN sublocations sl ON sl.id = dc.sublocation_id
-    JOIN salesmen s ON s.id = dr.salesman_id
-    JOIN item_variants iv ON iv.id = di.item_variant_id
-    JOIN items i ON i.id = iv.item_id`,
-  filters: [
-    { key: 'status', column: 'dr.status' },
-    { key: 'store_id', column: 'dr.store_id' },
-    { key: 'salesman_id', column: 'dr.salesman_id' },
-    { key: 'customer_id', column: 'dc.customer_id' },
-    { key: 'location_id', column: 'dc.location_id' },
-    { key: 'sublocation_id', column: 'dc.sublocation_id' },
-    { key: 'item_variant_id', column: 'di.item_variant_id' },
-    { key: 'date_from', column: 'dr.request_date', operator: 'date_gte' },
-    { key: 'date_to', column: 'dr.request_date', operator: 'date_lte' },
-    { key: 'search', type: 'search', fields: ['dr.dispatch_number', 'c.name', 's.full_name', 'i.name', 'iv.variant_name'] }
-  ],
-  orderBy: 'ORDER BY dr.request_date DESC, dr.id DESC'
-}, scopedQuery(input, actor));
+const sales = (input, actor = {}) => {
+  const scopedInput = scopedQuery(input, actor);
+  const reportInput = scopedInput.status ? scopedInput : { ...scopedInput, status: 'completed' };
+
+  return listRecords({
+    select: `SELECT dr.id AS dispatch_request_id, dr.dispatch_number, dr.request_date,
+      dr.status, s.full_name AS salesman_name, c.name AS customer_name,
+      l.name AS location_name, sl.name AS sublocation_name, i.name AS item_name,
+      iv.variant_name, di.quantity, di.unit_price, di.subtotal_amount, di.vat_rate,
+      di.vat_amount, di.line_total, di.returned_quantity,
+      CASE WHEN di.quantity > 0 THEN di.subtotal_amount * di.returned_quantity / di.quantity ELSE 0 END AS returned_subtotal_amount,
+      CASE WHEN di.quantity > 0 THEN di.vat_amount * di.returned_quantity / di.quantity ELSE 0 END AS returned_vat_amount,
+      CASE WHEN di.quantity > 0 THEN di.line_total * di.returned_quantity / di.quantity ELSE 0 END AS returned_total_amount,
+      CASE WHEN di.quantity > 0 THEN di.subtotal_amount - (di.subtotal_amount * di.returned_quantity / di.quantity) ELSE di.subtotal_amount END AS net_subtotal_amount,
+      CASE WHEN di.quantity > 0 THEN di.vat_amount - (di.vat_amount * di.returned_quantity / di.quantity) ELSE di.vat_amount END AS net_vat_amount,
+      CASE WHEN di.quantity > 0 THEN di.line_total - (di.line_total * di.returned_quantity / di.quantity) ELSE di.line_total END AS net_total_amount,
+      dc.collected_amount, dc.debt_amount, dc.payment_status`,
+    from: 'dispatch_items di',
+    joins: `
+      JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
+      JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id
+      JOIN customers c ON c.id = dc.customer_id
+      JOIN locations l ON l.id = dc.location_id
+      JOIN sublocations sl ON sl.id = dc.sublocation_id
+      JOIN salesmen s ON s.id = dr.salesman_id
+      JOIN item_variants iv ON iv.id = di.item_variant_id
+      JOIN items i ON i.id = iv.item_id`,
+    filters: [
+      { key: 'status', column: 'dr.status' },
+      { key: 'store_id', column: 'dr.store_id' },
+      { key: 'salesman_id', column: 'dr.salesman_id' },
+      { key: 'customer_id', column: 'dc.customer_id' },
+      { key: 'location_id', column: 'dc.location_id' },
+      { key: 'sublocation_id', column: 'dc.sublocation_id' },
+      { key: 'item_variant_id', column: 'di.item_variant_id' },
+      { key: 'date_from', column: 'dr.request_date', operator: 'date_gte' },
+      { key: 'date_to', column: 'dr.request_date', operator: 'date_lte' },
+      { key: 'search', type: 'search', fields: ['dr.dispatch_number', 'c.name', 's.full_name', 'i.name', 'iv.variant_name'] }
+    ],
+    orderBy: 'ORDER BY dr.request_date DESC, dr.id DESC'
+  }, reportInput);
+};
 
 const debts = (input, actor = {}) => listRecords({
   select: `SELECT cd.id, cd.customer_id, c.name AS customer_name, cd.salesman_id,
@@ -309,7 +314,15 @@ async function profitLoss(input = {}, actor = {}) {
      ) sales
      CROSS JOIN (
        SELECT
-         COALESCE(SUM(CASE WHEN transaction_type = 'expense' THEN amount ELSE 0 END), 0) AS operating_expenses,
+         COALESCE(SUM(
+           CASE
+             WHEN transaction_type = 'expense' THEN amount
+             WHEN transaction_type = 'manual_adjustment'
+               AND reference_type = 'expense'
+               AND direction = 'in' THEN -amount
+             ELSE 0
+           END
+         ), 0) AS operating_expenses,
          COALESCE(SUM(CASE WHEN transaction_type = 'supplier_payment' THEN amount ELSE 0 END), 0) AS supplier_payments,
          COALESCE(SUM(CASE WHEN transaction_type = 'commission_payment' THEN amount ELSE 0 END), 0) AS commission_payments
        FROM financial_transactions

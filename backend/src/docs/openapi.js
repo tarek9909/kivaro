@@ -389,7 +389,7 @@ const openapiSpec = {
       get: protectedOperation({ tags: ['Reports'], summary: 'Dispatch summary report, JSON or CSV', permission: 'reports.view', parameters: reportParams, responses: { 200: { description: 'JSON or CSV response', content: { 'application/json': jsonResponse.content['application/json'], 'text/csv': csvResponse.content['text/csv'] } } } })
     },
     '/reports/sales': {
-      get: protectedOperation({ tags: ['Reports'], summary: 'Sales report, JSON or CSV', permission: 'reports.view', parameters: reportParams })
+      get: protectedOperation({ tags: ['Reports'], summary: 'Sales report, defaults to completed dispatches; JSON or CSV', permission: 'reports.view', parameters: reportParams })
     },
     '/reports/debts': {
       get: protectedOperation({ tags: ['Reports'], summary: 'Debts report, JSON or CSV', permission: 'reports.view', parameters: reportParams })
