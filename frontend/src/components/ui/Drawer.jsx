@@ -31,7 +31,7 @@ export function Drawer({ open, onClose, title, description, children, footer, wi
   }[width];
 
   return createPortal(
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex justify-end">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex justify-end sm:items-center sm:justify-center sm:p-6">
       <button
         type="button"
         aria-label="Close drawer"
@@ -40,7 +40,7 @@ export function Drawer({ open, onClose, title, description, children, footer, wi
       />
       <aside
         className={cn(
-          'glass-panel-strong relative z-10 flex h-full w-full flex-col overflow-hidden animate-fade-in',
+          'glass-panel-strong relative z-10 flex h-full w-full flex-col overflow-hidden animate-fade-in sm:h-auto sm:max-h-[90vh]',
           widthClass
         )}
       >

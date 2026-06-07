@@ -76,6 +76,27 @@ export function AddDispatchItemModal({
       queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
       onClose?.();
     },
+  const vatQuery = useQuery({
+    queryKey: ['vat-settings'],
+    queryFn: () => api.settings.vat.get(),
+    enabled: Boolean(open),
+    staleTime: 60_000
+  });
+  const vat = vatQuery.data?.data?.vat;
+  const vatEnabled = Boolean(vat?.enabled);
+  const vatRate = vatEnabled ? Number(vat?.rate || 0) : 0;
+  const subtotalPreview = Number(form.quantity || 0) * Number(form.unit_price || 0);
+  const vatPreview = vatEnabled ? (subtotalPreview * vatRate) / 100 : 0;
+  const totalPreview = subtotalPreview + vatPreview;
+
+  const mutation = useMutation({
+    mutationFn: (payload) => api.dispatch.customers.addItem(dispatchCustomer.id, payload),
+    onSuccess: () => {
+      toast.success('Item added');
+      queryClient.invalidateQueries({ queryKey: ['dispatch', 'request', dispatchRequestId] });
+      queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
+      onClose?.();
+    },
     onError: (error) => {
       setErrors(mapFieldErrors(error));
       toast.error(getErrorMessage(error, 'Could not add item.'));
@@ -84,6 +105,11 @@ export function AddDispatchItemModal({
 
   function validate() {
     const next = {};
+    if (canPickInventory) {
+      if (!form.packaging_assignment_id) {
+        next.packaging_assignment_id = 'Batch is required.';
+      }
+    }
     const effectiveVariantId = selectedAssignmentVariantId || form.item_variant_id;
     const variantId = Number(effectiveVariantId);
     if (!effectiveVariantId || Number.isNaN(variantId) || variantId <= 0) {
@@ -169,7 +195,7 @@ export function AddDispatchItemModal({
         )}
         {canPickInventory && (
           <Select
-            label="Batch assigned to this customer"
+            label="Batch"
             value={form.packaging_assignment_id}
             onChange={(event) => {
               const nextAssignment = assignments.find((assignment) => String(assignment.id) === String(event.target.value));
@@ -180,9 +206,11 @@ export function AddDispatchItemModal({
               }));
               setErrors((prev) => ({ ...prev, packaging_assignment_id: undefined, item_variant_id: undefined, quantity: undefined }));
             }}
-            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} containers available for assignment / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : 'Optional. Use when this customer is receiving from a prepared packaging batch.'}
+            error={errors.packaging_assignment_id}
+            required
+            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} containers available for assignment / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : 'Select the packaging batch for this customer.'}
           >
-            <option value="">No batch</option>
+            <option value="">Select batch</option>
             {assignments.map((assignment) => (
               <option
                 key={assignment.id}
@@ -194,35 +222,19 @@ export function AddDispatchItemModal({
             ))}
           </Select>
         )}
-        {selectedAssignment ? (
+        {canPickInventory ? (
           <Input
             label="Batch item"
-            value={[
+            value={selectedAssignment ? [
               selectedAssignment.output_item_name,
               selectedAssignment.output_variant_name || selectedAssignment.charcoal_variant_name,
               selectedAssignment.output_sku || selectedAssignment.charcoal_sku
-            ].filter(Boolean).join(' - ') || `Variant #${selectedAssignmentVariantId}`}
+            ].filter(Boolean).join(' - ') : ''}
             readOnly
+            placeholder="Select a batch to determine variant"
             error={errors.item_variant_id}
             description="Determined by the selected batch."
           />
-        ) : canPickInventory ? (
-          <Select
-            label="Variant"
-            value={form.item_variant_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, item_variant_id: event.target.value }))
-            }
-            error={errors.item_variant_id}
-            required
-          >
-            <option value="">Select variant</option>
-            {variants.map((variant) => (
-              <option key={variant.id} value={variant.id}>
-                {variant.item_name} - {variant.variant_name} ({variant.sku})
-              </option>
-            ))}
-          </Select>
         ) : (
           <Input
             label="Variant ID"
@@ -240,7 +252,6 @@ export function AddDispatchItemModal({
         <div className="grid gap-4 sm:grid-cols-3">
           <Input
             label={selectedAssignment ? 'Containers for customer' : 'Quantity (base unit)'}
-            type="number"
             min="0"
             step="0.0001"
             value={form.quantity}

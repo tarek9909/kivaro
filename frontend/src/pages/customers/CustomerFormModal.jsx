@@ -46,9 +46,6 @@ function emptyForm(customer) {
 
 export function CustomerFormModal({ open, onClose, customer }) {
   const isEdit = Boolean(customer);
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const canPickLocations = hasPermission(LOCATIONS_PERMISSIONS.locations);
-  const canPickSalesmen = hasPermission(LOCATIONS_PERMISSIONS.salesmen);
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState(() => emptyForm(customer));
@@ -60,9 +57,9 @@ export function CustomerFormModal({ open, onClose, customer }) {
     setErrors({});
   }, [open, customer]);
 
-  const locationsQuery = useLocationsList(open && canPickLocations);
-  const sublocationsQuery = useSublocationsList(open && canPickLocations);
-  const salesmenQuery = useSalesmenList(open && canPickSalesmen);
+  const locationsQuery = useLocationsList(open);
+  const sublocationsQuery = useSublocationsList(open);
+  const salesmenQuery = useSalesmenList(open);
 
   const locations = locationsQuery.data?.data?.locations || [];
   const sublocationsAll = sublocationsQuery.data?.data?.sublocations || [];
@@ -208,92 +205,54 @@ export function CustomerFormModal({ open, onClose, customer }) {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          {canPickLocations ? (
-            <Select
-              label="Location"
-              value={form.location_id}
-              onChange={(event) => handleChange('location_id', event.target.value)}
-              error={errors.location_id}
-              required
-            >
-              <option value="">Select location</option>
-              {locations.map((location) => (
-                <option key={location.id} value={location.id}>
-                  {location.name}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <Input
-              label="Location ID"
-              type="number"
-              min="1"
-              value={form.location_id}
-              onChange={(event) => handleChange('location_id', event.target.value)}
-              error={errors.location_id}
-              required
-              description="Numeric only. Ask an administrator for territory access if you need a picker."
-            />
-          )}
-          {canPickLocations ? (
-            <Select
-              label="Sublocation"
-              value={form.sublocation_id}
-              onChange={(event) => handleChange('sublocation_id', event.target.value)}
-              error={errors.sublocation_id}
-              required
-              disabled={!form.location_id}
-              description={
-                form.location_id ? undefined : 'Select a location first.'
-              }
-            >
-              <option value="">Select sublocation</option>
-              {sublocations.map((sublocation) => (
-                <option key={sublocation.id} value={sublocation.id}>
-                  {sublocation.name}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <Input
-              label="Sublocation ID"
-              type="number"
-              min="1"
-              value={form.sublocation_id}
-              onChange={(event) => handleChange('sublocation_id', event.target.value)}
-              error={errors.sublocation_id}
-              required
-              description="Numeric only."
-            />
-          )}
-        </div>
-
-        {canPickSalesmen ? (
           <Select
-            label="Assigned salesman"
-            value={form.assigned_salesman_id}
-            onChange={(event) => handleChange('assigned_salesman_id', event.target.value)}
-            error={errors.assigned_salesman_id}
-            description="Optional. Pick the salesman that owns this customer."
+            label="Location"
+            value={form.location_id}
+            onChange={(event) => handleChange('location_id', event.target.value)}
+            error={errors.location_id}
+            required
           >
-            <option value="">No salesman</option>
-            {salesmen.map((salesman) => (
-              <option key={salesman.id} value={salesman.id}>
-                {salesman.full_name}
+            <option value="">Select location</option>
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
               </option>
             ))}
           </Select>
-        ) : (
-          <Input
-            label="Salesman ID"
-            type="number"
-            min="1"
-            value={form.assigned_salesman_id}
-            onChange={(event) => handleChange('assigned_salesman_id', event.target.value)}
-            error={errors.assigned_salesman_id}
-            description="Optional. Numeric only."
-          />
-        )}
+          <Select
+            label="Sublocation"
+            value={form.sublocation_id}
+            onChange={(event) => handleChange('sublocation_id', event.target.value)}
+            error={errors.sublocation_id}
+            required
+            disabled={!form.location_id}
+            description={
+              form.location_id ? undefined : 'Select a location first.'
+            }
+          >
+            <option value="">Select sublocation</option>
+            {sublocations.map((sublocation) => (
+              <option key={sublocation.id} value={sublocation.id}>
+                {sublocation.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <Select
+          label="Assigned salesman"
+          value={form.assigned_salesman_id}
+          onChange={(event) => handleChange('assigned_salesman_id', event.target.value)}
+          error={errors.assigned_salesman_id}
+          description="Optional. Pick the salesman that owns this customer."
+        >
+          <option value="">No salesman</option>
+          {salesmen.map((salesman) => (
+            <option key={salesman.id} value={salesman.id}>
+              {salesman.full_name}
+            </option>
+          ))}
+        </Select>
 
         <Input
           label="Address"

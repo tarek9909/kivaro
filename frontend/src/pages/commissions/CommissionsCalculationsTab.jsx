@@ -12,7 +12,7 @@ import {
   Select
 } from '@/components/ui/index.js';
 import { formatDate, formatNumber } from '@/lib/formatters.js';
-import { useSalesmenList } from '@/pages/locations/useLocationsOptions.js';
+import { useSalesmenList, useSublocationsList } from '@/pages/locations/useLocationsOptions.js';
 import { LOCATIONS_PERMISSIONS } from '@/pages/locations/locations.config.js';
 import {
   COMMISSIONS_PERMISSIONS,
@@ -63,6 +63,9 @@ export default function CommissionsCalculationsTab() {
 
   const salesmenQuery = useSalesmenList(canPickSalesmen);
   const salesmen = salesmenQuery.data?.data?.salesmen || [];
+
+  const sublocationsQuery = useSublocationsList(true);
+  const sublocations = sublocationsQuery.data?.data?.sublocations || [];
 
   const rows = listQuery.data?.data?.commissions || [];
   const meta = listQuery.data?.meta || {};
@@ -207,17 +210,21 @@ export default function CommissionsCalculationsTab() {
             description="Numeric only."
           />
         )}
-        <Input
-          label="Sublocation ID"
-          type="number"
-          min="1"
+        <Select
+          label="Sublocation"
           value={sublocationId}
           onChange={(event) => {
             setSublocationId(event.target.value);
             setPage(1);
           }}
-          description="Numeric only."
-        />
+        >
+          <option value="">All sublocations</option>
+          {sublocations.map((sublocation) => (
+            <option key={sublocation.id} value={sublocation.id}>
+              {sublocation.name}
+            </option>
+          ))}
+        </Select>
       </div>
 
       <div className="flex justify-end">

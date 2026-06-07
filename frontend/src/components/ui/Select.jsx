@@ -101,7 +101,14 @@ export const Select = forwardRef(function Select(
   };
 
   return (
-    <div ref={containerRef} className={cn('relative flex min-w-0 flex-col gap-1.5', containerClassName)}>
+    <div
+      ref={containerRef}
+      className={cn(
+        'relative flex min-w-0 flex-col gap-1.5',
+        isOpen && 'z-30',
+        containerClassName
+      )}
+    >
       {label && (
         <label
           htmlFor={selectId}
