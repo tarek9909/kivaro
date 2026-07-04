@@ -21,11 +21,10 @@ const envSchema = z.object({
   DB_PASSWORD: z.string().default(''),
   DB_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
   DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
-  REQUIRE_DB_ON_STARTUP: envBoolean.default(false),
   JWT_SECRET: z.string().min(32).default('development_secret_change_me_for_real_usage'),
   JWT_EXPIRES_IN: z.string().min(1).default('1d'),
   CORS_ORIGIN: z.string().min(1).default('*'),
-  REQUEST_BODY_LIMIT: z.string().min(1).default('1mb'),
+  REQUEST_BODY_LIMIT: z.string().min(1).default('3mb'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10000),
   AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900000),
@@ -63,7 +62,6 @@ module.exports = {
   },
   corsOrigin: values.CORS_ORIGIN,
   requestBodyLimit: values.REQUEST_BODY_LIMIT,
-  requireDbOnStartup: values.REQUIRE_DB_ON_STARTUP,
   rateLimit: {
     api: {
       windowMs: values.RATE_LIMIT_WINDOW_MS,

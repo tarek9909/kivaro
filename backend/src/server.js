@@ -1,6 +1,6 @@
 const app = require('./app');
 const env = require('./bootstrap/env');
-const { closePool, pingDatabase } = require('./bootstrap/db');
+const { closePool } = require('./bootstrap/db');
 
 let server;
 
@@ -27,15 +27,6 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 async function startServer() {
-  if (env.isProduction || env.requireDbOnStartup) {
-    try {
-      await pingDatabase();
-    } catch (error) {
-      console.error(`Database startup check failed: ${error.message}`);
-      process.exit(1);
-    }
-  }
-
   server = app.listen(env.port, () => {
     console.log(`Charcoal ERP API listening on port ${env.port}`);
   });

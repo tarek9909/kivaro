@@ -21,6 +21,8 @@ const FIELDS = [
   { name: 'phone', label: 'Phone' },
   { name: 'email', label: 'Email', type: 'email' }
 ];
+const ALLOWED_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const LOGO_ACCEPT = ALLOWED_LOGO_TYPES.join(',');
 
 export function CompanyProfileCard({ canEdit = false }) {
   const queryClient = useQueryClient();
@@ -80,8 +82,8 @@ export function CompanyProfileCard({ canEdit = false }) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please upload an image file.');
+    if (!ALLOWED_LOGO_TYPES.includes(file.type)) {
+      toast.error('Please upload a PNG, JPG, WEBP, or GIF image.');
       return;
     }
 
@@ -208,7 +210,7 @@ export function CompanyProfileCard({ canEdit = false }) {
                 <div className="flex-1 text-center sm:text-left space-y-2">
                   <div className="text-xs text-ink-300">
                     <p className="font-semibold text-ink-50">Upload your brand logo</p>
-                    <p className="text-[10px] text-ink-400 mt-0.5">Supports PNG, JPG, or SVG. Max size 2MB.</p>
+                    <p className="text-[10px] text-ink-400 mt-0.5">Supports PNG, JPG, WEBP, or GIF. Max size 2MB.</p>
                   </div>
                   
                   {canEdit && (
@@ -217,7 +219,7 @@ export function CompanyProfileCard({ canEdit = false }) {
                         type="file"
                         ref={fileInputRef}
                         onChange={handleFileChange}
-                        accept="image/*"
+                        accept={LOGO_ACCEPT}
                         className="hidden"
                         disabled={isUploading}
                       />

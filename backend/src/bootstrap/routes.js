@@ -66,8 +66,7 @@ const ALLOWED_UPLOAD_MIME_TYPES = new Map([
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
   ['image/webp', 'webp'],
-  ['image/gif', 'gif'],
-  ['image/svg+xml', 'svg']
+  ['image/gif', 'gif']
 ]);
 
 router.post(

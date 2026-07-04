@@ -76,27 +76,6 @@ export function AddDispatchItemModal({
       queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
       onClose?.();
     },
-  const vatQuery = useQuery({
-    queryKey: ['vat-settings'],
-    queryFn: () => api.settings.vat.get(),
-    enabled: Boolean(open),
-    staleTime: 60_000
-  });
-  const vat = vatQuery.data?.data?.vat;
-  const vatEnabled = Boolean(vat?.enabled);
-  const vatRate = vatEnabled ? Number(vat?.rate || 0) : 0;
-  const subtotalPreview = Number(form.quantity || 0) * Number(form.unit_price || 0);
-  const vatPreview = vatEnabled ? (subtotalPreview * vatRate) / 100 : 0;
-  const totalPreview = subtotalPreview + vatPreview;
-
-  const mutation = useMutation({
-    mutationFn: (payload) => api.dispatch.customers.addItem(dispatchCustomer.id, payload),
-    onSuccess: () => {
-      toast.success('Item added');
-      queryClient.invalidateQueries({ queryKey: ['dispatch', 'request', dispatchRequestId] });
-      queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
-      onClose?.();
-    },
     onError: (error) => {
       setErrors(mapFieldErrors(error));
       toast.error(getErrorMessage(error, 'Could not add item.'));

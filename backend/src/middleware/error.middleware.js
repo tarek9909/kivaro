@@ -7,7 +7,7 @@ function notFoundHandler(req, res, next) {
 }
 
 function errorHandler(error, req, res, next) {
-  const statusCode = error.statusCode || 500;
+  const statusCode = error.statusCode || error.status || 500;
   const errors = Array.isArray(error.errors) ? error.errors : [];
 
   const payload = {
