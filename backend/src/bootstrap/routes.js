@@ -72,7 +72,7 @@ const ALLOWED_UPLOAD_MIME_TYPES = new Map([
 router.post(
   '/upload',
   authenticate,
-  requireAnyPermission('settings.manage', 'vat.manage', 'superadmin.manage'),
+  requireAnyPermission('settings.manage', 'superadmin.manage'),
   (req, res) => {
   try {
     const { filename, content } = req.body;

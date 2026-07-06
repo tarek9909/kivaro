@@ -18,8 +18,14 @@ jest.mock('../src/utils/transaction', () => ({
   withTransaction: jest.fn(async (callback) => callback(mockConnection))
 }));
 
+jest.mock('../src/services/storeConfig.service', () => ({
+  getStoreUrlPrefix: jest.fn(),
+  getStoreVatSettings: jest.fn()
+}));
+
 const bcrypt = require('bcryptjs');
 const authModel = require('../src/modules/auth/auth.model');
+const storeConfigService = require('../src/services/storeConfig.service');
 const authService = require('../src/modules/auth/auth.service');
 
 function activeUser(overrides = {}) {
@@ -44,6 +50,8 @@ function activeUser(overrides = {}) {
 describe('auth service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    storeConfigService.getStoreUrlPrefix.mockResolvedValue('store');
+    storeConfigService.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
   });
 
   test('logs in an active user and creates a session', async () => {
@@ -73,6 +81,7 @@ describe('auth service', () => {
     expect(result.user).toMatchObject({
       id: 1,
       username: 'owner',
+      workspace_url_prefix: 'store',
       permissions: ['dashboard.view', 'users.view']
     });
     expect(authModel.createSession).toHaveBeenCalledWith(
@@ -86,6 +95,32 @@ describe('auth service', () => {
       })
     );
     expect(authModel.updateLastLogin).toHaveBeenCalledWith(mockConnection, 1);
+  });
+
+  test('includes store VAT and configured workspace prefix', async () => {
+    const passwordHash = await bcrypt.hash('secret123', 4);
+    const user = activeUser({
+      password_hash: passwordHash,
+      store_id: 4,
+      store_name: 'Branch',
+      store_code: 'BR',
+      store_slug: 'branch',
+      store_status: 'active',
+      store_currency_code: 'USD'
+    });
+    storeConfigService.getStoreUrlPrefix.mockResolvedValue('branch');
+    storeConfigService.getStoreVatSettings.mockResolvedValue({ enabled: true, rate: 11 });
+    authModel.findUsersByLogin.mockResolvedValue([user]);
+    authModel.getUserPermissionsByUserId.mockResolvedValue(['dashboard.view']);
+    authModel.getEnabledModulesByStoreId.mockResolvedValue(['dashboard']);
+
+    const result = await authService.login({ login: 'owner', password: 'secret123' });
+
+    expect(result.user.workspace_url_prefix).toBe('branch');
+    expect(result.user.store).toMatchObject({
+      slug: 'branch',
+      vat: { enabled: true, rate: 11 }
+    });
   });
 
   test('rejects invalid credentials', async () => {

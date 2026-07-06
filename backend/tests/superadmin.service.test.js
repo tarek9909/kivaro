@@ -14,12 +14,17 @@ jest.mock('../src/modules/superadmin/superadmin.model', () => ({
   findStoreById: jest.fn(),
   findStoreBySlug: jest.fn(),
   getStoreSummary: jest.fn(),
-  getStoreVatSettings: jest.fn(),
   listStoreModules: jest.fn(),
   listStores: jest.fn(),
   replaceStoreModules: jest.fn(),
-  upsertStoreSetting: jest.fn(),
   updateStore: jest.fn()
+}));
+
+jest.mock('../src/services/storeConfig.service', () => ({
+  getPlatformSettings: jest.fn(),
+  getStoreVatSettings: jest.fn(),
+  setStoreVatSettings: jest.fn(),
+  updatePlatformSettings: jest.fn()
 }));
 
 jest.mock('../src/modules/auth/auth.service', () => ({
@@ -31,6 +36,7 @@ jest.mock('../src/services/audit.service', () => ({
 }));
 
 const model = require('../src/modules/superadmin/superadmin.model');
+const storeConfigService = require('../src/services/storeConfig.service');
 const authService = require('../src/modules/auth/auth.service');
 const auditService = require('../src/services/audit.service');
 const service = require('../src/modules/superadmin/superadmin.service');
@@ -38,6 +44,8 @@ const service = require('../src/modules/superadmin/superadmin.service');
 describe('superadmin service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    storeConfigService.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
+    storeConfigService.setStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
   });
 
   test('creates a store with default module rows', async () => {
@@ -52,8 +60,6 @@ describe('superadmin service', () => {
     });
     model.listStoreModules.mockResolvedValue([]);
     model.getStoreSummary.mockResolvedValue({});
-    model.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
-
     const result = await service.createStore({
       name: 'North',
       code: 'NORTH',
@@ -80,21 +86,10 @@ describe('superadmin service', () => {
         { module_key: 'reports', enabled: true }
       ])
     );
-    expect(model.upsertStoreSetting).toHaveBeenCalledWith(
-      mockConnection,
+    expect(storeConfigService.setStoreVatSettings).toHaveBeenCalledWith(
       12,
-      expect.objectContaining({
-        setting_key: 'sales.vat.enabled',
-        setting_value: 'false'
-      })
-    );
-    expect(model.upsertStoreSetting).toHaveBeenCalledWith(
-      mockConnection,
-      12,
-      expect.objectContaining({
-        setting_key: 'sales.vat.rate',
-        setting_value: '0'
-      })
+      { enabled: false, rate: 0 },
+      { connection: mockConnection }
     );
   });
 
@@ -110,7 +105,7 @@ describe('superadmin service', () => {
     });
     model.listStoreModules.mockResolvedValue([]);
     model.getStoreSummary.mockResolvedValue({});
-    model.getStoreVatSettings.mockResolvedValue({ enabled: true, rate: 11 });
+    storeConfigService.getStoreVatSettings.mockResolvedValue({ enabled: true, rate: 11 });
 
     await service.createStore({
       name: 'South',
@@ -123,21 +118,29 @@ describe('superadmin service', () => {
       vat: { enabled: true, rate: 11 }
     });
 
-    expect(model.upsertStoreSetting).toHaveBeenCalledWith(
-      mockConnection,
+    expect(storeConfigService.setStoreVatSettings).toHaveBeenCalledWith(
       13,
-      expect.objectContaining({
-        setting_key: 'sales.vat.enabled',
-        setting_value: 'true'
-      })
+      { enabled: true, rate: 11 },
+      { connection: mockConnection }
     );
-    expect(model.upsertStoreSetting).toHaveBeenCalledWith(
-      mockConnection,
-      13,
-      expect.objectContaining({
-        setting_key: 'sales.vat.rate',
-        setting_value: '11'
-      })
+  });
+
+  test('fetches platform settings through shared config service', async () => {
+    storeConfigService.getPlatformSettings.mockResolvedValue({ store_url_prefix: 'branch' });
+
+    await expect(service.getPlatformSettings()).resolves.toEqual({ store_url_prefix: 'branch' });
+    expect(storeConfigService.getPlatformSettings).toHaveBeenCalled();
+  });
+
+  test('updates platform settings through shared config service', async () => {
+    storeConfigService.updatePlatformSettings.mockResolvedValue({ store_url_prefix: 'branch' });
+
+    await expect(
+      service.updatePlatformSettings({ store_url_prefix: 'branch' }, { id: 1 })
+    ).resolves.toEqual({ store_url_prefix: 'branch' });
+    expect(storeConfigService.updatePlatformSettings).toHaveBeenCalledWith(
+      { store_url_prefix: 'branch' },
+      { id: 1 }
     );
   });
 
@@ -178,7 +181,6 @@ describe('superadmin service', () => {
       });
     model.listStoreModules.mockResolvedValue([]);
     model.getStoreSummary.mockResolvedValue({});
-    model.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
     model.findStoreBySlug.mockResolvedValue(null);
 
     const result = await service.updateStore(4, { slug: 'New Store' });
@@ -196,8 +198,6 @@ describe('superadmin service', () => {
     });
     model.listStoreModules.mockResolvedValue([]);
     model.getStoreSummary.mockResolvedValue({});
-    model.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
-
     await expect(
       service.replaceModules(1, [{ module_key: 'unknown', enabled: true }])
     ).rejects.toMatchObject({
@@ -214,7 +214,6 @@ describe('superadmin service', () => {
     });
     model.listStoreModules.mockResolvedValue([]);
     model.getStoreSummary.mockResolvedValue({});
-    model.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
     model.findActiveStoreOwner.mockResolvedValue({
       id: 9,
       full_name: 'Branch Owner',

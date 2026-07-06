@@ -5,7 +5,7 @@ import { useAuthStore } from '@/app/stores/authStore.js';
 import { useThemeStore } from '@/app/stores/themeStore.js';
 import { ProtectedRoute } from '@/app/routes/ProtectedRoute.jsx';
 import { PublicOnlyRoute } from '@/app/routes/PublicOnlyRoute.jsx';
-import { getDefaultAuthenticatedPath } from '@/app/routes/destinations.js';
+import { buildStoreWorkspacePath, getDefaultAuthenticatedPath } from '@/app/routes/destinations.js';
 import LoginPage from '@/pages/LoginPage.jsx';
 import DashboardPage from '@/pages/DashboardPage.jsx';
 import ForbiddenPage from '@/pages/ForbiddenPage.jsx';
@@ -110,7 +110,7 @@ const PLACEHOLDER_ROUTES = [];
 const ADMIN_ROUTES = [
   { path: 'users', element: <UsersPage />, anyOfPermissions: ['users.view'], moduleKey: 'users' },
   { path: 'roles', element: <RolesPage />, anyOfPermissions: ['roles.manage'], moduleKey: 'roles' },
-  { path: 'settings', element: <SettingsPage />, anyOfPermissions: ['settings.manage', 'vat.view', 'vat.manage'], moduleKey: 'settings' },
+  { path: 'settings', element: <SettingsPage />, anyOfPermissions: ['settings.manage'], moduleKey: 'settings' },
   { path: 'audit-logs', element: <AuditLogsPage />, anyOfPermissions: ['audit_logs.view'], moduleKey: 'audit_logs' },
   { path: 'notifications', element: <NotificationsPage />, anyOfPermissions: ['dashboard.view'], moduleKey: 'notifications' }
 ];
@@ -223,7 +223,7 @@ function RootIndex() {
 }
 
 function StoreWorkspaceIndex() {
-  const { storeSlug } = useParams();
+  const { workspacePrefix, storeSlug } = useParams();
   const user = useAuthStore((state) => state.user);
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const hasModule = useAuthStore((state) => state.hasModule);
@@ -232,8 +232,14 @@ function StoreWorkspaceIndex() {
     return <Navigate to="/superadmin" replace />;
   }
 
+  const canonicalPath = buildStoreWorkspacePath(user);
+  const expectedPrefix = user?.workspace_url_prefix || 'store';
+  if ((workspacePrefix && workspacePrefix !== expectedPrefix) || (!workspacePrefix && expectedPrefix !== 'store')) {
+    return <Navigate to={canonicalPath} replace />;
+  }
+
   if (user?.store?.slug && user.store.slug !== storeSlug) {
-    return <Navigate to={`/store/${user.store.slug}`} replace />;
+    return <Navigate to={canonicalPath} replace />;
   }
 
   if (!hasPermission('dashboard.view') || !hasModule('dashboard')) {
@@ -728,6 +734,8 @@ export default function App() {
             element={<ReportRoute />}
           />
         </Route>
+
+        <Route path=":workspacePrefix/:storeSlug" element={<StoreWorkspaceIndex />} />
 
         {PLACEHOLDER_ROUTES.map((route) => (
           <Route

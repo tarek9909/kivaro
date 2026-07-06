@@ -9,7 +9,7 @@ const locationModel = require('../locations/locations.model');
 const customerModel = require('../customers/customers.model');
 const paymentsModel = require('../payments/payments.model');
 const accountingModel = require('../accounting/accounting.model');
-const settingsService = require('../settings/settings.service');
+const storeConfigService = require('../../services/storeConfig.service');
 const packagingModel = require('../packaging/packaging.model');
 const model = require('./dispatch.model');
 
@@ -207,7 +207,7 @@ async function addItem(dispatchCustomerId, data, actor = {}) {
   assertStockedVariant(variant);
 
   const unitCost = data.unit_cost ?? assignmentCost ?? variant.cost;
-  const vatSettings = await settingsService.getVatSettings({ ...actor, query: { store_id: dispatch.store_id } });
+  const vatSettings = await storeConfigService.getStoreVatSettings(dispatch.store_id);
   const vatRate = vatSettings.enabled ? decimal(vatSettings.rate) : decimal(0);
   const subtotal = decimal(data.quantity).mul(data.unit_price);
   const vatAmount = subtotal.mul(vatRate).div(100);

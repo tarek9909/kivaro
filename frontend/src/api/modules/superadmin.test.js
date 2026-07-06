@@ -29,13 +29,21 @@ describe('superadmin API module', () => {
     await api.stores.get(9);
     await api.stores.update(9, { name: 'North Hub' });
     await api.stores.updateStatus(9, { status: 'suspended' });
+    await api.platformSettings.get();
+    await api.platformSettings.update({ store_url_prefix: 'branch' });
 
     expect(client.calls).toEqual([
       { method: 'get', path: '/superadmin/stores', rest: [{ params: { page: 2 } }] },
       { method: 'post', path: '/superadmin/stores', rest: [{ name: 'North', code: 'NORTH' }, undefined] },
       { method: 'get', path: '/superadmin/stores/9', rest: [undefined] },
       { method: 'patch', path: '/superadmin/stores/9', rest: [{ name: 'North Hub' }, undefined] },
-      { method: 'patch', path: '/superadmin/stores/9/status', rest: [{ status: 'suspended' }, undefined] }
+      { method: 'patch', path: '/superadmin/stores/9/status', rest: [{ status: 'suspended' }, undefined] },
+      { method: 'get', path: '/superadmin/platform-settings', rest: [undefined] },
+      {
+        method: 'patch',
+        path: '/superadmin/platform-settings',
+        rest: [{ store_url_prefix: 'branch' }, undefined]
+      }
     ]);
   });
 

@@ -98,7 +98,6 @@ const dictionaries = {
     'superadmin.newStore': 'New store',
     'superadmin.storeProfile': 'Store Profile',
     'superadmin.modules': 'Modules',
-    'settings.vat': 'VAT'
   },
   ar: {
     'app.name': 'كيفارو',
@@ -194,7 +193,6 @@ const dictionaries = {
     'superadmin.newStore': 'متجر جديد',
     'superadmin.storeProfile': 'ملف المتجر',
     'superadmin.modules': 'الوحدات',
-    'settings.vat': 'ضريبة القيمة المضافة'
   }
 };
 

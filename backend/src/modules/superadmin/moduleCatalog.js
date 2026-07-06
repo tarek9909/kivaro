@@ -56,7 +56,6 @@ const MODULE_CATALOG = [
   { key: 'audit_logs', label: 'Audit Logs', type: 'module', routePrefixes: ['/audit-logs'] },
   { key: 'notifications', label: 'Notifications', type: 'module', routePrefixes: ['/notifications'] },
   { key: 'settings', label: 'Settings', type: 'module', routePrefixes: ['/company-profile', '/settings'] },
-  { key: 'settings.vat', parentKey: 'settings', label: 'VAT', type: 'feature', routePrefixes: ['/settings/vat'] },
   { key: 'users', label: 'Users', type: 'module', routePrefixes: ['/users'] },
   { key: 'roles', label: 'Roles', type: 'module', routePrefixes: ['/roles', '/permissions'] }
 ];

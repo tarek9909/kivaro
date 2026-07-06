@@ -1,12 +1,15 @@
 const {
+  app,
   authRequest,
   closeIntegrationPool,
   createInventoryFixture,
   createLocationFixture,
   dbQuery,
   loginOwner,
-  prepareIntegrationDb
+  prepareIntegrationDb,
+  request
 } = require('./helpers/integration');
+const bcrypt = require('bcryptjs');
 
 jest.setTimeout(120000);
 
@@ -23,6 +26,45 @@ describe('dispatch settlement integration', () => {
 
   afterAll(async () => {
     await closeIntegrationPool();
+  });
+
+  test('store admins cannot access VAT settings endpoint', async () => {
+    if (!dbReady) return;
+    const suffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const roleResult = await dbQuery(
+      `INSERT INTO roles (store_id, name, display_name, is_system_role, status)
+       VALUES (1, ?, ?, 0, 'active')`,
+      [`settings_admin_${suffix}`, 'Settings Admin']
+    );
+    const permissionRows = await dbQuery(
+      `SELECT id FROM permissions WHERE permission_key = 'settings.manage' LIMIT 1`
+    );
+    await dbQuery(
+      `INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,
+      [roleResult.insertId, permissionRows[0].id]
+    );
+    await dbQuery(
+      `INSERT INTO users (
+        store_id, role_id, full_name, username, email, password_hash, status
+      ) VALUES (1, ?, 'Settings Admin', ?, ?, ?, 'active')`,
+      [
+        roleResult.insertId,
+        `settings_admin_${suffix}`,
+        `settings_admin_${suffix}@example.com`,
+        await bcrypt.hash('ChangeMe123!', 4)
+      ]
+    );
+    const loginResponse = await request(app)
+      .post('/api/auth/login')
+      .send({ login: `settings_admin_${suffix}`, password: 'ChangeMe123!' })
+      .expect(200);
+    const settingsAdminToken = loginResponse.body.data.token;
+
+    await authRequest(settingsAdminToken).get('/api/settings/vat').expect(403);
+    await authRequest(settingsAdminToken)
+      .patch('/api/settings/vat')
+      .send({ enabled: true, rate: 10 })
+      .expect(403);
   });
 
   test('dispatch, partial settlement, debt, receipt, and PDFs are created', async () => {
@@ -79,10 +121,16 @@ describe('dispatch settlement integration', () => {
     expect(Number(noVatItemResponse.body.data.dispatch_item.vat_amount)).toBe(0);
     expect(Number(noVatItemResponse.body.data.dispatch_item.line_total)).toBe(5);
 
-    await authRequest(token)
-      .patch('/api/settings/vat')
-      .send({ enabled: true, rate: 10 })
-      .expect(200);
+    await dbQuery(
+      `UPDATE system_settings
+       SET setting_value = CASE setting_key
+         WHEN 'sales.vat.enabled' THEN 'true'
+         WHEN 'sales.vat.rate' THEN '10'
+         ELSE setting_value
+       END
+       WHERE store_id = 1
+         AND setting_key IN ('sales.vat.enabled', 'sales.vat.rate')`
+    );
 
     const dispatchResponse = await authRequest(token)
       .post('/api/dispatch-requests')

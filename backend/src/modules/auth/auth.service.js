@@ -4,13 +4,20 @@ const env = require('../../bootstrap/env');
 const ApiError = require('../../utils/ApiError');
 const { withTransaction } = require('../../utils/transaction');
 const { createAccessToken, hashToken } = require('../../utils/token');
+const storeConfigService = require('../../services/storeConfig.service');
 const authModel = require('./auth.model');
 
-function serializeUser(user, permissions = []) {
+async function serializeUser(user, permissions = []) {
   const isSuperadmin = permissions.includes('superadmin.manage');
+  const [workspaceUrlPrefix, vat] = await Promise.all([
+    storeConfigService.getStoreUrlPrefix(),
+    user.store_id ? storeConfigService.getStoreVatSettings(user.store_id) : Promise.resolve(null)
+  ]);
+
   return {
     id: user.id,
     store_id: user.store_id,
+    workspace_url_prefix: workspaceUrlPrefix,
     store: user.store_id
       ? {
           id: user.store_id,
@@ -18,7 +25,8 @@ function serializeUser(user, permissions = []) {
           code: user.store_code,
           slug: user.store_slug,
           status: user.store_status,
-          currency_code: user.store_currency_code
+          currency_code: user.store_currency_code,
+          vat
         }
       : null,
     role_id: user.role_id,
@@ -99,7 +107,7 @@ async function login(credentials, context = {}) {
     token: tokenPayload.token,
     token_type: 'Bearer',
     expires_at: tokenPayload.expiresAt,
-    user: serializeUser(user, permissions)
+    user: await serializeUser(user, permissions)
   };
 }
 
@@ -125,7 +133,7 @@ async function issueTokenForUser(userId, context = {}) {
     token: tokenPayload.token,
     token_type: 'Bearer',
     expires_at: tokenPayload.expiresAt,
-    user: serializeUser(user, permissions)
+    user: await serializeUser(user, permissions)
   };
 }
 
@@ -180,7 +188,7 @@ async function verifyToken(token) {
 
   return {
     token,
-    user: serializeUser(user, permissions)
+    user: await serializeUser(user, permissions)
   };
 }
 

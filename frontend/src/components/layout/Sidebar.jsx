@@ -5,6 +5,7 @@ import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { useTranslation } from '@/app/i18n.js';
 import { NAV_SECTIONS } from '@/app/navigation.js';
+import { buildStoreWorkspacePath } from '@/app/routes/destinations.js';
 import { cn } from '@/lib/cn.js';
 
 function isItemVisible(item, { hasAnyPermission, hasModule, user }) {
@@ -103,7 +104,7 @@ export function Sidebar({ collapsed, onToggle, onNavigate }) {
               {section.items.map((item) => {
                 const Icon = item.icon;
                 const to = item.id === 'dashboard' && user?.store?.slug && !user?.is_superadmin
-                  ? `/store/${user.store.slug}`
+                  ? buildStoreWorkspacePath(user)
                   : item.to;
                 return (
                   <li key={item.id}>

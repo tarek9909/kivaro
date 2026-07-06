@@ -18,6 +18,8 @@ export function AddDispatchItemModal({
   dispatchRequest
 }) {
   const hasPermission = useAuthStore((state) => state.hasPermission);
+  const refreshUser = useAuthStore((state) => state.refreshUser);
+  const user = useAuthStore((state) => state.user);
   const canPickInventory = hasPermission(INVENTORY_VIEW);
   const queryClient = useQueryClient();
 
@@ -34,7 +36,8 @@ export function AddDispatchItemModal({
     if (!open) return;
     setForm({ packaging_assignment_id: '', item_variant_id: '', quantity: '', unit_price: '', unit_cost: '' });
     setErrors({});
-  }, [open, dispatchCustomer?.id]);
+    refreshUser().catch(() => {});
+  }, [open, dispatchCustomer?.id, refreshUser]);
 
   const variantsQuery = useVariantsOptions(open && canPickInventory, { tracking_type: 'stocked' });
   const variants = variantsQuery.data?.data?.item_variants || [];
@@ -55,13 +58,7 @@ export function AddDispatchItemModal({
     [assignments, form.packaging_assignment_id]
   );
   const selectedAssignmentVariantId = selectedAssignment?.output_item_variant_id || selectedAssignment?.charcoal_variant_id || '';
-  const vatQuery = useQuery({
-    queryKey: ['vat-settings'],
-    queryFn: () => api.settings.vat.get(),
-    enabled: Boolean(open),
-    staleTime: 60_000
-  });
-  const vat = vatQuery.data?.data?.vat;
+  const vat = user?.store?.vat;
   const vatEnabled = Boolean(vat?.enabled);
   const vatRate = vatEnabled ? Number(vat?.rate || 0) : 0;
   const subtotalPreview = Number(form.quantity || 0) * Number(form.unit_price || 0);

@@ -21,9 +21,18 @@ function hasModule(user, moduleKey) {
   return enabledModules.includes(moduleKey) && (!parentKey || enabledModules.includes(parentKey));
 }
 
+export function getStoreWorkspacePrefix(user) {
+  return user?.workspace_url_prefix || 'store';
+}
+
+export function buildStoreWorkspacePath(user, storeSlug = user?.store?.slug) {
+  if (!storeSlug) return '/';
+  return `/${getStoreWorkspacePrefix(user)}/${storeSlug}`;
+}
+
 function routeForItem(user, item) {
   if (item.id === 'dashboard') {
-    return user?.store?.slug ? `/store/${user.store.slug}` : '/';
+    return buildStoreWorkspacePath(user);
   }
   return item.to;
 }

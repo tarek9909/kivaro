@@ -5,6 +5,7 @@ const authService = require('../auth/auth.service');
 const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 const { slugify } = require('../../utils/slug');
 const { withTransaction } = require('../../utils/transaction');
+const storeConfigService = require('../../services/storeConfig.service');
 const { MODULE_CATALOG, MODULE_KEYS } = require('./moduleCatalog');
 const model = require('./superadmin.model');
 
@@ -72,7 +73,7 @@ async function getStore(id) {
   const [modules, summary, vat] = await Promise.all([
     model.listStoreModules(id),
     model.getStoreSummary(id),
-    model.getStoreVatSettings(id)
+    storeConfigService.getStoreVatSettings(id)
   ]);
 
   return {
@@ -93,7 +94,7 @@ async function getStoreBySlug(slug) {
   const [modules, summary, vat] = await Promise.all([
     model.listStoreModules(store.id),
     model.getStoreSummary(store.id),
-    model.getStoreVatSettings(store.id)
+    storeConfigService.getStoreVatSettings(store.id)
   ]);
 
   return {
@@ -116,18 +117,7 @@ async function createStore(data) {
     const nextStoreId = await model.createStore(connection, { ...data, slug });
     const { ownerRoleId } = await model.createDefaultStoreRoles(connection, nextStoreId);
     await model.replaceStoreModules(connection, nextStoreId, modules);
-    await model.upsertStoreSetting(connection, nextStoreId, {
-      setting_key: 'sales.vat.enabled',
-      setting_value: vat.enabled ? 'true' : 'false',
-      value_type: 'boolean',
-      description: 'Enable VAT on new customer sale lines'
-    });
-    await model.upsertStoreSetting(connection, nextStoreId, {
-      setting_key: 'sales.vat.rate',
-      setting_value: String(vat.rate || 0),
-      value_type: 'number',
-      description: 'VAT percentage applied to new customer sale lines'
-    });
+    await storeConfigService.setStoreVatSettings(nextStoreId, vat, { connection });
 
     if (!ownerRoleId) {
       throw ApiError.conflict('Owner role template is missing');
@@ -189,18 +179,7 @@ async function updateStore(id, data) {
     }
 
     if (vat) {
-      await model.upsertStoreSetting(connection, id, {
-        setting_key: 'sales.vat.enabled',
-        setting_value: vat.enabled ? 'true' : 'false',
-        value_type: 'boolean',
-        description: 'Enable VAT on new customer sale lines'
-      });
-      await model.upsertStoreSetting(connection, id, {
-        setting_key: 'sales.vat.rate',
-        setting_value: String(vat.rate || 0),
-        value_type: 'number',
-        description: 'VAT percentage applied to new customer sale lines'
-      });
+      await storeConfigService.setStoreVatSettings(id, vat, { connection });
     }
 
     if (moduleRows) {
@@ -300,11 +279,13 @@ module.exports = {
   createStore,
   getStore,
   getStoreBySlug,
+  getPlatformSettings: storeConfigService.getPlatformSettings,
   impersonateStore,
   listModuleCatalog,
   listModules,
   listStores,
   replaceModules,
+  updatePlatformSettings: storeConfigService.updatePlatformSettings,
   updateStore,
   updateStoreStatus
 };

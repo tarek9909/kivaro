@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, ChevronDown, Eye, LogIn, Pencil, Percent, Plus, Search, Store, ToggleLeft, Users } from 'lucide-react';
+import { Building2, ChevronDown, Eye, LogIn, Pencil, Percent, Plus, Save, Search, Store, ToggleLeft, Users } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { useTranslation } from '@/app/i18n.js';
@@ -75,6 +75,12 @@ export default function SuperadminDashboard() {
     queryFn: () => api.superadmin.stores.list(params)
   });
 
+  const platformSettingsQuery = useQuery({
+    queryKey: ['superadmin', 'platform-settings'],
+    queryFn: () => api.superadmin.platformSettings.get(),
+    staleTime: 5 * 60_000
+  });
+
   const selectedStoreQuery = useQuery({
     queryKey: ['superadmin', 'stores', selectedId],
     queryFn: () => api.superadmin.stores.get(selectedId),
@@ -131,6 +137,7 @@ export default function SuperadminDashboard() {
   const editingStoreDetail = selectedStore?.id === editingStore?.id ? selectedStore : editingStore;
 
   const activeTab = STORE_TABS.some((item) => item.id === tab) ? tab : 'overview';
+  const storeUrlPrefix = platformSettingsQuery.data?.data?.platform_settings?.store_url_prefix || 'store';
 
   const columns = [
     {
@@ -206,6 +213,7 @@ export default function SuperadminDashboard() {
         <StoreDetailPage
           store={selectedStore}
           slug={storeSlug}
+          storeUrlPrefix={storeUrlPrefix}
           activeTab={activeTab}
           isLoading={slugStoreQuery.isFetching}
           isError={slugStoreQuery.isError}
@@ -260,6 +268,13 @@ export default function SuperadminDashboard() {
       />
 
       <section className="space-y-4">
+        <PlatformSettingsCard
+          settings={platformSettingsQuery.data?.data?.platform_settings}
+          isLoading={platformSettingsQuery.isPending}
+          isError={platformSettingsQuery.isError}
+          error={platformSettingsQuery.error}
+          onRetry={() => platformSettingsQuery.refetch()}
+        />
         <GlassPanel>
           <GlassPanelBody>
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
@@ -340,9 +355,71 @@ export default function SuperadminDashboard() {
   );
 }
 
+function PlatformSettingsCard({ settings, isLoading, isError, error, onRetry }) {
+  const queryClient = useQueryClient();
+  const [prefix, setPrefix] = useState('store');
+
+  useEffect(() => {
+    if (settings?.store_url_prefix) {
+      setPrefix(settings.store_url_prefix);
+    }
+  }, [settings]);
+
+  const mutation = useMutation({
+    mutationFn: (payload) => api.superadmin.platformSettings.update(payload),
+    onSuccess: () => {
+      toast.success('Workspace URL prefix saved');
+      queryClient.invalidateQueries({ queryKey: ['superadmin', 'platform-settings'] });
+      useAuthStore.getState().refreshUser?.();
+    },
+    onError: (mutationError) => toast.error(getErrorMessage(mutationError, 'Could not save workspace URL prefix.'))
+  });
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    mutation.mutate({ store_url_prefix: prefix });
+  }
+
+  return (
+    <GlassPanel>
+      <GlassPanelHeader
+        icon={Store}
+        title="Store workspace URL"
+        subtitle="Set the global first URL segment for store workspaces."
+      />
+      <GlassPanelBody>
+        {isLoading ? (
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+        ) : isError ? (
+          <div className="space-y-3 text-sm text-ink-300">
+            <p>{getErrorMessage(error, 'Could not load platform settings.')}</p>
+            <Button variant="secondary" onClick={onRetry}>Retry</Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]" noValidate>
+            <Input
+              label="URL prefix"
+              value={prefix}
+              onChange={(event) => setPrefix(event.target.value)}
+              description={`Store dashboard URLs use /${prefix || 'store'}/store-slug.`}
+              required
+            />
+            <div className="flex items-end">
+              <Button type="submit" leftIcon={Save} isLoading={mutation.isPending}>
+                Save
+              </Button>
+            </div>
+          </form>
+        )}
+      </GlassPanelBody>
+    </GlassPanel>
+  );
+}
+
 function StoreDetailPage({
   store,
   slug,
+  storeUrlPrefix,
   activeTab,
   isLoading,
   isError,
@@ -476,6 +553,7 @@ function StoreDetailPage({
               <GlassPanelBody className="grid gap-3 md:grid-cols-2">
                 <SummaryCard icon={Store} label="Code" value={store.code || '-'} />
                 <SummaryCard icon={Building2} label="Slug" value={store.slug || '-'} />
+                <SummaryCard icon={Store} label="Workspace URL" value={`/${storeUrlPrefix || 'store'}/${store.slug}`} />
                 <SummaryCard icon={Percent} label="VAT" value={store.vat?.enabled ? `${store.vat.rate || 0}%` : 'Disabled'} />
                 <SummaryCard icon={ToggleLeft} label="Status" value={store.status || '-'} />
                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 md:col-span-2">

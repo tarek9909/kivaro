@@ -18,6 +18,22 @@ async function listModuleCatalog(req, res) {
   });
 }
 
+async function getPlatformSettings(req, res) {
+  const platform_settings = await service.getPlatformSettings();
+  return successResponse(res, {
+    message: 'Platform settings fetched',
+    data: { platform_settings }
+  });
+}
+
+async function updatePlatformSettings(req, res) {
+  const platform_settings = await service.updatePlatformSettings(req.body, req.user);
+  return successResponse(res, {
+    message: 'Platform settings updated',
+    data: { platform_settings }
+  });
+}
+
 async function createStore(req, res) {
   const store = await service.createStore(req.body);
   return successResponse(res, {
@@ -87,11 +103,13 @@ module.exports = {
   createStore,
   getStore,
   getStoreBySlug,
+  getPlatformSettings,
   impersonateStore,
   listModuleCatalog,
   listModules,
   listStores,
   replaceModules,
+  updatePlatformSettings,
   updateStore,
   updateStoreStatus
 };

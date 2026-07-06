@@ -132,22 +132,6 @@ async function listStoreModules(storeId) {
   );
 }
 
-async function getStoreVatSettings(storeId) {
-  const rows = await query(
-    `SELECT setting_key, setting_value
-     FROM system_settings
-     WHERE store_id = ?
-       AND setting_key IN ('sales.vat.enabled', 'sales.vat.rate')`,
-    [storeId]
-  );
-  const values = new Map(rows.map((row) => [row.setting_key, row.setting_value]));
-
-  return {
-    enabled: values.get('sales.vat.enabled') === 'true',
-    rate: Number(values.get('sales.vat.rate') || 0)
-  };
-}
-
 async function createStoreOwner(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO users (
@@ -237,25 +221,6 @@ async function findActiveStoreOwner(storeId) {
   return rows[0] || null;
 }
 
-async function upsertStoreSetting(connection, storeId, data) {
-  await connection.execute(
-    `INSERT INTO system_settings (
-      store_id, setting_key, setting_value, value_type, description, updated_by
-    ) VALUES (?, ?, ?, ?, ?, NULL)
-    ON DUPLICATE KEY UPDATE
-      setting_value = VALUES(setting_value),
-      value_type = VALUES(value_type),
-      description = VALUES(description)`,
-    [
-      storeId,
-      data.setting_key,
-      data.setting_value,
-      data.value_type,
-      data.description || null
-    ]
-  );
-}
-
 async function getStoreSummary(storeId) {
   const rows = await query(
     `SELECT
@@ -283,10 +248,8 @@ module.exports = {
   findStoreById,
   findStoreBySlug,
   getStoreSummary,
-  getStoreVatSettings,
   listStoreModules,
   listStores,
   replaceStoreModules,
-  upsertStoreSetting,
   updateStore
 };

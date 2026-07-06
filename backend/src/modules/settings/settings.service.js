@@ -1,9 +1,7 @@
 const ApiError = require('../../utils/ApiError');
+const storeConfigService = require('../../services/storeConfig.service');
 const { resolveStoreId } = require('../../utils/storeScope');
 const settingsModel = require('./settings.model');
-
-const VAT_ENABLED_KEY = 'sales.vat.enabled';
-const VAT_RATE_KEY = 'sales.vat.rate';
 
 function serializeSettingValue(value, valueType) {
   if (value === null || value === undefined) {
@@ -19,23 +17,6 @@ function serializeSettingValue(value, valueType) {
   }
 
   return String(value);
-}
-
-function parseBooleanSetting(setting, defaultValue = false) {
-  if (!setting || setting.setting_value === null || setting.setting_value === undefined) {
-    return defaultValue;
-  }
-
-  return setting.setting_value === true || setting.setting_value === 'true' || setting.setting_value === '1';
-}
-
-function parseNumberSetting(setting, defaultValue = 0) {
-  if (!setting || setting.setting_value === null || setting.setting_value === undefined || setting.setting_value === '') {
-    return defaultValue;
-  }
-
-  const number = Number(setting.setting_value);
-  return Number.isNaN(number) ? defaultValue : number;
 }
 
 async function getCompanyProfile(actor = {}) {
@@ -68,15 +49,7 @@ async function listSettings(actor = {}) {
 
 async function getVatSettings(actor = {}) {
   const storeId = resolveStoreId(actor, actor.is_superadmin ? actor.query || {} : actor);
-  const [enabledSetting, rateSetting] = await Promise.all([
-    settingsModel.getSetting(VAT_ENABLED_KEY, storeId),
-    settingsModel.getSetting(VAT_RATE_KEY, storeId)
-  ]);
-
-  return {
-    enabled: parseBooleanSetting(enabledSetting, false),
-    rate: parseNumberSetting(rateSetting, 0)
-  };
+  return storeConfigService.getStoreVatSettings(storeId);
 }
 
 async function updateVatSettings(data, userId, actor = {}) {
@@ -96,20 +69,7 @@ async function updateVatSettings(data, userId, actor = {}) {
   }
 
   const storeId = resolveStoreId(actor, data, { requireForSuperadmin: true });
-  await settingsModel.upsertSetting({
-    setting_key: VAT_ENABLED_KEY,
-    setting_value: serializeSettingValue(enabled, 'boolean'),
-    value_type: 'boolean',
-    description: 'Enable VAT on new customer sale lines',
-    updated_by: userId
-  }, storeId);
-  await settingsModel.upsertSetting({
-    setting_key: VAT_RATE_KEY,
-    setting_value: serializeSettingValue(rate, 'number'),
-    value_type: 'number',
-    description: 'VAT percentage applied to new customer sale lines',
-    updated_by: userId
-  }, storeId);
+  await storeConfigService.setStoreVatSettings(storeId, { enabled, rate }, { updatedBy: userId });
 
   return getVatSettings({ ...actor, query: { store_id: storeId } });
 }

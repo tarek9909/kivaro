@@ -105,6 +105,12 @@ const replaceModulesSchema = z.object({
   })
 });
 
+const updatePlatformSettingsSchema = z.object({
+  body: z.object({
+    store_url_prefix: z.string().trim().min(1).max(80)
+  })
+});
+
 module.exports = {
   createStoreSchema,
   idParam,
@@ -112,6 +118,7 @@ module.exports = {
   listStoresSchema,
   replaceModulesSchema,
   slugParamSchema,
+  updatePlatformSettingsSchema,
   updateStoreSchema,
   updateStoreStatusSchema
 };

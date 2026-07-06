@@ -9,6 +9,10 @@ export function createSuperadminApi(client) {
     modules: {
       catalog: (options) => client.get('/superadmin/modules', options)
     },
+    platformSettings: {
+      get: (options) => client.get('/superadmin/platform-settings', options),
+      update: (payload, options) => client.patch('/superadmin/platform-settings', payload, options)
+    },
     stores: {
       ...stores,
       getBySlug: (slug, options) =>

@@ -4,7 +4,7 @@ const settingsSchemas = require('./settings.schema');
 const asyncHandler = require('../../utils/asyncHandler');
 const validate = require('../../middleware/validate.middleware');
 const { authenticate } = require('../../middleware/auth.middleware');
-const { requireAnyPermission, requirePermission } = require('../../middleware/permission.middleware');
+const { requirePermission } = require('../../middleware/permission.middleware');
 
 const router = express.Router();
 
@@ -27,12 +27,12 @@ router.get(
 );
 router.get(
   '/settings/vat',
-  requireAnyPermission('settings.manage', 'vat.view', 'vat.manage'),
+  requirePermission('superadmin.manage'),
   asyncHandler(settingsController.getVatSettings)
 );
 router.patch(
   '/settings/vat',
-  requireAnyPermission('settings.manage', 'vat.manage'),
+  requirePermission('superadmin.manage'),
   validate(settingsSchemas.updateVatSettingsSchema),
   asyncHandler(settingsController.updateVatSettings)
 );

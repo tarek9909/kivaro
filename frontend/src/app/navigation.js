@@ -240,7 +240,7 @@ export const NAV_SECTIONS = [
         to: '/settings',
         icon: Settings,
         moduleKey: 'settings',
-        anyOfPermissions: ['settings.manage', 'vat.view', 'vat.manage']
+        anyOfPermissions: ['settings.manage']
       }
     ]
   },

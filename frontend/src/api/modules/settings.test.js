@@ -34,20 +34,9 @@ describe('settings API module', () => {
     ]);
   });
 
-  it('exposes VAT settings get and update methods', async () => {
-    const client = buildClientStub();
-    const api = createSettingsApi(client);
+  it('does not expose VAT settings methods to the normal settings API', () => {
+    const api = createSettingsApi(buildClientStub());
 
-    await api.vat.get();
-    await api.vat.update({ enabled: true, rate: 10 });
-
-    expect(client.calls).toEqual([
-      { method: 'get', path: '/settings/vat', rest: [undefined] },
-      {
-        method: 'patch',
-        path: '/settings/vat',
-        rest: [{ enabled: true, rate: 10 }, undefined]
-      }
-    ]);
+    expect(api.vat).toBeUndefined();
   });
 });

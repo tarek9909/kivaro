@@ -16,8 +16,8 @@ jest.mock('../src/modules/customers/customers.model', () => ({}));
 jest.mock('../src/modules/payments/payments.model', () => ({}));
 jest.mock('../src/modules/accounting/accounting.model', () => ({}));
 
-jest.mock('../src/modules/settings/settings.service', () => ({
-  getVatSettings: jest.fn()
+jest.mock('../src/services/storeConfig.service', () => ({
+  getStoreVatSettings: jest.fn()
 }));
 
 jest.mock('../src/modules/packaging/packaging.model', () => ({
@@ -27,7 +27,7 @@ jest.mock('../src/modules/packaging/packaging.model', () => ({
 
 const model = require('../src/modules/dispatch/dispatch.model');
 const inventoryModel = require('../src/modules/inventory/inventory.model');
-const settingsService = require('../src/modules/settings/settings.service');
+const storeConfigService = require('../src/services/storeConfig.service');
 const packagingModel = require('../src/modules/packaging/packaging.model');
 const service = require('../src/modules/dispatch/dispatch.service');
 
@@ -52,7 +52,7 @@ describe('dispatch service packaging batches', () => {
       tracking_type: 'stocked',
       cost: '3.5000'
     });
-    settingsService.getVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
+    storeConfigService.getStoreVatSettings.mockResolvedValue({ enabled: false, rate: 0 });
     model.createDispatchItem.mockImplementation(async (payload) => ({ id: 51, ...payload }));
     model.recalculateDispatchTotals.mockResolvedValue(undefined);
   });
