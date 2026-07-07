@@ -83,16 +83,35 @@ function getArg(name, fallback = null) {
 
 function adminConfig(options = {}) {
   const { database, ...baseConfig } = env.db;
-  return {
+  const config = {
     ...baseConfig,
     multipleStatements: Boolean(options.multipleStatements)
   };
+
+  if (Object.prototype.hasOwnProperty.call(options, 'namedPlaceholders')) {
+    config.namedPlaceholders = options.namedPlaceholders;
+  }
+
+  return config;
 }
 
 function databaseConfig(options = {}) {
-  return {
+  const config = {
     ...env.db,
     multipleStatements: Boolean(options.multipleStatements)
+  };
+
+  if (Object.prototype.hasOwnProperty.call(options, 'namedPlaceholders')) {
+    config.namedPlaceholders = options.namedPlaceholders;
+  }
+
+  return config;
+}
+
+function rawSqlOptions() {
+  return {
+    multipleStatements: true,
+    namedPlaceholders: false
   };
 }
 
@@ -108,12 +127,18 @@ async function createDatabaseConnection(options) {
   return mysql.createConnection(databaseConfig(options));
 }
 
-function loadSchemaDumpSql() {
-  return fs.readFileSync(schemaDumpPath(), 'utf8')
+function normalizeSchemaDumpSql(sql) {
+  return sql
+    .replace(/\/\*![89]\d{4}[\s\S]*?\*\/;?/g, '')
+    .replace(/utf8mb4_0900_ai_ci/gi, 'utf8mb4_unicode_ci')
     .replace(/\sDEFINER=`[^`]+`@`[^`]+`/gi, '')
     .replace(/DROP DATABASE IF EXISTS `?charcoal_erp`?;\s*/i, '')
     .replace(/CREATE DATABASE(?: IF NOT EXISTS)? `?charcoal_erp`?(?:[^;]*)?;\s*/i, '')
     .replace(/USE `?charcoal_erp`?;\s*/i, '');
+}
+
+function loadSchemaDumpSql() {
+  return normalizeSchemaDumpSql(fs.readFileSync(schemaDumpPath(), 'utf8'));
 }
 
 function loadSchemaSql(databaseName = env.db.database) {
@@ -144,7 +169,7 @@ function needsSchemaDump(tableNames) {
 }
 
 async function importSchemaDump(databaseName = env.db.database) {
-  const connection = await createDatabaseConnection({ multipleStatements: true });
+  const connection = await createDatabaseConnection(rawSqlOptions());
 
   try {
     await connection.query(loadSchemaDumpSql());
@@ -205,18 +230,12 @@ async function ensureDatabaseExists(options = {}) {
     await adminConnection.end();
   }
 
-  const databaseConnection = await createDatabaseConnection({ multipleStatements: true });
-
-  try {
-    await databaseConnection.query(loadSchemaDumpSql());
-    return { created: true, database: databaseName, schemaPath: schemaDumpPath() };
-  } finally {
-    await databaseConnection.end();
-  }
+  await importSchemaDump(databaseName);
+  return { created: true, database: databaseName, schemaPath: schemaDumpPath() };
 }
 
 async function resetDatabase(databaseName = env.db.database) {
-  const connection = await createAdminConnection({ multipleStatements: true });
+  const connection = await createAdminConnection(rawSqlOptions());
 
   try {
     await connection.query(loadSchemaSql(databaseName));
@@ -360,6 +379,8 @@ module.exports = {
   loadSchemaDumpSql,
   loadSchemaSql,
   needsSchemaDump,
+  normalizeSchemaDumpSql,
+  rawSqlOptions,
   resetDatabase,
   schemaDumpPath,
   seedOwner
