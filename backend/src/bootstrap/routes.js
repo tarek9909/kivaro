@@ -112,9 +112,8 @@ router.post(
     fs.writeFileSync(filePath, fileBuffer);
 
     // Build fully qualified URL
-    const host = req.get('host') || 'localhost:3000';
-    const protocol = req.protocol || 'http';
-    const url = `${protocol}://${host}/uploads/${uniqueFilename}`;
+    const publicBaseUrl = 'https://api.kivaro.vip';
+    const url = `${publicBaseUrl}/uploads/${uniqueFilename}`;
 
     res.json({
       success: true,

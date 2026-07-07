@@ -1,4 +1,4 @@
-const DEFAULT_API_BASE_URL = 'http://localhost:3000/api';
+const DEFAULT_API_BASE_URL = 'https://api.kivaro.vip/api';
 const DEFAULT_TIMEOUT_MS = 30000;
 
 function readEnvValue(key, fallback) {

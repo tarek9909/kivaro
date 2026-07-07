@@ -6,7 +6,7 @@ Premium glassmorphism React + Vite app powered by the Kivaro backend API.
 
 ```bash
 npm install
-cp .env.example .env   # then edit if your API is not on http://localhost:3000/api
+cp .env.example .env   # then edit if your API is not on https://api.kivaro.vip/api
 npm run dev
 ```
 
@@ -49,6 +49,6 @@ src/
 ## Environment
 
 ```
-VITE_API_BASE_URL=http://localhost:3000/api
+VITE_API_BASE_URL=https://api.kivaro.vip/api
 VITE_API_TIMEOUT_MS=30000
 ```
