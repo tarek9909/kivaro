@@ -168,10 +168,18 @@ function needsSchemaDump(tableNames) {
   return appTables.length === 0;
 }
 
-async function importSchemaDump(databaseName = env.db.database) {
+async function dropSchemaMigrationsTable(connection) {
+  await connection.query('DROP TABLE IF EXISTS schema_migrations');
+}
+
+async function importSchemaDump(databaseName = env.db.database, options = {}) {
   const connection = await createDatabaseConnection(rawSqlOptions());
 
   try {
+    if (options.dropSchemaMigrations) {
+      await dropSchemaMigrationsTable(connection);
+    }
+
     await connection.query(loadSchemaDumpSql());
     return { database: databaseName, schemaPath: schemaDumpPath() };
   } finally {
@@ -206,7 +214,7 @@ async function ensureDatabaseExists(options = {}) {
       await connection.end();
     }
 
-    await importSchemaDump(databaseName);
+    await importSchemaDump(databaseName, { dropSchemaMigrations: true });
     return { created: true, database: databaseName, existingDatabase: true, schemaPath: schemaDumpPath() };
   } catch (error) {
     if (error.code !== 'ER_BAD_DB_ERROR') {
@@ -373,6 +381,7 @@ module.exports = {
   createAdminConnection,
   createDatabaseConnection,
   databaseTables,
+  dropSchemaMigrationsTable,
   ensureDatabaseExists,
   getArg,
   importSchemaDump,
