@@ -64,7 +64,16 @@ const REQUIRED_PERMISSIONS = [
   'superadmin.manage'
 ];
 
-const SCHEMA_DUMP_PATH = path.resolve(__dirname, '..', '..', 'charcoal_erp (3).sql');
+const SCHEMA_DUMP_FILENAMES = ['charcoal_erp.sql', 'charcoal_erp', 'charcoal_erp (3).sql'];
+
+function schemaDumpPath() {
+  const backendRoot = path.resolve(__dirname, '..', '..');
+  const existingPath = SCHEMA_DUMP_FILENAMES
+    .map((fileName) => path.join(backendRoot, fileName))
+    .find((candidatePath) => fs.existsSync(candidatePath));
+
+  return existingPath || path.join(backendRoot, SCHEMA_DUMP_FILENAMES[0]);
+}
 
 function getArg(name, fallback = null) {
   const prefix = `--${name}=`;
@@ -100,7 +109,7 @@ async function createDatabaseConnection(options) {
 }
 
 function loadSchemaDumpSql() {
-  return fs.readFileSync(SCHEMA_DUMP_PATH, 'utf8')
+  return fs.readFileSync(schemaDumpPath(), 'utf8')
     .replace(/\sDEFINER=`[^`]+`@`[^`]+`/gi, '')
     .replace(/DROP DATABASE IF EXISTS `?charcoal_erp`?;\s*/i, '')
     .replace(/CREATE DATABASE(?: IF NOT EXISTS)? `?charcoal_erp`?(?:[^;]*)?;\s*/i, '')
@@ -118,6 +127,33 @@ function loadSchemaSql(databaseName = env.db.database) {
   ].join('\n');
 }
 
+async function databaseTables(connection, databaseName = env.db.database) {
+  const [rows] = await connection.query(
+    `SELECT table_name
+     FROM information_schema.tables
+     WHERE table_schema = ?`,
+    [databaseName]
+  );
+
+  return rows.map((row) => row.TABLE_NAME || row.table_name);
+}
+
+function needsSchemaDump(tableNames) {
+  const appTables = tableNames.filter((tableName) => tableName !== 'schema_migrations');
+  return appTables.length === 0;
+}
+
+async function importSchemaDump(databaseName = env.db.database) {
+  const connection = await createDatabaseConnection({ multipleStatements: true });
+
+  try {
+    await connection.query(loadSchemaDumpSql());
+    return { database: databaseName, schemaPath: schemaDumpPath() };
+  } finally {
+    await connection.end();
+  }
+}
+
 async function ensureDatabaseExists(options = {}) {
   const databaseName = options.databaseName || env.db.database;
 
@@ -126,17 +162,34 @@ async function ensureDatabaseExists(options = {}) {
 
     try {
       await connection.ping();
-      return { created: false, database: databaseName, schemaPath: SCHEMA_DUMP_PATH };
+      const tableNames = await databaseTables(connection, databaseName);
+
+      if (!needsSchemaDump(tableNames)) {
+        return { created: false, database: databaseName, schemaPath: schemaDumpPath() };
+      }
+
+      if (options.dryRun) {
+        return {
+          created: false,
+          database: databaseName,
+          missing: true,
+          empty: true,
+          schemaPath: schemaDumpPath()
+        };
+      }
     } finally {
       await connection.end();
     }
+
+    await importSchemaDump(databaseName);
+    return { created: true, database: databaseName, existingDatabase: true, schemaPath: schemaDumpPath() };
   } catch (error) {
     if (error.code !== 'ER_BAD_DB_ERROR') {
       throw error;
     }
 
     if (options.dryRun) {
-      return { created: false, database: databaseName, missing: true, schemaPath: SCHEMA_DUMP_PATH };
+      return { created: false, database: databaseName, missing: true, schemaPath: schemaDumpPath() };
     }
   }
 
@@ -156,7 +209,7 @@ async function ensureDatabaseExists(options = {}) {
 
   try {
     await databaseConnection.query(loadSchemaDumpSql());
-    return { created: true, database: databaseName, schemaPath: SCHEMA_DUMP_PATH };
+    return { created: true, database: databaseName, schemaPath: schemaDumpPath() };
   } finally {
     await databaseConnection.end();
   }
@@ -300,10 +353,14 @@ module.exports = {
   checkDatabase,
   createAdminConnection,
   createDatabaseConnection,
+  databaseTables,
   ensureDatabaseExists,
   getArg,
+  importSchemaDump,
   loadSchemaDumpSql,
   loadSchemaSql,
+  needsSchemaDump,
   resetDatabase,
+  schemaDumpPath,
   seedOwner
 };

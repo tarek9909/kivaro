@@ -77,9 +77,13 @@ async function runMigrations({ dryRun = false } = {}) {
   const bootstrap = await ensureDatabaseExists({ dryRun });
 
   if (dryRun && bootstrap.missing) {
+    const bootstrapMessage = bootstrap.empty
+      ? `Import ${path.basename(bootstrap.schemaPath)} into empty database ${bootstrap.database}`
+      : `Create database ${bootstrap.database} from ${path.basename(bootstrap.schemaPath)}`;
+
     return {
       pending: [
-        `Create database ${bootstrap.database} from ${path.basename(bootstrap.schemaPath)}`,
+        bootstrapMessage,
         ...migrations.map((migration) => migration.name)
       ],
       applied: [],
