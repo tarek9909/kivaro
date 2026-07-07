@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { createDatabaseConnection } = require('./lib');
+const { createDatabaseConnection, ensureDatabaseExists } = require('./lib');
 
 const migrationsDir = path.resolve(__dirname, '..', '..', 'migrations');
 
@@ -30,6 +30,15 @@ async function ensureMigrationsTable(connection) {
 async function appliedMigrations(connection) {
   const [rows] = await connection.execute('SELECT migration_name FROM schema_migrations');
   return new Set(rows.map((row) => row.migration_name));
+}
+
+async function markMigrationsApplied(connection, migrations) {
+  for (const migration of migrations) {
+    await connection.execute(
+      'INSERT IGNORE INTO schema_migrations (migration_name) VALUES (?)',
+      [migration.name]
+    );
+  }
 }
 
 function splitStatements(sql) {
@@ -64,15 +73,43 @@ async function executeMigrationSql(connection, sql) {
 }
 
 async function runMigrations({ dryRun = false } = {}) {
+  const migrations = readMigrations();
+  const bootstrap = await ensureDatabaseExists({ dryRun });
+
+  if (dryRun && bootstrap.missing) {
+    return {
+      pending: [
+        `Create database ${bootstrap.database} from ${path.basename(bootstrap.schemaPath)}`,
+        ...migrations.map((migration) => migration.name)
+      ],
+      applied: [],
+      bootstrapped: false,
+      databaseMissing: true
+    };
+  }
+
   const connection = await createDatabaseConnection({ multipleStatements: true });
 
   try {
     await ensureMigrationsTable(connection);
+
+    if (bootstrap.created) {
+      await markMigrationsApplied(connection, migrations);
+      return {
+        pending: [],
+        applied: [],
+        bootstrapped: true,
+        database: bootstrap.database,
+        schemaPath: bootstrap.schemaPath,
+        recordedMigrations: migrations.map((migration) => migration.name)
+      };
+    }
+
     const applied = await appliedMigrations(connection);
-    const pending = readMigrations().filter((migration) => !applied.has(migration.name));
+    const pending = migrations.filter((migration) => !applied.has(migration.name));
 
     if (dryRun) {
-      return { pending: pending.map((migration) => migration.name), applied: [] };
+      return { pending: pending.map((migration) => migration.name), applied: [], bootstrapped: false };
     }
 
     const appliedNow = [];
@@ -92,7 +129,7 @@ async function runMigrations({ dryRun = false } = {}) {
       }
     }
 
-    return { pending: pending.map((migration) => migration.name), applied: appliedNow };
+    return { pending: pending.map((migration) => migration.name), applied: appliedNow, bootstrapped: false };
   } finally {
     await connection.end();
   }
@@ -114,6 +151,12 @@ async function main() {
   }
 
   if (!result.applied.length) {
+    if (result.bootstrapped) {
+      console.log(`Database ${result.database} created from ${result.schemaPath}`);
+      console.log(`Recorded ${result.recordedMigrations.length} existing migrations as applied.`);
+      return;
+    }
+
     console.log('No migrations to apply.');
     return;
   }

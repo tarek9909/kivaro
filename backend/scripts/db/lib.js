@@ -64,6 +64,8 @@ const REQUIRED_PERMISSIONS = [
   'superadmin.manage'
 ];
 
+const SCHEMA_DUMP_PATH = path.resolve(__dirname, '..', '..', 'charcoal_erp (3).sql');
+
 function getArg(name, fallback = null) {
   const prefix = `--${name}=`;
   const arg = process.argv.find((value) => value.startsWith(prefix));
@@ -97,17 +99,67 @@ async function createDatabaseConnection(options) {
   return mysql.createConnection(databaseConfig(options));
 }
 
+function loadSchemaDumpSql() {
+  return fs.readFileSync(SCHEMA_DUMP_PATH, 'utf8')
+    .replace(/\sDEFINER=`[^`]+`@`[^`]+`/gi, '')
+    .replace(/DROP DATABASE IF EXISTS `?charcoal_erp`?;\s*/i, '')
+    .replace(/CREATE DATABASE(?: IF NOT EXISTS)? `?charcoal_erp`?(?:[^;]*)?;\s*/i, '')
+    .replace(/USE `?charcoal_erp`?;\s*/i, '');
+}
+
 function loadSchemaSql(databaseName = env.db.database) {
-  const schemaPath = path.resolve(__dirname, '..', '..', 'db.sql');
-  let sql = fs.readFileSync(schemaPath, 'utf8');
   const quotedDatabaseName = quoteIdentifier(databaseName);
 
-  sql = sql
-    .replace(/DROP DATABASE IF EXISTS `?charcoal_erp`?;/i, `DROP DATABASE IF EXISTS ${quotedDatabaseName};`)
-    .replace(/CREATE DATABASE `?charcoal_erp`?/i, `CREATE DATABASE ${quotedDatabaseName}`)
-    .replace(/USE `?charcoal_erp`?;/i, `USE ${quotedDatabaseName};`);
+  return [
+    `DROP DATABASE IF EXISTS ${quotedDatabaseName};`,
+    `CREATE DATABASE ${quotedDatabaseName} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`,
+    `USE ${quotedDatabaseName};`,
+    loadSchemaDumpSql()
+  ].join('\n');
+}
 
-  return sql;
+async function ensureDatabaseExists(options = {}) {
+  const databaseName = options.databaseName || env.db.database;
+
+  try {
+    const connection = await createDatabaseConnection();
+
+    try {
+      await connection.ping();
+      return { created: false, database: databaseName, schemaPath: SCHEMA_DUMP_PATH };
+    } finally {
+      await connection.end();
+    }
+  } catch (error) {
+    if (error.code !== 'ER_BAD_DB_ERROR') {
+      throw error;
+    }
+
+    if (options.dryRun) {
+      return { created: false, database: databaseName, missing: true, schemaPath: SCHEMA_DUMP_PATH };
+    }
+  }
+
+  const quotedDatabaseName = quoteIdentifier(databaseName);
+  const adminConnection = await createAdminConnection();
+
+  try {
+    await adminConnection.ping();
+    await adminConnection.query(
+      `CREATE DATABASE IF NOT EXISTS ${quotedDatabaseName} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+    );
+  } finally {
+    await adminConnection.end();
+  }
+
+  const databaseConnection = await createDatabaseConnection({ multipleStatements: true });
+
+  try {
+    await databaseConnection.query(loadSchemaDumpSql());
+    return { created: true, database: databaseName, schemaPath: SCHEMA_DUMP_PATH };
+  } finally {
+    await databaseConnection.end();
+  }
 }
 
 async function resetDatabase(databaseName = env.db.database) {
@@ -248,7 +300,9 @@ module.exports = {
   checkDatabase,
   createAdminConnection,
   createDatabaseConnection,
+  ensureDatabaseExists,
   getArg,
+  loadSchemaDumpSql,
   loadSchemaSql,
   resetDatabase,
   seedOwner

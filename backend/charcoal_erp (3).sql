@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Jun 06, 2026 at 11:59 PM
+-- Generation Time: Jul 07, 2026 at 06:27 PM
 -- Server version: 8.0.45
 -- PHP Version: 8.2.30
 
@@ -43,6 +43,32 @@ CREATE TABLE `audit_logs` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Dumping data for table `audit_logs`
+--
+
+INSERT INTO `audit_logs` (`id`, `store_id`, `user_id`, `module`, `action`, `table_name`, `record_id`, `old_values`, `new_values`, `ip_address`, `user_agent`, `description`, `created_at`) VALUES
+(1, 1, 1, 'location_targets', 'create', 'location_targets', NULL, NULL, '{\"body\": {\"status\": \"draft\", \"period_end\": \"2026-07-06\", \"location_id\": 1, \"period_start\": \"2026-06-07\", \"target_amount\": 1000, \"target_period\": \"monthly\"}, \"query\": {}, \"params\": {}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/location-targets', '2026-06-07 00:06:02'),
+(2, 1, 1, 'location_targets', 'sublocation_targets', 'location_targets', 1, NULL, '{\"body\": {\"status\": \"draft\", \"target_amount\": 400, \"sublocation_id\": 2}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/location-targets/1/sublocation-targets', '2026-06-07 00:06:13'),
+(3, 1, 1, 'location_targets', 'sublocation_targets', 'location_targets', 1, NULL, '{\"body\": {\"status\": \"draft\", \"target_amount\": 600, \"sublocation_id\": 1}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/location-targets/1/sublocation-targets', '2026-06-07 00:06:21'),
+(4, 1, 1, 'sublocation_targets', 'generate_salesman_targets', 'sublocation_targets', 2, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/sublocation-targets/2/generate-salesman-targets', '2026-06-07 00:06:22'),
+(5, 1, 1, 'commissions', 'calculate', 'commissions', NULL, NULL, '{\"body\": {\"commission_rule_id\": 1, \"salesman_target_id\": 1}, \"query\": {}, \"params\": {}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/commissions/calculate', '2026-06-07 00:06:40'),
+(6, 1, 1, 'commissions', 'approve', 'commissions', 1, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/commissions/1/approve', '2026-06-07 00:06:43'),
+(7, 1, 1, 'commissions', 'calculate', 'commissions', NULL, NULL, '{\"body\": {\"commission_rule_id\": 1, \"salesman_target_id\": 2}, \"query\": {}, \"params\": {}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/commissions/calculate', '2026-06-07 00:06:56'),
+(8, 1, 1, 'commissions', 'approve', 'commissions', 2, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/commissions/2/approve', '2026-06-07 00:07:00'),
+(9, 1, 1, 'dispatch', 'create', 'dispatch_requests', NULL, NULL, '{\"body\": {\"notes\": null, \"salesman_id\": 1, \"request_date\": \"2026-06-07\", \"warehouse_id\": 1}, \"query\": {}, \"params\": {}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/dispatch-requests', '2026-06-07 00:07:06'),
+(10, 1, 1, 'inventory', 'calculate', 'packaging_groups', 1, NULL, '{\"body\": {\"warehouse_id\": 1, \"charcoal_variant_id\": 5, \"charcoal_quantity_kg\": 100, \"charcoal_quantity_unit\": \"kg\"}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/packaging-groups/1/calculate', '2026-06-07 00:07:22'),
+(11, 1, 1, 'dispatch', 'customers', 'dispatch_requests', 2, NULL, '{\"body\": {\"notes\": null, \"customer_id\": 1}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/dispatch-requests/2/customers', '2026-06-07 00:07:37'),
+(12, 1, 1, 'dispatch', 'items', 'dispatch_customers', 2, NULL, '{\"body\": {\"quantity\": 1, \"unit_price\": 1, \"item_variant_id\": 5}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/dispatch-customers/2/items', '2026-06-07 00:07:55'),
+(13, 1, 1, 'salesmen', 'sublocations', 'salesmen', 1, NULL, '{\"body\": {\"assigned_at\": \"2026-06-07\", \"sublocation_id\": 3}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', 'POST /api/salesmen/1/sublocations', '2026-06-07 00:08:54'),
+(14, 1, 1, 'settings', 'vat', 'settings', NULL, NULL, '{\"body\": {\"rate\": 0, \"enabled\": false}, \"query\": {}, \"params\": {}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'PATCH /api/settings/vat', '2026-07-04 17:17:23'),
+(15, 1, 1, 'dispatch', 'submit', 'dispatch_requests', 2, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/dispatch-requests/2/submit', '2026-07-04 17:22:28'),
+(16, 1, 1, 'dispatch', 'approve', 'dispatch_requests', 2, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/dispatch-requests/2/approve', '2026-07-04 17:22:32'),
+(17, 1, 1, 'dispatch', 'dispatch', 'dispatch_requests', 2, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/dispatch-requests/2/dispatch', '2026-07-04 17:23:21'),
+(18, 1, 1, 'dispatch', 'settlements', 'dispatch_requests', 2, NULL, '{\"body\": {\"notes\": null, \"settlement_date\": \"2026-07-04\", \"settlement_number\": \"12\"}, \"query\": {}, \"params\": {\"id\": 2}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/dispatch-requests/2/settlements', '2026-07-04 17:23:36'),
+(19, 1, 1, 'dispatch', 'complete', 'dispatch_settlements', 1, NULL, '{\"body\": {\"notes\": null, \"due_date\": null, \"customers\": [{\"notes\": null, \"return_items\": [], \"collected_amount\": 1, \"settlement_status\": \"completed\", \"dispatch_customer_id\": 2}], \"payment_method\": \"cash\", \"cash_account_id\": 2}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/dispatch-settlements/1/complete', '2026-07-04 17:23:55'),
+(20, 1, 1, 'salesman_balances', 'close', 'salesman_balances', 1, NULL, '{\"body\": {}, \"query\": {}, \"params\": {\"id\": 1}}', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', 'POST /api/salesman-balances/1/close', '2026-07-04 17:24:26');
+
 -- --------------------------------------------------------
 
 --
@@ -66,7 +92,7 @@ CREATE TABLE `cash_accounts` (
 
 INSERT INTO `cash_accounts` (`id`, `store_id`, `account_name`, `account_type`, `opening_balance`, `current_balance`, `status`, `created_at`) VALUES
 (1, 1, 'Main Cashbox', 'cash', 0.0000, 0.0000, 'active', '2026-06-06 23:23:21'),
-(2, 1, 'Demo Main Cash', 'cash', 1500.0000, 1500.0000, 'active', '2026-06-06 23:31:03'),
+(2, 1, 'Demo Main Cash', 'cash', 1500.0000, 1501.0000, 'active', '2026-06-06 23:31:03'),
 (3, 1, 'Demo Bank Account', 'bank', 5000.0000, 5000.0000, 'active', '2026-06-06 23:31:03');
 
 -- --------------------------------------------------------
@@ -96,6 +122,14 @@ CREATE TABLE `commission_calculations` (
   `paid_at` datetime DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ;
+
+--
+-- Dumping data for table `commission_calculations`
+--
+
+INSERT INTO `commission_calculations` (`id`, `store_id`, `commission_rule_id`, `salesman_target_id`, `salesman_id`, `sublocation_id`, `period_start`, `period_end`, `target_amount`, `sales_amount`, `below_target_commission`, `target_commission`, `above_target_commission`, `total_commission`, `status`, `approved_by`, `approved_at`, `paid_at`, `created_at`) VALUES
+(1, 1, 1, 1, 1, 1, '2026-06-07', '2026-07-06', 300.0000, 60.0000, 3.0000, 0.0000, 0.0000, 3.0000, 'approved', 1, '2026-06-07 03:06:43', NULL, '2026-06-07 00:06:40'),
+(2, 1, 1, 2, 2, 1, '2026-06-07', '2026-07-06', 300.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 'approved', 1, '2026-06-07 03:07:00', NULL, '2026-06-07 00:06:56');
 
 -- --------------------------------------------------------
 
@@ -303,7 +337,8 @@ CREATE TABLE `customer_payments` (
 --
 
 INSERT INTO `customer_payments` (`id`, `store_id`, `customer_id`, `customer_debt_id`, `dispatch_request_id`, `payment_date`, `amount`, `payment_method`, `reference_number`, `collected_by_salesman_id`, `received_by_user_id`, `notes`, `created_at`) VALUES
-(1, 1, 1, NULL, 1, '2026-06-07', 40.0000, 'cash', 'DEMO-PAY-001', 1, 1, 'Demo partial collection.', '2026-06-06 23:31:03');
+(1, 1, 1, NULL, 1, '2026-06-07', 40.0000, 'cash', 'DEMO-PAY-001', 1, 1, 'Demo partial collection.', '2026-06-06 23:31:03'),
+(2, 1, 1, NULL, 2, '2026-07-04', 1.0000, 'cash', NULL, 1, 1, NULL, '2026-07-04 17:23:55');
 
 -- --------------------------------------------------------
 
@@ -350,7 +385,8 @@ CREATE TABLE `customer_receipts` (
 --
 
 INSERT INTO `customer_receipts` (`id`, `store_id`, `receipt_number`, `customer_id`, `dispatch_request_id`, `dispatch_customer_id`, `customer_payment_id`, `receipt_date`, `subtotal_amount`, `vat_amount`, `total_amount`, `paid_amount`, `remaining_amount`, `receipt_type`, `printed_at`, `created_by`, `created_at`) VALUES
-(1, 1, 'DEMO-REC-001', 1, 1, 1, 1, '2026-06-07', 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 'sale', NULL, 1, '2026-06-06 23:31:03');
+(1, 1, 'DEMO-REC-001', 1, 1, 1, 1, '2026-06-07', 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 'sale', NULL, 1, '2026-06-06 23:31:03'),
+(2, 1, 'SALE-20260607030737080-IZ0M', 1, 2, 2, 2, '2026-07-04', 1.0000, 0.0000, 1.0000, 1.0000, 0.0000, 'sale', NULL, 1, '2026-07-04 17:23:55');
 
 -- --------------------------------------------------------
 
@@ -381,7 +417,8 @@ CREATE TABLE `dispatch_customers` (
 --
 
 INSERT INTO `dispatch_customers` (`id`, `store_id`, `dispatch_request_id`, `customer_id`, `location_id`, `sublocation_id`, `subtotal_amount`, `vat_amount`, `customer_total_amount`, `collected_amount`, `debt_amount`, `payment_status`, `receipt_number`, `notes`, `created_at`) VALUES
-(1, 1, 1, 1, 1, 1, 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 'partial_debt', 'DEMO-REC-001', 'Demo customer paid part of the delivery.', '2026-06-06 23:31:03');
+(1, 1, 1, 1, 1, 1, 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 'partial_debt', 'DEMO-REC-001', 'Demo customer paid part of the delivery.', '2026-06-06 23:31:03'),
+(2, 1, 2, 1, 1, 1, 1.0000, 0.0000, 1.0000, 1.0000, 0.0000, 'paid', 'SALE-20260607030737080-IZ0M', NULL, '2026-06-07 00:07:37');
 
 -- --------------------------------------------------------
 
@@ -411,7 +448,8 @@ CREATE TABLE `dispatch_items` (
 --
 
 INSERT INTO `dispatch_items` (`id`, `dispatch_customer_id`, `dispatch_request_id`, `item_variant_id`, `packaging_assignment_id`, `quantity`, `unit_price`, `unit_cost`, `subtotal_amount`, `vat_rate`, `vat_amount`, `line_total`, `returned_quantity`, `created_at`) VALUES
-(1, 1, 1, 7, NULL, 5.0000, 12.0000, 6.0000, 60.0000, 0.0000, 0.0000, 60.0000, 0.0000, '2026-06-06 23:31:03');
+(1, 1, 1, 7, NULL, 5.0000, 12.0000, 6.0000, 60.0000, 0.0000, 0.0000, 60.0000, 0.0000, '2026-06-06 23:31:03'),
+(2, 2, 2, 5, NULL, 1.0000, 1.0000, 1.1000, 1.0000, 0.0000, 0.0000, 1.0000, 0.0000, '2026-06-07 00:07:55');
 
 -- --------------------------------------------------------
 
@@ -450,7 +488,8 @@ CREATE TABLE `dispatch_requests` (
 --
 
 INSERT INTO `dispatch_requests` (`id`, `store_id`, `dispatch_number`, `salesman_id`, `warehouse_id`, `request_date`, `status`, `total_quantity`, `subtotal_amount`, `vat_amount`, `total_amount`, `total_collected`, `total_debt`, `approved_by`, `approved_at`, `dispatched_by`, `dispatched_at`, `completed_by`, `completed_at`, `notes`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 1, 'DEMO-DISP-001', 1, 1, '2026-06-07', 'completed', 5.0000, 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 1, '2026-06-07 02:31:03', 1, '2026-06-07 02:31:03', 1, '2026-06-07 02:31:03', 'Demo completed dispatch with partial customer payment.', 1, '2026-06-06 23:31:03', NULL);
+(1, 1, 'DEMO-DISP-001', 1, 1, '2026-06-07', 'completed', 5.0000, 60.0000, 0.0000, 60.0000, 40.0000, 20.0000, 1, '2026-06-07 02:31:03', 1, '2026-06-07 02:31:03', 1, '2026-06-07 02:31:03', 'Demo completed dispatch with partial customer payment.', 1, '2026-06-06 23:31:03', NULL),
+(2, 1, 'DISP-20260607030706932-TH7W', 1, 1, '2026-06-07', 'completed', 1.0000, 1.0000, 0.0000, 1.0000, 1.0000, 0.0000, 1, '2026-07-04 20:22:32', 1, '2026-07-04 20:23:21', 1, '2026-07-04 20:23:55', NULL, 1, '2026-06-07 00:07:06', '2026-07-04 17:23:55');
 
 -- --------------------------------------------------------
 
@@ -492,6 +531,13 @@ CREATE TABLE `dispatch_settlements` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ;
 
+--
+-- Dumping data for table `dispatch_settlements`
+--
+
+INSERT INTO `dispatch_settlements` (`id`, `store_id`, `dispatch_request_id`, `settlement_number`, `settlement_date`, `total_expected`, `total_collected`, `total_debt`, `total_returned_value`, `status`, `settled_by`, `notes`, `created_at`) VALUES
+(1, 1, 2, '12', '2026-07-04', 1.0000, 1.0000, 0.0000, 0.0000, 'posted', 1, NULL, '2026-07-04 17:23:36');
+
 -- --------------------------------------------------------
 
 --
@@ -510,6 +556,13 @@ CREATE TABLE `dispatch_settlement_customers` (
   `notes` text COLLATE utf8mb4_unicode_ci,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ;
+
+--
+-- Dumping data for table `dispatch_settlement_customers`
+--
+
+INSERT INTO `dispatch_settlement_customers` (`id`, `dispatch_settlement_id`, `dispatch_customer_id`, `customer_id`, `expected_amount`, `collected_amount`, `debt_amount`, `settlement_status`, `notes`, `created_at`) VALUES
+(1, 1, 2, 1, 1.0000, 1.0000, 0.0000, 'paid', NULL, '2026-07-04 17:23:55');
 
 -- --------------------------------------------------------
 
@@ -596,6 +649,13 @@ CREATE TABLE `financial_transactions` (
   `created_by` bigint UNSIGNED DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ;
+
+--
+-- Dumping data for table `financial_transactions`
+--
+
+INSERT INTO `financial_transactions` (`id`, `store_id`, `cash_account_id`, `transaction_date`, `transaction_type`, `direction`, `amount`, `reference_type`, `reference_id`, `description`, `created_by`, `created_at`) VALUES
+(1, 1, 2, '2026-07-04 20:23:55', 'sale_collection', 'in', 1.0000, 'customer_payment', 2, NULL, 1, '2026-07-04 17:23:55');
 
 -- --------------------------------------------------------
 
@@ -783,6 +843,13 @@ CREATE TABLE `location_targets` (
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ;
 
+--
+-- Dumping data for table `location_targets`
+--
+
+INSERT INTO `location_targets` (`id`, `store_id`, `location_id`, `target_period`, `period_start`, `period_end`, `target_amount`, `status`, `created_by`, `created_at`, `updated_at`) VALUES
+(1, 1, 1, 'monthly', '2026-06-07', '2026-07-06', 1000.0000, 'draft', 1, '2026-06-07 00:06:02', NULL);
+
 -- --------------------------------------------------------
 
 --
@@ -912,7 +979,7 @@ CREATE TABLE `packaging_group_assignments` (
   `produced_quantity` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `total_packaging_cost` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `cost_per_kg` decimal(18,4) NOT NULL DEFAULT '0.0000',
-  `status` enum('calculated','consumed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'calculated',
+  `status` enum('calculated','batched','consumed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'calculated',
   `production_batch_id` bigint UNSIGNED DEFAULT NULL,
   `calculation_json` json DEFAULT NULL,
   `consumed_at` datetime DEFAULT NULL,
@@ -1363,6 +1430,13 @@ CREATE TABLE `salesman_balances` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ;
 
+--
+-- Dumping data for table `salesman_balances`
+--
+
+INSERT INTO `salesman_balances` (`id`, `store_id`, `salesman_id`, `dispatch_request_id`, `balance_date`, `expected_amount`, `collected_amount`, `debt_amount`, `returned_stock_value`, `status`, `closed_by`, `closed_at`, `notes`, `created_at`) VALUES
+(1, 1, 1, 2, '2026-07-04', 1.0000, 1.0000, 0.0000, 0.0000, 'closed', 1, '2026-07-04 20:24:26', NULL, '2026-07-04 17:23:55');
+
 -- --------------------------------------------------------
 
 --
@@ -1387,7 +1461,8 @@ CREATE TABLE `salesman_sublocations` (
 INSERT INTO `salesman_sublocations` (`id`, `salesman_id`, `sublocation_id`, `assigned_at`, `unassigned_at`, `status`, `created_at`) VALUES
 (1, 1, 1, '2026-06-07', NULL, 'active', '2026-06-06 23:31:03'),
 (2, 2, 1, '2026-06-07', NULL, 'active', '2026-06-06 23:31:03'),
-(3, 2, 3, '2026-06-07', NULL, 'active', '2026-06-06 23:31:03');
+(3, 2, 3, '2026-06-07', NULL, 'active', '2026-06-06 23:31:03'),
+(4, 1, 3, '2026-06-07', NULL, 'active', '2026-06-07 00:08:54');
 
 -- --------------------------------------------------------
 
@@ -1407,6 +1482,14 @@ CREATE TABLE `salesman_targets` (
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ;
+
+--
+-- Dumping data for table `salesman_targets`
+--
+
+INSERT INTO `salesman_targets` (`id`, `store_id`, `sublocation_target_id`, `salesman_id`, `target_amount`, `achieved_sales_amount`, `status`, `created_at`, `updated_at`) VALUES
+(1, 1, 2, 1, 300.0000, 0.0000, 'active', '2026-06-07 00:06:22', NULL),
+(2, 1, 2, 2, 300.0000, 0.0000, 'active', '2026-06-07 00:06:22', NULL);
 
 -- --------------------------------------------------------
 
@@ -1449,6 +1532,34 @@ CREATE TABLE `schema_migrations` (
   `applied_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Dumping data for table `schema_migrations`
+--
+
+INSERT INTO `schema_migrations` (`migration_name`, `applied_at`) VALUES
+('001_store_scope_vat_returns.sql', '2026-07-04 06:49:20'),
+('002_customer_payment_allocations.sql', '2026-07-04 06:49:20'),
+('003_flow_correctness.sql', '2026-07-04 06:49:20'),
+('004_flow_correctness_hardening.sql', '2026-07-04 06:49:20'),
+('005_store_slugs.sql', '2026-07-04 06:49:20'),
+('006_flow_completion.sql', '2026-07-04 06:49:20'),
+('007_flow_correctness_audit_hardening.sql', '2026-07-04 06:49:20'),
+('008_flow_correctness_live_outstanding.sql', '2026-07-04 06:49:20'),
+('009_packaging_hierarchy.sql', '2026-07-04 06:49:20'),
+('010_packaging_consumption_reporting.sql', '2026-07-04 06:49:20'),
+('011_production_packaging_groups.sql', '2026-07-04 06:49:20'),
+('012_assignment_batch_stock.sql', '2026-07-04 06:49:20'),
+('013_current_stock_unit_type.sql', '2026-07-04 06:49:20'),
+('014_item_stock_balances.sql', '2026-07-04 06:49:20'),
+('015_seed_standard_units.sql', '2026-07-04 06:49:20'),
+('016_item_stock_adjustments.sql', '2026-07-04 06:49:20'),
+('017_packaging_batched_status.sql', '2026-07-04 06:49:20'),
+('018_purchase_order_auto_payment.sql', '2026-07-04 06:49:20'),
+('019_sales_target_progress_filters.sql', '2026-07-04 06:49:20'),
+('020_purchase_orders_item_lines.sql', '2026-07-04 06:49:20'),
+('021_salesman_base_salary.sql', '2026-07-04 06:49:20'),
+('022_packaging_batch_movements.sql', '2026-07-04 06:49:20');
+
 -- --------------------------------------------------------
 
 --
@@ -1471,7 +1582,7 @@ CREATE TABLE `stock_balances` (
 --
 
 INSERT INTO `stock_balances` (`id`, `store_id`, `warehouse_id`, `item_variant_id`, `quantity_on_hand`, `quantity_reserved`, `average_cost`, `updated_at`) VALUES
-(1, 1, 1, 5, 2500.0000, 0.0000, 1.1000, NULL),
+(1, 1, 1, 5, 2499.0000, 0.0000, 1.1000, '2026-07-04 17:23:21'),
 (2, 1, 1, 6, 180.0000, 0.0000, 3.2500, NULL),
 (3, 1, 1, 7, 115.0000, 0.0000, 6.0000, NULL),
 (4, 1, 1, 8, 500.0000, 0.0000, 0.4500, NULL),
@@ -1513,7 +1624,10 @@ INSERT INTO `stock_movements` (`id`, `store_id`, `warehouse_id`, `item_variant_i
 (3, 1, 1, 7, 'adjustment', 120.0000, 0.0000, 120.0000, 0.0000, 0.0000, 0.0000, 6.0000, 'demo_seed', NULL, 'Demo opening stock for 10 kg bags.', 1, '2026-06-06 23:31:03'),
 (4, 1, 1, 8, 'adjustment', 500.0000, 0.0000, 500.0000, 0.0000, 0.0000, 0.0000, 0.4500, 'demo_seed', NULL, 'Demo opening stock for carton packaging.', 1, '2026-06-06 23:31:03'),
 (5, 1, 1, 9, 'adjustment', 900.0000, 0.0000, 900.0000, 0.0000, 0.0000, 0.0000, 0.1800, 'demo_seed', NULL, 'Demo opening stock for bag packaging.', 1, '2026-06-06 23:31:03'),
-(6, 1, 1, 7, 'dispatch_out', -5.0000, 120.0000, 115.0000, 0.0000, 0.0000, 0.0000, 6.0000, 'demo_seed', 1, 'Demo completed dispatch.', 1, '2026-06-06 23:31:03');
+(6, 1, 1, 7, 'dispatch_out', -5.0000, 120.0000, 115.0000, 0.0000, 0.0000, 0.0000, 6.0000, 'demo_seed', 1, 'Demo completed dispatch.', 1, '2026-06-06 23:31:03'),
+(7, 1, 1, 5, 'dispatch_reserve', 0.0000, 2500.0000, 2500.0000, 1.0000, 0.0000, 1.0000, NULL, 'dispatch_request', 2, 'Reserve stock for approved dispatch', 1, '2026-07-04 17:22:32'),
+(8, 1, 1, 5, 'dispatch_unreserve', 0.0000, 2500.0000, 2500.0000, -1.0000, 1.0000, 0.0000, NULL, 'dispatch_request', 2, 'Release reserved stock for dispatch', 1, '2026-07-04 17:23:21'),
+(9, 1, 1, 5, 'dispatch_out', -1.0000, 2500.0000, 2499.0000, 0.0000, 0.0000, 0.0000, 1.1000, 'dispatch_request', 2, NULL, 1, '2026-07-04 17:23:21');
 
 -- --------------------------------------------------------
 
@@ -1668,6 +1782,14 @@ CREATE TABLE `sublocation_targets` (
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ;
 
+--
+-- Dumping data for table `sublocation_targets`
+--
+
+INSERT INTO `sublocation_targets` (`id`, `store_id`, `location_target_id`, `sublocation_id`, `target_amount`, `status`, `created_at`, `updated_at`) VALUES
+(1, 1, 1, 2, 400.0000, 'draft', '2026-06-07 00:06:13', NULL),
+(2, 1, 1, 1, 600.0000, 'draft', '2026-06-07 00:06:21', NULL);
+
 -- --------------------------------------------------------
 
 --
@@ -1726,6 +1848,14 @@ CREATE TABLE `system_settings` (
   `updated_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Dumping data for table `system_settings`
+--
+
+INSERT INTO `system_settings` (`id`, `store_id`, `setting_key`, `setting_value`, `value_type`, `description`, `updated_by`, `created_at`, `updated_at`) VALUES
+(1, 1, 'sales.vat.enabled', 'false', 'boolean', 'Enable VAT on new customer sale lines', 1, '2026-07-04 06:49:20', '2026-07-04 17:17:23'),
+(2, 1, 'sales.vat.rate', '0', 'number', 'VAT percentage applied to new customer sale lines', 1, '2026-07-04 06:49:20', '2026-07-04 17:17:23');
+
 -- --------------------------------------------------------
 
 --
@@ -1780,7 +1910,7 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `store_id`, `role_id`, `full_name`, `username`, `email`, `phone`, `password_hash`, `status`, `last_login_at`, `deleted_at`, `created_at`, `updated_at`) VALUES
-(1, 1, 1, 'Demo Owner', 'demo_owner', 'demo.owner@kivaro.local', '+96170000001', '$2a$12$2ssYjdhVZWNXh2qRhEa5UOluKSh.ONYdBRvwqJBYRUnBylhxIvFaC', 'active', '2026-06-07 02:31:56', NULL, '2026-06-06 23:31:03', '2026-06-06 23:31:56'),
+(1, 1, 1, 'Demo Owner', 'demo_owner', 'demo.owner@kivaro.local', '+96170000001', '$2a$12$2ssYjdhVZWNXh2qRhEa5UOluKSh.ONYdBRvwqJBYRUnBylhxIvFaC', 'active', '2026-07-04 09:25:46', NULL, '2026-06-06 23:31:03', '2026-07-04 06:25:46'),
 (2, 1, 3, 'Nour Accountant', 'nour_accountant', 'accountant@kivaro.local', '+96170000002', '$2a$12$2ssYjdhVZWNXh2qRhEa5UOluKSh.ONYdBRvwqJBYRUnBylhxIvFaC', 'active', NULL, NULL, '2026-06-06 23:31:03', NULL),
 (3, 1, 4, 'Karim Warehouse', 'karim_warehouse', 'warehouse@kivaro.local', '+96170000003', '$2a$12$2ssYjdhVZWNXh2qRhEa5UOluKSh.ONYdBRvwqJBYRUnBylhxIvFaC', 'active', NULL, NULL, '2026-06-06 23:31:03', NULL),
 (4, 1, 5, 'Ali Driver', 'ali_driver', 'ali.salesman@kivaro.local', '+96170000004', '$2a$12$2ssYjdhVZWNXh2qRhEa5UOluKSh.ONYdBRvwqJBYRUnBylhxIvFaC', 'active', NULL, NULL, '2026-06-06 23:31:03', NULL),
@@ -1808,7 +1938,8 @@ CREATE TABLE `user_sessions` (
 --
 
 INSERT INTO `user_sessions` (`id`, `user_id`, `token_hash`, `ip_address`, `user_agent`, `expires_at`, `revoked_at`, `created_at`) VALUES
-(1, 1, 'ac68d069c81cd67dfc93b46beed9622fe6d2c0d6d50f3080168efaa9b781fe78', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-06-08 02:31:56', NULL, '2026-06-06 23:31:56');
+(1, 1, 'ac68d069c81cd67dfc93b46beed9622fe6d2c0d6d50f3080168efaa9b781fe78', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36', '2026-06-08 02:31:56', NULL, '2026-06-06 23:31:56'),
+(2, 1, '99a1296ebf51e15eb468d0e18d675bc74cc003367bb0dad1fbba1650442851eb', '::1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36', '2026-07-05 09:25:46', NULL, '2026-07-04 06:25:46');
 
 -- --------------------------------------------------------
 
@@ -1817,23 +1948,23 @@ INSERT INTO `user_sessions` (`id`, `user_id`, `token_hash`, `ip_address`, `user_
 -- (See below for the actual view)
 --
 CREATE TABLE `v_current_stock` (
-`average_cost` decimal(18,4)
+`stock_balance_id` bigint unsigned
+,`store_id` bigint unsigned
+,`warehouse_id` bigint unsigned
+,`warehouse_name` varchar(150)
 ,`item_id` bigint unsigned
 ,`item_name` varchar(150)
 ,`item_type` enum('raw_charcoal','packaging','finished_product','service','other')
+,`unit_type` enum('weight','quantity','volume','length','other')
 ,`item_variant_id` bigint unsigned
-,`quantity_available` decimal(19,4)
+,`variant_name` varchar(150)
+,`sku` varchar(100)
+,`unit_symbol` varchar(30)
 ,`quantity_on_hand` decimal(18,4)
 ,`quantity_reserved` decimal(18,4)
-,`sku` varchar(100)
-,`stock_balance_id` bigint unsigned
+,`quantity_available` decimal(19,4)
+,`average_cost` decimal(18,4)
 ,`stock_value` decimal(36,8)
-,`store_id` bigint unsigned
-,`unit_symbol` varchar(30)
-,`unit_type` enum('weight','quantity','volume','length','other')
-,`variant_name` varchar(150)
-,`warehouse_id` bigint unsigned
-,`warehouse_name` varchar(150)
 );
 
 -- --------------------------------------------------------
@@ -1843,18 +1974,18 @@ CREATE TABLE `v_current_stock` (
 -- (See below for the actual view)
 --
 CREATE TABLE `v_customer_balances` (
-`available_credit` decimal(40,4)
-,`customer_id` bigint unsigned
+`customer_id` bigint unsigned
+,`store_id` bigint unsigned
 ,`customer_name` varchar(150)
 ,`location_name` varchar(150)
-,`net_customer_balance` decimal(41,4)
-,`store_id` bigint unsigned
 ,`sublocation_name` varchar(150)
-,`total_debt_created` decimal(40,4)
-,`total_debt_paid` decimal(40,4)
 ,`total_debt_subtotal` decimal(40,4)
 ,`total_debt_vat` decimal(40,4)
+,`total_debt_created` decimal(40,4)
+,`total_debt_paid` decimal(40,4)
 ,`total_remaining_debt` decimal(40,4)
+,`available_credit` decimal(40,4)
+,`net_customer_balance` decimal(41,4)
 );
 
 -- --------------------------------------------------------
@@ -1864,28 +1995,28 @@ CREATE TABLE `v_customer_balances` (
 -- (See below for the actual view)
 --
 CREATE TABLE `v_dispatch_summary` (
-`customers_count` bigint
-,`debt_adjustment_amount` decimal(40,4)
-,`dispatch_number` varchar(100)
-,`dispatch_request_id` bigint unsigned
-,`net_subtotal_amount` decimal(65,12)
-,`net_total_amount` decimal(65,12)
-,`net_vat_amount` decimal(65,12)
-,`outstanding_debt_amount` decimal(40,4)
-,`request_date` date
-,`returned_subtotal_amount` decimal(65,12)
-,`returned_total_amount` decimal(65,12)
-,`returned_vat_amount` decimal(65,12)
-,`salesman_name` varchar(150)
-,`status` enum('draft','pending_approval','approved','dispatched','partially_settled','completed','cancelled')
+`dispatch_request_id` bigint unsigned
 ,`store_id` bigint unsigned
+,`dispatch_number` varchar(100)
+,`request_date` date
+,`status` enum('draft','pending_approval','approved','dispatched','partially_settled','completed','cancelled')
+,`salesman_name` varchar(150)
+,`warehouse_name` varchar(150)
+,`customers_count` bigint
+,`total_quantity` decimal(18,4)
 ,`subtotal_amount` decimal(18,4)
+,`vat_amount` decimal(18,4)
 ,`total_amount` decimal(18,4)
+,`returned_subtotal_amount` decimal(65,12)
+,`returned_vat_amount` decimal(65,12)
+,`returned_total_amount` decimal(65,12)
+,`net_subtotal_amount` decimal(65,12)
+,`net_vat_amount` decimal(65,12)
+,`net_total_amount` decimal(65,12)
 ,`total_collected` decimal(18,4)
 ,`total_debt` decimal(18,4)
-,`total_quantity` decimal(18,4)
-,`vat_amount` decimal(18,4)
-,`warehouse_name` varchar(150)
+,`debt_adjustment_amount` decimal(40,4)
+,`outstanding_debt_amount` decimal(40,4)
 );
 
 -- --------------------------------------------------------
@@ -1895,21 +2026,21 @@ CREATE TABLE `v_dispatch_summary` (
 -- (See below for the actual view)
 --
 CREATE TABLE `v_salesman_target_progress` (
-`achieved_sales_amount` decimal(65,12)
-,`achievement_percentage` decimal(52,2)
+`salesman_target_id` bigint unsigned
+,`store_id` bigint unsigned
+,`salesman_id` bigint unsigned
+,`salesman_name` varchar(150)
 ,`base_salary` decimal(18,4)
 ,`location_id` bigint unsigned
 ,`location_name` varchar(150)
-,`period_end` date
-,`period_start` date
-,`salesman_id` bigint unsigned
-,`salesman_name` varchar(150)
-,`salesman_target_id` bigint unsigned
-,`store_id` bigint unsigned
 ,`sublocation_id` bigint unsigned
 ,`sublocation_name` varchar(150)
-,`target_amount` decimal(18,4)
 ,`target_period` enum('daily','weekly','monthly','quarterly','yearly')
+,`period_start` date
+,`period_end` date
+,`target_amount` decimal(18,4)
+,`achieved_sales_amount` decimal(65,12)
+,`achievement_percentage` decimal(52,2)
 );
 
 -- --------------------------------------------------------
@@ -2333,7 +2464,8 @@ ALTER TABLE `production_batches`
   ADD KEY `fk_production_batches_charcoal_variant` (`charcoal_variant_id`),
   ADD KEY `fk_production_batches_output_variant` (`output_item_variant_id`),
   ADD KEY `fk_production_batches_created_by` (`created_by`),
-  ADD KEY `fk_production_batches_store` (`store_id`);
+  ADD KEY `fk_production_batches_store` (`store_id`),
+  ADD KEY `idx_production_batches_packaging_group` (`packaging_group_id`);
 
 --
 -- Indexes for table `production_batch_components`
@@ -2568,7 +2700,7 @@ ALTER TABLE `warehouses`
 -- AUTO_INCREMENT for table `audit_logs`
 --
 ALTER TABLE `audit_logs`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=21;
 
 --
 -- AUTO_INCREMENT for table `cash_accounts`
@@ -2850,7 +2982,7 @@ ALTER TABLE `salesman_balances`
 -- AUTO_INCREMENT for table `salesman_sublocations`
 --
 ALTER TABLE `salesman_sublocations`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `salesman_targets`
@@ -2910,7 +3042,7 @@ ALTER TABLE `supplier_payments`
 -- AUTO_INCREMENT for table `system_settings`
 --
 ALTER TABLE `system_settings`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT for table `units`
@@ -2928,7 +3060,7 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT for table `user_sessions`
 --
 ALTER TABLE `user_sessions`
-  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT for table `warehouses`
@@ -3311,6 +3443,7 @@ ALTER TABLE `production_batches`
   ADD CONSTRAINT `fk_production_batches_config` FOREIGN KEY (`packaging_configuration_id`) REFERENCES `packaging_configurations` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_production_batches_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_production_batches_output_variant` FOREIGN KEY (`output_item_variant_id`) REFERENCES `item_variants` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  ADD CONSTRAINT `fk_production_batches_packaging_group` FOREIGN KEY (`packaging_group_id`) REFERENCES `packaging_groups` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_production_batches_store` FOREIGN KEY (`store_id`) REFERENCES `stores` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
   ADD CONSTRAINT `fk_production_batches_warehouse` FOREIGN KEY (`warehouse_id`) REFERENCES `warehouses` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
