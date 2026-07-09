@@ -371,6 +371,16 @@ export default function ItemsTab() {
     onError: (error) => toast.error(getErrorMessage(error, 'Could not hard-delete item.'))
   });
 
+  const reactivateMutation = useMutation({
+    mutationFn: (id) => api.inventory.items.update(id, { status: 'active' }),
+    onSuccess: () => {
+      toast.success('Item reactivated');
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'items'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not reactivate item.'))
+  });
+
   const rows = listQuery.data?.data?.items || [];
   const meta = listQuery.data?.meta || {};
 
@@ -464,6 +474,16 @@ export default function ItemsTab() {
                 onClick={() => setDeleteTarget(row)}
               />
             )}
+            {canUpdate && row.status === 'inactive' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => reactivateMutation.mutate(row.id)}
+                isLoading={reactivateMutation.isPending && reactivateMutation.variables === row.id}
+              >
+                Reactivate
+              </Button>
+            )}
             {canDelete && (
               <Button variant="danger" size="sm" onClick={() => setHardDeleteTarget(row)}>
                 Hard delete
@@ -473,7 +493,7 @@ export default function ItemsTab() {
         )
       }
     ],
-    [canDelete, canUpdate]
+    [canDelete, canUpdate, reactivateMutation]
   );
 
   return (
