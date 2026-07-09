@@ -145,7 +145,15 @@ async function findOpenDebtsForCustomer(connection, customerId, storeId, preferr
 }
 
 async function findReceiptById(id) {
-  return findById('customer_receipts', id);
+  const rows = await query(
+    `SELECT cr.*, c.name AS customer_name
+     FROM customer_receipts cr
+     JOIN customers c ON c.id = cr.customer_id
+     WHERE cr.id = ?
+     LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
 }
 
 async function createDebt(connection, data) {

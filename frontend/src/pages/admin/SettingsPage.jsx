@@ -1,7 +1,6 @@
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { PageHeader } from '@/components/ui/PageHeader.jsx';
 import { CompanyProfileCard } from './CompanyProfileCard.jsx';
-import { SystemSettingsCard } from './SystemSettingsCard.jsx';
 
 export default function SettingsPage() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
@@ -12,12 +11,11 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Administration"
         title="Settings"
-        description="Manage the company profile and runtime system settings."
+        description="Manage the company profile details."
       />
 
       <div className="grid gap-4 xl:grid-cols-2">
         {canEdit && <CompanyProfileCard canEdit={canEdit} />}
-        {canEdit && <SystemSettingsCard canEdit={canEdit} />}
       </div>
     </div>
   );

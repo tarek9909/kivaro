@@ -21,13 +21,28 @@ function formatMoney(value) {
 }
 
 function sendPdf(res, filename, build) {
-  const doc = new PDFDocument({ margin: 40, size: 'A4' });
+  const doc = new PDFDocument({ margin: 40, size: 'A4', bufferPages: true });
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
 
   doc.pipe(res);
   build(doc);
+
+  // Global Footer Pass
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    
+    // Draw footer line
+    doc.moveTo(40, 800).lineTo(555, 800).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
+    
+    // Draw footer text
+    doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8');
+    doc.text('Kivaro Charcoal ERP', 40, 808, { align: 'left' });
+    doc.text(`Page ${i + 1} of ${range.count}`, 40, 808, { align: 'right', width: 515 });
+  }
+
   doc.end();
 }
 
@@ -44,7 +59,9 @@ function drawHeaderBlock(doc, title, subtitle) {
 function sectionTitle(doc, title) {
   doc.moveDown(0.8);
   const currentY = doc.y;
-  doc.fontSize(11).font('Helvetica-Bold').fillColor('#0f172a').text(title, 40, currentY);
+  // Draw left border bar (3pt wide, 12pt high)
+  doc.rect(40, currentY, 3, 12).fill('#0ea5e9');
+  doc.fontSize(11).font('Helvetica-Bold').fillColor('#0f172a').text(title, 48, currentY, { width: 507 });
   doc.moveDown(0.2);
   // Elegant line separator
   doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
@@ -56,18 +73,47 @@ function drawMetadataGrid(doc, items) {
   const startY = doc.y;
   let currentY = startY;
   
-  items.forEach((item, index) => {
-    // Clean 2-column key-value layout
-    const col = index % 2;
-    const row = Math.floor(index / 2);
-    const x = col === 0 ? 40 : 300;
-    const y = startY + row * 16;
+  for (let i = 0; i < items.length; i += 2) {
+    const item1 = items[i];
+    const item2 = items[i + 1];
     
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#475569').text(`${item.label}:`, x, y, { width: 95, continued: true });
-    doc.font('Helvetica').fillColor('#1e293b').text(` ${formatValue(item.value)}`, { width: 145 });
+    const x1 = 40;
+    const x2 = 300;
+    const colWidth = 245;
     
-    currentY = y + 16;
-  });
+    let h1 = 0;
+    let h2 = 0;
+    
+    if (item1) {
+      const val1 = formatValue(item1.value);
+      const text1 = `${item1.label}: ${val1}`;
+      h1 = doc.heightOfString(text1, { width: colWidth });
+    }
+    
+    if (item2) {
+      const val2 = formatValue(item2.value);
+      const text2 = `${item2.label}: ${val2}`;
+      h2 = doc.heightOfString(text2, { width: colWidth });
+    }
+    
+    const rowHeight = Math.max(h1, h2, 16);
+    
+    if (item1) {
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#475569')
+         .text(`${item1.label}: `, x1, currentY, { width: colWidth, continued: true })
+         .font('Helvetica').fillColor('#1e293b')
+         .text(formatValue(item1.value));
+    }
+    
+    if (item2) {
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#475569')
+         .text(`${item2.label}: `, x2, currentY, { width: colWidth, continued: true })
+         .font('Helvetica').fillColor('#1e293b')
+         .text(formatValue(item2.value));
+    }
+    
+    currentY += rowHeight + 4;
+  }
   
   doc.y = currentY + 10;
 }
@@ -107,9 +153,19 @@ function drawRows(doc, rows, columns) {
 
   doc.font('Helvetica').fontSize(8.5).fillColor('#1e293b');
 
-  rows.forEach((row) => {
-    // If table runs to page end, insert page break and repeat headers
-    if (doc.y > 720) {
+  rows.forEach((row, rowIndex) => {
+    // Determine the row height first by checking all columns
+    let maxHeight = 0;
+    columns.forEach((column) => {
+      const text = formatValue(column.value(row));
+      const height = doc.heightOfString(text, { width: column.width - 8 });
+      if (height > maxHeight) {
+        maxHeight = height;
+      }
+    });
+
+    // Check for page break
+    if (doc.y + maxHeight + 12 > 750) {
       doc.addPage();
       
       const headerYNew = doc.y;
@@ -127,24 +183,25 @@ function drawRows(doc, rows, columns) {
     }
 
     const startY = doc.y;
-    let maxHeight = 0;
-    
+
+    // Draw alternating background
+    if (rowIndex % 2 === 1) {
+      doc.rect(40, startY, 515, maxHeight + 8).fill('#f8fafc');
+    }
+
+    // Draw columns
+    doc.font('Helvetica').fontSize(8.5).fillColor('#1e293b');
     columns.forEach((column, index) => {
       doc.text(formatValue(column.value(row)), colPositions[index] + 4, startY + 4, {
         width: column.width - 8,
         align: column.align || 'left'
       });
-      const height = doc.y - startY;
-      if (height > maxHeight) {
-        maxHeight = height;
-      }
-      doc.y = startY;
     });
     
     doc.y = startY + maxHeight + 8;
 
     // Draw horizontal row separator
-    doc.moveTo(40, doc.y - 2).lineTo(555, doc.y - 2).strokeColor('#f1f5f9').lineWidth(0.5).stroke();
+    doc.moveTo(40, doc.y - 2).lineTo(555, doc.y - 2).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
   });
   
   doc.y += 10;

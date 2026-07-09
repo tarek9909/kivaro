@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Bell, ChevronDown, Languages, LogOut, Menu, Search, UserCog, Sun, Moon, Shield, Store } from 'lucide-react';
+import { ChevronDown, Languages, LogOut, Menu, Search, UserCog, Sun, Moon, Shield, Store } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, tokenStorage } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
@@ -28,52 +28,6 @@ function useClickAway(ref, handler) {
 }
 
 
-function NotificationsButton() {
-  const navigate = useNavigate();
-  const { t } = useTranslation();
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const hasModule = useAuthStore((state) => state.hasModule);
-  const canViewNotifications = hasPermission('dashboard.view') && hasModule('notifications');
-
-  // Only fetch when permitted. Backend lists newest first; we rely on the
-  // count of unread items in the most recent page as a non-misleading
-  // best-effort indicator. Cache for 60s and refresh on focus.
-  const unreadQuery = useQuery({
-    queryKey: ['notifications', 'unread-preview'],
-    queryFn: () => api.notifications.list({ limit: 25 }),
-    enabled: canViewNotifications,
-    staleTime: 60_000,
-    refetchOnWindowFocus: true
-  });
-
-  if (!canViewNotifications) return null;
-
-  const items = unreadQuery.data?.data?.notifications || [];
-  const unread = items.filter((item) => !item.read_at).length;
-  const hasUnread = unread > 0;
-  const ariaLabel = hasUnread
-    ? `Notifications, ${unread} unread on this page`
-    : t('topbar.notifications');
-
-  return (
-    <button
-      type="button"
-      onClick={() => navigate('/notifications')}
-      aria-label={ariaLabel}
-      className="relative flex h-9 w-9 items-center justify-center rounded-xl text-ink-200 transition hover:bg-white/5 hover:text-ink-50"
-    >
-      <Bell className="h-4 w-4" aria-hidden="true" />
-      {hasUnread && (
-        <span
-          className="absolute right-1.5 top-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-accent-500 px-1 text-[10px] font-semibold text-white shadow-glass"
-          aria-hidden="true"
-        >
-          {unread > 9 ? '9+' : unread}
-        </span>
-      )}
-    </button>
-  );
-}
 
 export function Topbar({ onOpenSidebar }) {
   const location = useLocation();
@@ -211,7 +165,6 @@ export function Topbar({ onOpenSidebar }) {
           )}
         </button>
 
-        <NotificationsButton />
 
         <div ref={menuRef} className="relative">
           <button
