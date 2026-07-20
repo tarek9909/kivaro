@@ -115,6 +115,7 @@ async function createStore(data) {
 
   const storeId = await withTransaction(async (connection) => {
     const nextStoreId = await model.createStore(connection, { ...data, slug });
+    await model.createDefaultStoreUnits(connection, nextStoreId);
     const { ownerRoleId } = await model.createDefaultStoreRoles(connection, nextStoreId);
     await model.replaceStoreModules(connection, nextStoreId, modules);
     await storeConfigService.setStoreVatSettings(nextStoreId, vat, { connection });

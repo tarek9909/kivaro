@@ -8,6 +8,7 @@ jest.mock('../src/utils/transaction', () => ({
 
 jest.mock('../src/modules/superadmin/superadmin.model', () => ({
   createDefaultStoreRoles: jest.fn(),
+  createDefaultStoreUnits: jest.fn(),
   createStore: jest.fn(),
   createStoreOwner: jest.fn(),
   findActiveStoreOwner: jest.fn(),
@@ -78,6 +79,7 @@ describe('superadmin service', () => {
       mockConnection,
       expect.objectContaining({ slug: 'north' })
     );
+    expect(model.createDefaultStoreUnits).toHaveBeenCalledWith(mockConnection, 12);
     expect(model.replaceStoreModules).toHaveBeenCalledWith(
       mockConnection,
       12,

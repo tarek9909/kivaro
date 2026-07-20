@@ -79,6 +79,22 @@ async function createStore(connection, data) {
   return result.insertId;
 }
 
+async function createDefaultStoreUnits(connection, storeId) {
+  const [kilogram] = await connection.execute(
+    `INSERT INTO units (store_id, name, symbol, unit_type, base_unit_id, conversion_to_base)
+     VALUES (?, 'Kilogram', 'kg', 'weight', NULL, 1)`,
+    [storeId]
+  );
+
+  await connection.execute(
+    `INSERT INTO units (store_id, name, symbol, unit_type, base_unit_id, conversion_to_base)
+     VALUES (?, 'Piece', 'pc', 'quantity', NULL, 1),
+            (?, 'Gram', 'g', 'weight', ?, 0.001),
+            (?, 'Ton', 'ton', 'weight', ?, 1000)`,
+    [storeId, storeId, kilogram.insertId, storeId, kilogram.insertId]
+  );
+}
+
 async function updateStore(id, data, connection = null) {
   const fields = [];
   const params = [];
@@ -241,6 +257,7 @@ async function getStoreSummary(storeId) {
 }
 
 module.exports = {
+  createDefaultStoreUnits,
   createStore,
   createDefaultStoreRoles,
   createStoreOwner,
