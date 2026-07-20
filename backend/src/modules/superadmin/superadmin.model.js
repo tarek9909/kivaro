@@ -121,6 +121,12 @@ async function updateStore(id, data, connection = null) {
   return findStoreById(id);
 }
 
+async function deleteStore(connection, storeId) {
+  await connection.execute('DELETE FROM users WHERE store_id = ?', [storeId]);
+  const [result] = await connection.execute('DELETE FROM stores WHERE id = ?', [storeId]);
+  return result.affectedRows;
+}
+
 async function replaceStoreModules(connection, storeId, modules) {
   await connection.execute('DELETE FROM store_modules WHERE store_id = ?', [storeId]);
 
@@ -261,6 +267,7 @@ module.exports = {
   createStore,
   createDefaultStoreRoles,
   createStoreOwner,
+  deleteStore,
   findActiveStoreOwner,
   findStoreById,
   findStoreBySlug,

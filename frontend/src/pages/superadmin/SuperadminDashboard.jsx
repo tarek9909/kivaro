@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, ChevronDown, Eye, LogIn, Pencil, Percent, Plus, Save, Search, Store, ToggleLeft, Users } from 'lucide-react';
+import { Building2, ChevronDown, Eye, LogIn, Pencil, Percent, Plus, Save, Search, Store, ToggleLeft, Trash2, Users } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { useTranslation } from '@/app/i18n.js';
-import { Badge, Button, DataTable, GlassPanel, GlassPanelBody, GlassPanelHeader, Input, Modal, PageHeader, Pagination, Select, Switch, Textarea } from '@/components/ui/index.js';
+import { Badge, Button, ConfirmDialog, DataTable, GlassPanel, GlassPanelBody, GlassPanelHeader, Input, Modal, PageHeader, Pagination, Select, Switch, Textarea } from '@/components/ui/index.js';
 import { useDebouncedValue } from '@/lib/useDebouncedValue.js';
 import { getErrorMessage } from '@/lib/errors.js';
 
@@ -61,6 +61,7 @@ export default function SuperadminDashboard() {
   const [selectedId, setSelectedId] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingStore, setEditingStore] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const debouncedSearch = useDebouncedValue(search, 300);
 
   const params = useMemo(() => {
@@ -127,6 +128,16 @@ export default function SuperadminDashboard() {
       navigate('/');
     },
     onError: (error) => toast.error(getErrorMessage(error, 'Could not enter store.'))
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => api.superadmin.stores.remove(id),
+    onSuccess: () => {
+      toast.success('Store deleted');
+      setDeleteTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['superadmin', 'stores'] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not delete store.'))
   });
 
   const stores = storesQuery.data?.data?.stores || [];
@@ -202,6 +213,15 @@ export default function SuperadminDashboard() {
           >
             {row.status === 'active' ? 'Suspend' : 'Activate'}
           </Button>
+          {Number(row.id) !== 1 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              leftIcon={Trash2}
+              aria-label={`Delete ${row.name}`}
+              onClick={() => setDeleteTarget(row)}
+            />
+          )}
         </div>
       )
     }
@@ -350,6 +370,19 @@ export default function SuperadminDashboard() {
           setSelectedId(store.id);
           queryClient.invalidateQueries({ queryKey: ['superadmin', 'stores'] });
         }}
+      />
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        title="Delete store"
+        description={
+          deleteTarget
+            ? `Permanently delete ${deleteTarget.name} and all of its users and data? This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete store"
+        isLoading={deleteMutation.isPending}
       />
     </div>
   );

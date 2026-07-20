@@ -18,6 +18,7 @@ router.post('/superadmin/stores', validate(schemas.createStoreSchema), asyncHand
 router.get('/superadmin/stores/slug/:slug', validate(schemas.slugParamSchema), asyncHandler(controller.getStoreBySlug));
 router.get('/superadmin/stores/:id', validate(schemas.idParamSchema), asyncHandler(controller.getStore));
 router.patch('/superadmin/stores/:id', validate(schemas.updateStoreSchema), asyncHandler(controller.updateStore));
+router.delete('/superadmin/stores/:id', validate(schemas.idParamSchema), asyncHandler(controller.deleteStore));
 router.patch('/superadmin/stores/:id/status', validate(schemas.updateStoreStatusSchema), asyncHandler(controller.updateStoreStatus));
 router.post('/superadmin/stores/:id/impersonate', validate(schemas.idParamSchema), asyncHandler(controller.impersonateStore));
 router.get('/superadmin/stores/:id/modules', validate(schemas.idParamSchema), asyncHandler(controller.listModules));

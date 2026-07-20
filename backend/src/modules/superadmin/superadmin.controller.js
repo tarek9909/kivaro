@@ -75,6 +75,14 @@ async function updateStoreStatus(req, res) {
   });
 }
 
+async function deleteStore(req, res) {
+  await service.deleteStore(req.params.id);
+  return successResponse(res, {
+    message: 'Store deleted',
+    data: {}
+  });
+}
+
 async function listModules(req, res) {
   const modules = await service.listModules(req.params.id);
   return successResponse(res, {
@@ -101,6 +109,7 @@ async function impersonateStore(req, res) {
 
 module.exports = {
   createStore,
+  deleteStore,
   getStore,
   getStoreBySlug,
   getPlatformSettings,

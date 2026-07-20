@@ -11,6 +11,7 @@ jest.mock('../src/modules/superadmin/superadmin.model', () => ({
   createDefaultStoreUnits: jest.fn(),
   createStore: jest.fn(),
   createStoreOwner: jest.fn(),
+  deleteStore: jest.fn(),
   findActiveStoreOwner: jest.fn(),
   findStoreById: jest.fn(),
   findStoreBySlug: jest.fn(),
@@ -163,6 +164,21 @@ describe('superadmin service', () => {
     });
 
     expect(model.createStore).not.toHaveBeenCalled();
+  });
+
+  test('deletes a non-template store and its associated data', async () => {
+    model.findStoreById.mockResolvedValue({ id: 12, name: 'North', code: 'NORTH' });
+    model.deleteStore.mockResolvedValue(1);
+
+    await expect(service.deleteStore(12)).resolves.toBeUndefined();
+    expect(model.deleteStore).toHaveBeenCalledWith(mockConnection, 12);
+  });
+
+  test('does not allow deleting the template store', async () => {
+    model.findStoreById.mockResolvedValue({ id: 1, name: 'Default', code: 'DEFAULT' });
+
+    await expect(service.deleteStore(1)).rejects.toMatchObject({ statusCode: 409 });
+    expect(model.deleteStore).not.toHaveBeenCalled();
   });
 
   test('updates an existing store slug when it is unique', async () => {

@@ -28,6 +28,7 @@ describe('superadmin API module', () => {
     await api.stores.create({ name: 'North', code: 'NORTH' });
     await api.stores.get(9);
     await api.stores.update(9, { name: 'North Hub' });
+    await api.stores.remove(9);
     await api.stores.updateStatus(9, { status: 'suspended' });
     await api.platformSettings.get();
     await api.platformSettings.update({ store_url_prefix: 'branch' });
@@ -37,6 +38,7 @@ describe('superadmin API module', () => {
       { method: 'post', path: '/superadmin/stores', rest: [{ name: 'North', code: 'NORTH' }, undefined] },
       { method: 'get', path: '/superadmin/stores/9', rest: [undefined] },
       { method: 'patch', path: '/superadmin/stores/9', rest: [{ name: 'North Hub' }, undefined] },
+      { method: 'delete', path: '/superadmin/stores/9', rest: [undefined] },
       { method: 'patch', path: '/superadmin/stores/9/status', rest: [{ status: 'suspended' }, undefined] },
       { method: 'get', path: '/superadmin/platform-settings', rest: [undefined] },
       {

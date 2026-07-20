@@ -196,6 +196,21 @@ async function updateStoreStatus(id, status) {
   return model.updateStore(id, { status });
 }
 
+async function deleteStore(id) {
+  await getStore(id);
+
+  if (Number(id) === 1) {
+    throw ApiError.conflict('The template store cannot be deleted');
+  }
+
+  await withTransaction(async (connection) => {
+    const affectedRows = await model.deleteStore(connection, id);
+    if (!affectedRows) {
+      throw ApiError.notFound('Store not found');
+    }
+  });
+}
+
 async function listModules(id) {
   await getStore(id);
   const rows = await model.listStoreModules(id);
@@ -278,6 +293,7 @@ async function impersonateStore(id, actor = {}, context = {}) {
 
 module.exports = {
   createStore,
+  deleteStore,
   getStore,
   getStoreBySlug,
   getPlatformSettings: storeConfigService.getPlatformSettings,

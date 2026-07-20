@@ -2,7 +2,7 @@ import { createResourceApi } from '../resourceApi.js';
 
 export function createSuperadminApi(client) {
   const stores = createResourceApi(client, '/superadmin/stores', {
-    only: ['list', 'create', 'get', 'update']
+    only: ['list', 'create', 'get', 'update', 'remove']
   });
 
   return {
