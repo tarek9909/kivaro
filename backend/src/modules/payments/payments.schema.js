@@ -10,7 +10,6 @@ const listSchema = z.object({
     search: z.string().trim().optional(),
     customer_id: z.coerce.number().int().positive().optional(),
     customer_debt_id: z.coerce.number().int().positive().optional(),
-    direction: z.enum(['credit', 'debit']).optional(),
     dispatch_request_id: z.coerce.number().int().positive().optional(),
     salesman_id: z.coerce.number().int().positive().optional(),
     receipt_type: z.string().trim().optional(),

@@ -18,6 +18,12 @@ async function validateCashAccount(cashAccountId, storeId) {
   if (cashAccount.status !== 'active') {
     throw ApiError.badRequest('Validation failed', [{ field: 'cash_account_id', message: 'Cash account must be active' }]);
   }
+  if (!['incoming', 'both'].includes(cashAccount.cash_flow_permission || 'both')) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'cash_account_id',
+      message: 'Cash account does not allow incoming payments'
+    }]);
+  }
   return cashAccount;
 }
 
@@ -44,6 +50,7 @@ async function getReceipt(id, actor = {}) {
 
 async function createCustomerPayment(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
+  let preferredDebt = null;
   const customer = await customerModel.findCustomerById(scoped.customer_id);
   if (!customer) throw ApiError.badRequest('Validation failed', [{ field: 'customer_id', message: 'Customer not found' }]);
   assertSameStore(customer, scoped.store_id, 'customer_id', 'Customer does not belong to this store');
@@ -51,12 +58,12 @@ async function createCustomerPayment(data, userId, actor = {}) {
     throw ApiError.badRequest('Validation failed', [{ field: 'customer_id', message: 'Customer must be active' }]);
   }
   if (scoped.customer_debt_id) {
-    const debt = await model.findDebtById(scoped.customer_debt_id);
-    if (!debt || Number(debt.customer_id) !== Number(scoped.customer_id)) {
+    preferredDebt = await model.findDebtById(scoped.customer_debt_id);
+    if (!preferredDebt || Number(preferredDebt.customer_id) !== Number(scoped.customer_id)) {
       throw ApiError.badRequest('Validation failed', [{ field: 'customer_debt_id', message: 'Debt does not belong to this customer' }]);
     }
-    assertSameStore(debt, scoped.store_id, 'customer_debt_id', 'Debt does not belong to this store');
-    if (!['pending', 'partially_paid'].includes(debt.status) || decimal(debt.remaining_amount).lte(0)) {
+    assertSameStore(preferredDebt, scoped.store_id, 'customer_debt_id', 'Debt does not belong to this store');
+    if (!['pending', 'partially_paid'].includes(preferredDebt.status) || decimal(preferredDebt.remaining_amount).lte(0)) {
       throw ApiError.conflict('Customer debt must be pending or partially paid');
     }
   }
@@ -73,7 +80,8 @@ async function createCustomerPayment(data, userId, actor = {}) {
   await withTransaction(async (connection) => {
     paymentId = await model.createPayment(connection, {
       ...scoped,
-      received_by_user_id: userId
+      payment_number: createDocumentNumber('PAY'),
+      created_by: userId
     });
 
     let remainingPayment = decimal(scoped.amount);
@@ -111,9 +119,12 @@ async function createCustomerPayment(data, userId, actor = {}) {
       await model.createCustomerCredit(connection, {
         store_id: scoped.store_id,
         customer_id: scoped.customer_id,
-        direction: 'credit',
-        amount: creditAmount,
-        source_payment_id: paymentId,
+        credit_number: createDocumentNumber('CRD'),
+        credit_date: scoped.payment_date,
+        original_amount: creditAmount,
+        used_amount: 0,
+        remaining_amount: creditAmount,
+        status: 'available',
         reference_type: 'customer_payment',
         reference_id: paymentId,
         notes: scoped.notes,
@@ -126,6 +137,8 @@ async function createCustomerPayment(data, userId, actor = {}) {
       store_id: scoped.store_id,
       receipt_number: createDocumentNumber('RCP'),
       customer_id: scoped.customer_id,
+      dispatch_request_id: preferredDebt?.dispatch_request_id || null,
+      dispatch_customer_id: preferredDebt?.dispatch_customer_id || null,
       customer_payment_id: paymentId,
       receipt_date: scoped.payment_date,
       total_amount: scoped.amount,
@@ -176,15 +189,15 @@ async function payDebt(debtId, data, userId, actor = {}) {
     paymentId = await model.createPayment(connection, {
       store_id: debt.store_id,
       customer_id: debt.customer_id,
-      customer_debt_id: debtId,
-      dispatch_request_id: debt.dispatch_request_id,
+      cash_account_id: data.cash_account_id,
+      payment_number: createDocumentNumber('PAY'),
       payment_date: data.payment_date,
       amount: data.amount,
       payment_method: data.payment_method,
       reference_number: data.reference_number,
       collected_by_salesman_id: data.collected_by_salesman_id || debt.salesman_id,
-      received_by_user_id: userId,
-      notes: data.notes
+      notes: data.notes,
+      created_by: userId
     });
     await model.createPaymentAllocation(connection, {
       customer_payment_id: paymentId,
@@ -241,7 +254,8 @@ async function applyCreditToDebt(debtId, data = {}, userId, actor = {}) {
       throw ApiError.conflict('Only pending or partially paid debts can use customer credit');
     }
 
-    const creditBalance = decimal(await model.getCustomerCreditBalance(connection, debt.customer_id, debt.store_id));
+    const credits = await model.lockAvailableCreditsForCustomer(connection, debt.customer_id, debt.store_id);
+    const creditBalance = credits.reduce((total, credit) => total.plus(credit.remaining_amount), decimal(0));
     if (creditBalance.lte(0)) {
       throw ApiError.conflict('Customer has no available credit');
     }
@@ -253,18 +267,24 @@ async function applyCreditToDebt(debtId, data = {}, userId, actor = {}) {
     const paidAmount = decimal(debt.paid_amount).plus(amountToApply);
     const nextStatus = remaining.eq(0) ? 'paid' : 'partially_paid';
 
+    let creditToConsume = amountToApply;
+    for (const credit of credits) {
+      if (creditToConsume.lte(0)) break;
+      const creditAvailable = decimal(credit.remaining_amount);
+      const consumed = creditToConsume.lt(creditAvailable) ? creditToConsume : creditAvailable;
+      const remainingCredit = creditAvailable.minus(consumed);
+      const usedCredit = decimal(credit.used_amount).plus(consumed);
+      await model.updateCustomerCredit(credit.id, {
+        used_amount: toMoney(usedCredit),
+        remaining_amount: toMoney(remainingCredit),
+        status: remainingCredit.eq(0) ? 'used' : 'partially_used'
+      }, connection);
+      creditToConsume = creditToConsume.minus(consumed);
+    }
+    if (creditToConsume.gt(0)) {
+      throw ApiError.conflict('Customer credit changed before it could be applied');
+    }
     appliedAmount = toMoney(amountToApply);
-    await model.createCustomerCredit(connection, {
-      store_id: debt.store_id,
-      customer_id: debt.customer_id,
-      direction: 'debit',
-      amount: appliedAmount,
-      customer_debt_id: debtId,
-      reference_type: 'customer_debt',
-      reference_id: debtId,
-      notes: data.notes,
-      created_by: userId
-    });
     await model.updateDebt(debtId, {
       paid_amount: toMoney(paidAmount),
       remaining_amount: toMoney(remaining),
@@ -282,7 +302,7 @@ async function applyCreditToDebt(debtId, data = {}, userId, actor = {}) {
       total_amount: debt.original_amount,
       paid_amount: appliedAmount,
       remaining_amount: toMoney(remaining),
-      receipt_type: 'payment',
+      receipt_type: 'credit',
       created_by: userId
     });
   });
@@ -327,13 +347,11 @@ module.exports = {
         await model.createDebtAdjustment(connection, {
           store_id: lockedDebt.store_id,
           customer_debt_id: lockedDebt.id,
-          customer_id: lockedDebt.customer_id,
-          salesman_id: lockedDebt.salesman_id,
           dispatch_request_id: lockedDebt.dispatch_request_id,
-          dispatch_customer_id: lockedDebt.dispatch_customer_id,
-          adjustment_type: status === 'written_off' ? 'write_off' : 'cancel',
+          adjustment_date: new Date().toISOString().slice(0, 10),
+          adjustment_type: status === 'written_off' ? 'write_off' : 'decrease',
           amount: toMoney(lockedRemaining),
-          notes: `Non-cash ${status} adjustment applied.`,
+          reason: `Non-cash ${status} adjustment applied.`,
           created_by: actor.id
         });
 

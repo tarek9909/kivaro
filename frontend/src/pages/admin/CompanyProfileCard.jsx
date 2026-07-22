@@ -18,6 +18,7 @@ import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 const FIELDS = [
   { name: 'company_name', label: 'Company name', required: true },
   { name: 'currency_code', label: 'Currency code', placeholder: 'USD', maxLength: 10 },
+  { name: 'tax_number', label: 'VAT / tax number', maxLength: 100 },
   { name: 'phone', label: 'Phone' },
   { name: 'email', label: 'Email', type: 'email' }
 ];
@@ -47,7 +48,8 @@ export function CompanyProfileCard({ canEdit = false }) {
         email: profile.email || '',
         address: profile.address || '',
         logo_url: profile.logo_url || '',
-        currency_code: profile.currency_code || 'USD'
+        currency_code: profile.currency_code || 'USD',
+        tax_number: profile.tax_number || ''
       });
     } else if (profileQuery.isSuccess) {
       setForm({
@@ -56,7 +58,8 @@ export function CompanyProfileCard({ canEdit = false }) {
         email: '',
         address: '',
         logo_url: '',
-        currency_code: 'USD'
+        currency_code: 'USD',
+        tax_number: ''
       });
     }
   }, [profile, profileQuery.isSuccess]);

@@ -53,7 +53,7 @@ export function DebtPaymentFormModal({ open, onClose, debt }) {
   }, [open, debt?.id]);
 
   const salesmenQuery = useSalesmenList(open && canPickSalesmen);
-  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts);
+  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts, { cash_flow_direction: 'incoming' });
   const salesmen = salesmenQuery.data?.data?.salesmen || [];
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 

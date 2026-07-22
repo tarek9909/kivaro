@@ -25,6 +25,12 @@ function buildFilters(filters = [], input = {}) {
       continue;
     }
 
+    if (filter.type === 'cash_flow_capability') {
+      conditions.push(`(${filter.column} = 'both' OR ${filter.column} = ?)`);
+      params.push(value === 'incoming' ? 'incoming' : 'outgoing');
+      continue;
+    }
+
     if (filter.operator === 'date_gte') {
       conditions.push(`DATE(${filter.column}) >= ?`);
       params.push(value);

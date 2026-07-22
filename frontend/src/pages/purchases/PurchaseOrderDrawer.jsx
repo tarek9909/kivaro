@@ -54,7 +54,7 @@ function Field({ label, value }) {
 }
 
 function formatEntryQuantity(value, item) {
-  const unit = getEntryUnitLabel(item);
+  const unit = item?.stock_mode === 'carton_weight' ? 'cartons' : getEntryUnitLabel(item);
   const formatted = formatNumber(value, { maximumFractionDigits: 4 });
   return unit ? `${formatted} ${unit}` : formatted;
 }
@@ -289,7 +289,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
                     <th className="px-3 py-2 font-medium">Item</th>
                     <th className="px-3 py-2 text-right font-medium">Ordered</th>
                     <th className="px-3 py-2 text-right font-medium">Received</th>
-                    <th className="px-3 py-2 text-right font-medium">Unit cost</th>
+                    <th className="px-3 py-2 text-right font-medium">Cost basis</th>
                     <th className="px-3 py-2 text-right font-medium">Line total</th>
                   </tr>
                 </thead>
@@ -317,6 +317,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
                         {formatNumber(item.unit_cost, { maximumFractionDigits: 4 })}
+                        {item.stock_mode === 'carton_weight' ? <span className="block text-[10px] text-ink-400">per carton</span> : null}
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">
                         {formatNumber(item.line_total, { maximumFractionDigits: 4 })}
@@ -352,7 +353,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
                       </div>
                     ) : null}
                     <div className="flex justify-between">
-                      <span className="text-ink-400">Cost:</span>
+                      <span className="text-ink-400">{item.stock_mode === 'carton_weight' ? 'Cost/carton:' : 'Cost:'}</span>
                       <span className="text-ink-100">{formatNumber(item.unit_cost, { maximumFractionDigits: 4 })}</span>
                     </div>
                     <div className="flex justify-between">

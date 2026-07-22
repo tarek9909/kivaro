@@ -3,6 +3,7 @@ const { decimal, toMoney } = require('../../utils/money');
 const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 const { assertRowInScope, assertSameStore, scopedData, scopedQuery } = require('../../utils/storeScope');
 const { withTransaction } = require('../../utils/transaction');
+const { writeAuditLog } = require('../../middleware/audit.middleware');
 const inventoryModel = require('./inventory.model');
 const locationModel = require('../locations/locations.model');
 const stockService = require('./stock.service');
@@ -14,60 +15,8 @@ function pagedResult(resourceName, rows, total, pagination) {
   };
 }
 
-function assertStockedVariant(variant, field = 'item_variant_id') {
-  if (variant?.tracking_type !== 'stocked') {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Item variant must belong to a stocked item' }
-    ]);
-  }
-
-  return variant;
-}
-
-function assertPackagingUnitPc(unit, field = 'base_unit_id') {
-  if (unit?.symbol !== 'pc') {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Packaging materials must use pc as their stock unit' }
-    ]);
-  }
-
-  return unit;
-}
-
-function normalizeCatalogQuantity(source, quantity, field = 'initial_quantity') {
-  if (quantity === undefined || quantity === null || quantity === '') return decimal(0);
-  const value = decimal(quantity);
-  const unitType = source?.base_unit_type || source?.unit_type;
-  const conversionToBase = source?.base_unit_conversion_to_base || source?.conversion_to_base || 1;
-  if (value.lt(0)) {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Quantity cannot be negative' }
-    ]);
-  }
-  if (unitType === 'quantity' && !value.isInteger()) {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Piece-based quantities must be whole numbers' }
-    ]);
-  }
-  if (unitType === 'weight') {
-    return value.mul(conversionToBase);
-  }
-  return value;
-}
-
-async function validateInitialStockWarehouse(warehouseId, storeId, field = 'warehouse_id') {
-  if (!warehouseId) {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Warehouse is required when quantity is greater than zero' }
-    ]);
-  }
-  const warehouse = await getWarehouse(warehouseId, { store_id: storeId });
-  if (warehouse.status !== 'active') {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Warehouse must be active' }
-    ]);
-  }
-  return warehouse;
+function validationError(field, message) {
+  return ApiError.badRequest('Validation failed', [{ field, message }]);
 }
 
 function isConstraintError(error) {
@@ -78,9 +27,7 @@ async function runHardDelete(action, message) {
   try {
     await action();
   } catch (error) {
-    if (isConstraintError(error)) {
-      throw ApiError.conflict(message);
-    }
+    if (isConstraintError(error)) throw ApiError.conflict(message);
     throw error;
   }
 }
@@ -88,14 +35,10 @@ async function runHardDelete(action, message) {
 async function assertNoCategoryCycle(id, parentId, actor = {}) {
   let nextParentId = parentId;
   const visited = new Set();
-
   while (nextParentId) {
     if (Number(nextParentId) === Number(id) || visited.has(Number(nextParentId))) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'parent_id', message: 'Category hierarchy cannot contain cycles' }
-      ]);
+      throw validationError('parent_id', 'Category hierarchy cannot contain cycles');
     }
-
     visited.add(Number(nextParentId));
     const parent = await getCategory(nextParentId, actor);
     nextParentId = parent.parent_id;
@@ -105,14 +48,10 @@ async function assertNoCategoryCycle(id, parentId, actor = {}) {
 async function assertNoUnitCycle(id, baseUnitId, actor = {}) {
   let nextBaseUnitId = baseUnitId;
   const visited = new Set();
-
   while (nextBaseUnitId) {
     if (Number(nextBaseUnitId) === Number(id) || visited.has(Number(nextBaseUnitId))) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'base_unit_id', message: 'Unit hierarchy cannot contain cycles' }
-      ]);
+      throw validationError('base_unit_id', 'Unit hierarchy cannot contain cycles');
     }
-
     visited.add(Number(nextBaseUnitId));
     const baseUnit = await getUnit(nextBaseUnitId, actor);
     nextBaseUnitId = baseUnit.base_unit_id;
@@ -122,26 +61,150 @@ async function assertNoUnitCycle(id, baseUnitId, actor = {}) {
 function assertUnitCompatible(baseUnit, storeId, unitType) {
   assertSameStore(baseUnit, storeId, 'base_unit_id', 'Base unit does not belong to this store');
   if (baseUnit.unit_type !== unitType) {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'base_unit_id', message: 'Base unit must use the same unit type' }
-    ]);
+    throw validationError('base_unit_id', 'Base unit must use the same unit type');
   }
+}
+
+function assertUnitMatchesStockMode(unit, configuration) {
+  const expectedUnitType = configuration.stock_mode === 'piece' ? 'quantity' : 'weight';
+  if (unit.unit_type !== expectedUnitType) {
+    throw validationError(
+      'base_unit_id',
+      configuration.stock_mode === 'piece'
+        ? 'Piece stock mode requires a quantity unit'
+        : 'Weight and carton-weight stock modes require a weight unit'
+    );
+  }
+  if (configuration.item_kind === 'packaging' && unit.symbol !== 'pc') {
+    throw validationError('base_unit_id', 'Packaging items must use pc as their stock unit');
+  }
+}
+
+function itemConfiguration(current, updates = {}) {
+  const next = {
+    item_kind: updates.item_kind === undefined ? current?.item_kind : updates.item_kind,
+    stock_mode: updates.stock_mode === undefined ? current?.stock_mode : updates.stock_mode,
+    kg_per_carton: updates.kg_per_carton === undefined ? current?.kg_per_carton : updates.kg_per_carton,
+    loose_units_per_carton: updates.loose_units_per_carton === undefined
+      ? current?.loose_units_per_carton
+      : updates.loose_units_per_carton,
+    max_content_weight_kg: updates.max_content_weight_kg === undefined
+      ? current?.max_content_weight_kg
+      : updates.max_content_weight_kg,
+    carton_selling_price: updates.carton_selling_price === undefined
+      ? current?.carton_selling_price
+      : updates.carton_selling_price,
+    loose_unit_selling_price: updates.loose_unit_selling_price === undefined
+      ? current?.loose_unit_selling_price
+      : updates.loose_unit_selling_price
+  };
+
+  if (!['normal', 'packaging'].includes(next.item_kind)) {
+    throw validationError('item_kind', 'Item kind must be normal or packaging');
+  }
+  if (!['carton_weight', 'weight', 'piece'].includes(next.stock_mode)) {
+    throw validationError('stock_mode', 'Stock mode must be carton_weight, weight, or piece');
+  }
+  if (next.item_kind === 'packaging' && next.stock_mode !== 'piece') {
+    throw validationError('stock_mode', 'Packaging items must use piece stock mode');
+  }
+  if (next.item_kind === 'normal' && next.stock_mode === 'carton_weight') {
+    if (decimal(next.kg_per_carton).lte(0)) {
+      throw validationError('kg_per_carton', 'Carton-weight items require kg per carton');
+    }
+    if (decimal(next.loose_units_per_carton).lte(0) || !decimal(next.loose_units_per_carton).isInteger()) {
+      throw validationError('loose_units_per_carton', 'Carton-weight items require a whole-number loose unit count per carton');
+    }
+  }
+  if (next.item_kind === 'packaging' && decimal(next.max_content_weight_kg).lt(0)) {
+    throw validationError('max_content_weight_kg', 'Packaging capacity cannot be negative');
+  }
+
+  // Capacity belongs to packaging; carton configuration belongs only to normal carton-weight items.
+  if (next.item_kind !== 'packaging') next.max_content_weight_kg = null;
+  if (next.stock_mode !== 'carton_weight') {
+    next.kg_per_carton = null;
+    next.loose_units_per_carton = null;
+    next.carton_selling_price = null;
+    next.loose_unit_selling_price = null;
+  }
+  if (next.item_kind === 'packaging') {
+    next.kg_per_carton = null;
+    next.loose_units_per_carton = null;
+    if (next.max_content_weight_kg === undefined || next.max_content_weight_kg === null) {
+      next.max_content_weight_kg = 0;
+    }
+    next.carton_selling_price = null;
+    next.loose_unit_selling_price = null;
+  }
+  return next;
+}
+
+function hasStockConfigurationChange(current, next, updates) {
+  const configFields = [
+    'item_kind',
+    'stock_mode',
+    'kg_per_carton',
+    'loose_units_per_carton',
+    'max_content_weight_kg',
+    'base_unit_id'
+  ];
+  return configFields.some((field) => {
+    if (updates[field] === undefined) return false;
+    return String(current[field] ?? '') !== String(next[field] ?? updates[field] ?? '');
+  });
+}
+
+function initialStockInput(data, configuration) {
+  const quantity = data.initial_quantity === undefined ? decimal(0) : decimal(data.initial_quantity);
+  const cartons = data.initial_cartons === undefined ? decimal(0) : decimal(data.initial_cartons);
+  if (quantity.lt(0) || cartons.lt(0)) {
+    throw validationError('initial_quantity', 'Initial stock cannot be negative');
+  }
+  if (quantity.gt(0) && cartons.gt(0)) {
+    throw validationError('initial_quantity', 'Send initial quantity or initial cartons, not both');
+  }
+  if (configuration.stock_mode === 'carton_weight') {
+    if (quantity.gt(0)) {
+      throw validationError('initial_quantity', 'Carton-weight items must receive initial stock by carton count');
+    }
+    if (!cartons.isInteger()) {
+      throw validationError('initial_cartons', 'Initial carton count must be a whole number');
+    }
+    return { cartonCount: cartons, quantity: decimal(0) };
+  }
+  if (cartons.gt(0)) {
+    throw validationError('initial_cartons', 'Only carton-weight items accept carton counts');
+  }
+  if (configuration.stock_mode === 'piece' && !quantity.isInteger()) {
+    throw validationError('initial_quantity', 'Piece-based initial stock must be a whole number');
+  }
+  return { cartonCount: decimal(0), quantity };
+}
+
+function toCanonicalQuantity(item, value, field = 'quantity') {
+  const quantity = decimal(value);
+  if (item.stock_mode !== 'weight') return quantity;
+  const conversion = decimal(item.base_unit_conversion_to_base || item.conversion_to_base || 1);
+  if (conversion.lte(0)) throw validationError(field, 'Weight unit conversion must be greater than zero');
+  return quantity.mul(conversion);
+}
+
+async function validateInitialStockWarehouse(warehouseId, storeId, field = 'warehouse_id') {
+  if (!warehouseId) throw validationError(field, 'Warehouse is required when initial stock is greater than zero');
+  const warehouse = await getWarehouse(warehouseId, { store_id: storeId });
+  if (warehouse.status !== 'active') throw validationError(field, 'Warehouse must be active');
+  return warehouse;
 }
 
 async function listCategories(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listCategories({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listCategories({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('categories', result.rows, result.total, pagination);
 }
 
 async function getCategory(id, actor = {}) {
-  const category = await inventoryModel.findCategoryById(id);
-
-  return assertRowInScope(category, actor, 'Category not found');
+  return assertRowInScope(await inventoryModel.findCategoryById(id), actor, 'Category not found');
 }
 
 async function createCategory(data, userId, actor = {}) {
@@ -150,20 +213,17 @@ async function createCategory(data, userId, actor = {}) {
     const parent = await getCategory(scoped.parent_id, actor);
     assertSameStore(parent, scoped.store_id, 'parent_id', 'Parent category does not belong to this store');
   }
-
   return inventoryModel.createCategory(scoped);
 }
 
 async function updateCategory(id, data, actor = {}) {
   const current = await getCategory(id, actor);
   const { store_id, ...updates } = data;
-
   if (updates.parent_id) {
     await assertNoCategoryCycle(id, updates.parent_id, actor);
     const parent = await getCategory(updates.parent_id, actor);
     assertSameStore(parent, current.store_id, 'parent_id', 'Parent category does not belong to this store');
   }
-
   return inventoryModel.updateCategory(id, updates);
 }
 
@@ -182,18 +242,12 @@ async function hardDeleteCategory(id, actor = {}) {
 
 async function listUnits(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listUnits({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listUnits({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('units', result.rows, result.total, pagination);
 }
 
 async function getUnit(id, actor = {}) {
-  const unit = await inventoryModel.findUnitById(id);
-
-  return assertRowInScope(unit, actor, 'Unit not found');
+  return assertRowInScope(await inventoryModel.findUnitById(id), actor, 'Unit not found');
 }
 
 async function createUnit(data, userId, actor = {}) {
@@ -202,7 +256,6 @@ async function createUnit(data, userId, actor = {}) {
     const baseUnit = await getUnit(scoped.base_unit_id, actor);
     assertUnitCompatible(baseUnit, scoped.store_id, scoped.unit_type);
   }
-
   return inventoryModel.createUnit(scoped);
 }
 
@@ -210,7 +263,6 @@ async function updateUnit(id, data, actor = {}) {
   const current = await getUnit(id, actor);
   const { store_id, ...updates } = data;
   const nextUnitType = updates.unit_type || current.unit_type;
-
   if (updates.base_unit_id) {
     await assertNoUnitCycle(id, updates.base_unit_id, actor);
     const baseUnit = await getUnit(updates.base_unit_id, actor);
@@ -219,7 +271,6 @@ async function updateUnit(id, data, actor = {}) {
     const baseUnit = await getUnit(current.base_unit_id, actor);
     assertUnitCompatible(baseUnit, current.store_id, updates.unit_type);
   }
-
   return inventoryModel.updateUnit(id, updates);
 }
 
@@ -230,219 +281,137 @@ async function deleteUnit(id, actor = {}) {
 
 async function listItems(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listItems({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listItems({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('items', result.rows, result.total, pagination);
 }
 
 async function getItem(id, actor = {}) {
-  const item = await inventoryModel.findItemById(id);
-
-  return assertRowInScope(item, actor, 'Item not found');
+  return assertRowInScope(await inventoryModel.findItemById(id), actor, 'Item not found');
 }
 
 async function createItem(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
-  const { warehouse_id: warehouseId, initial_quantity: initialQuantity, ...itemData } = scoped;
+  const {
+    warehouse_id: warehouseId,
+    initial_quantity: initialQuantity,
+    initial_unit_cost: initialUnitCost,
+    initial_cartons: initialCartons,
+    initial_cost_per_carton: initialCostPerCarton,
+    ...rawItemData
+  } = scoped;
+  const configuration = itemConfiguration(null, rawItemData);
   const category = await getCategory(scoped.category_id, actor);
   const unit = await getUnit(scoped.base_unit_id, actor);
   assertSameStore(category, scoped.store_id, 'category_id', 'Category does not belong to this store');
   assertSameStore(unit, scoped.store_id, 'base_unit_id', 'Unit does not belong to this store');
-  if (scoped.item_type === 'packaging') {
-    assertPackagingUnitPc(unit);
-  }
-  const normalizedInitialQuantity = normalizeCatalogQuantity(unit, initialQuantity);
-  if (normalizedInitialQuantity.gt(0) && scoped.tracking_type === 'non_stocked') {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'initial_quantity', message: 'Only stocked items can receive quantity' }
-    ]);
-  }
-  if (normalizedInitialQuantity.gt(0)) {
+  assertUnitMatchesStockMode(unit, configuration);
+  const initial = initialStockInput({ initial_quantity: initialQuantity, initial_cartons: initialCartons }, configuration);
+  const canonicalInitialQuantity = toCanonicalQuantity({
+    ...configuration,
+    base_unit_conversion_to_base: unit.conversion_to_base
+  }, initial.quantity, 'initial_quantity');
+  if (initial.quantity.gt(0) || initial.cartonCount.gt(0)) {
     await validateInitialStockWarehouse(warehouseId, scoped.store_id);
   }
 
   return withTransaction(async (connection) => {
     const item = await inventoryModel.createItem({
-      ...itemData,
+      ...rawItemData,
+      ...configuration,
       store_id: scoped.store_id,
       created_by: userId
     }, connection);
-
-    if (normalizedInitialQuantity.gt(0)) {
-      await inventoryModel.createItemStockBalance(connection, {
-        store_id: item.store_id,
-        warehouse_id: warehouseId,
-        item_id: item.id,
-        quantity_on_hand: toMoney(normalizedInitialQuantity)
+    if (initial.cartonCount.gt(0)) {
+      await stockService.receiveCartonStock(connection, {
+        storeId: item.store_id,
+        warehouseId,
+        itemId: item.id,
+        item,
+        cartonCount: initial.cartonCount,
+        costPerCarton: initialCostPerCarton,
+        movementType: 'opening_balance',
+        referenceType: 'item_opening_balance',
+        referenceId: item.id,
+        notes: 'Opening carton balance',
+        createdBy: userId
+      });
+    } else if (canonicalInitialQuantity.gt(0)) {
+      await stockService.increaseItemStock(connection, {
+        storeId: item.store_id,
+        warehouseId,
+        itemId: item.id,
+        item,
+        quantity: canonicalInitialQuantity,
+        unitCost: initialUnitCost,
+        movementType: 'opening_balance',
+        referenceType: 'item_opening_balance',
+        referenceId: item.id,
+        notes: 'Opening item balance',
+        createdBy: userId
       });
     }
-
     return item;
   });
 }
 
 async function updateItem(id, data, actor = {}) {
   const current = await getItem(id, actor);
-  const { store_id, warehouse_id, initial_quantity, ...updates } = data;
-  const nextItemType = updates.item_type || current.item_type;
-
+  const { store_id, ...updates } = data;
   if (updates.category_id) {
     const category = await getCategory(updates.category_id, actor);
     assertSameStore(category, current.store_id, 'category_id', 'Category does not belong to this store');
   }
+  const configuration = itemConfiguration(current, updates);
+  const nextBaseUnitId = updates.base_unit_id || current.base_unit_id;
+  const unit = await getUnit(nextBaseUnitId, actor);
+  assertSameStore(unit, current.store_id, 'base_unit_id', 'Base unit does not belong to this store');
+  assertUnitMatchesStockMode(unit, configuration);
 
-  let nextUnit = null;
-  if (updates.base_unit_id) {
-    nextUnit = await getUnit(updates.base_unit_id, actor);
-    assertSameStore(nextUnit, current.store_id, 'base_unit_id', 'Unit does not belong to this store');
-  } else if (nextItemType === 'packaging') {
-    nextUnit = await getUnit(current.base_unit_id, actor);
-  }
-
-  if (nextItemType === 'packaging') {
-    assertPackagingUnitPc(nextUnit);
-  }
-
-  return inventoryModel.updateItem(id, updates);
-}
-
-async function createVariant(data, userId, actor = {}) {
-  const scoped = scopedData(data, actor);
-  const { warehouse_id: warehouseId, initial_quantity: initialQuantity, ...variantData } = scoped;
-  const item = await getItem(scoped.item_id, actor);
-  assertSameStore(item, scoped.store_id, 'item_id', 'Item does not belong to this store');
-
-  const normalizedInitialQuantity = normalizeCatalogQuantity(item, initialQuantity);
-  if (normalizedInitialQuantity.gt(0) && item.tracking_type !== 'stocked') {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'initial_quantity', message: 'Only stocked items can allocate quantity to variants' }
-    ]);
-  }
-  if (normalizedInitialQuantity.gt(0)) {
-    await validateInitialStockWarehouse(warehouseId, scoped.store_id);
-  }
-
-  return withTransaction(async (connection) => {
-    let itemBalance = null;
-    if (normalizedInitialQuantity.gt(0)) {
-      itemBalance = await inventoryModel.getItemStockBalanceForUpdate(connection, warehouseId, item.id);
-      if (!itemBalance || decimal(itemBalance.quantity_on_hand || 0).lt(normalizedInitialQuantity)) {
-        throw ApiError.conflict('Insufficient item quantity available');
-      }
+  const protectedConfiguration = {
+    ...configuration,
+    base_unit_id: nextBaseUnitId
+  };
+  if (hasStockConfigurationChange(current, protectedConfiguration, updates)) {
+    const hasMovementHistory = await inventoryModel.countItemMovements(id);
+    if (hasMovementHistory > 0) {
+      throw ApiError.conflict('Stock configuration cannot change after item stock activity exists');
     }
-
-    const variant = await inventoryModel.createVariant({
-      ...variantData,
-      store_id: scoped.store_id
-    }, connection);
-
-    if (normalizedInitialQuantity.gt(0)) {
-      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
-        quantity_on_hand: toMoney(decimal(itemBalance.quantity_on_hand).minus(normalizedInitialQuantity))
-      });
-      await stockService.increaseStock(connection, {
-        storeId: scoped.store_id,
-        warehouseId,
-        itemVariantId: variant.id,
-        quantity: initialQuantity,
-        unitCost: scoped.cost ?? item.default_cost ?? null,
-        movementType: 'adjustment',
-        referenceType: 'item_variant_allocation',
-        referenceId: variant.id,
-        notes: 'Allocate item quantity to variant',
-        createdBy: userId
-      });
-    }
-
-    return variant;
+  }
+  return inventoryModel.updateItem(id, {
+    ...updates,
+    ...configuration
   });
-}
-
-async function updateVariant(id, data, actor = {}) {
-  const current = await getVariant(id, actor);
-  const { store_id, warehouse_id, initial_quantity, ...updates } = data;
-
-  if (updates.item_id) {
-    const item = await getItem(updates.item_id, actor);
-    assertSameStore(item, current.store_id, 'item_id', 'Item does not belong to this store');
-  }
-
-  return inventoryModel.updateVariant(id, updates);
 }
 
 async function deleteItem(id, actor = {}) {
   await getItem(id, actor);
-
   const movementCount = await inventoryModel.countItemMovements(id);
-
-  if (movementCount > 0) {
-    throw ApiError.conflict('Item cannot be deleted because it has stock movement history');
-  }
-
+  if (movementCount > 0) throw ApiError.conflict('Item cannot be deleted because it has stock movement history');
   await inventoryModel.deactivateItem(id);
 }
 
 async function hardDeleteItem(id, actor = {}) {
   await getItem(id, actor);
+  if (await inventoryModel.countItemMovements(id)) {
+    throw ApiError.conflict('Item cannot be hard-deleted because it has stock movement history');
+  }
+  if (await inventoryModel.hasItemStock(id)) {
+    throw ApiError.conflict('Item cannot be hard-deleted while stock remains on hand or reserved');
+  }
   await runHardDelete(
     () => withTransaction((connection) => inventoryModel.hardDeleteItemCascade(id, connection)),
     'Item cannot be hard-deleted because related records could not be removed'
   );
 }
 
-async function listVariants(query, actor = {}) {
-  const pagination = getPagination(query);
-  const result = await inventoryModel.listVariants({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
-  return pagedResult('item_variants', result.rows, result.total, pagination);
-}
-
-async function getVariant(id, actor = {}) {
-  const variant = await inventoryModel.findVariantById(id);
-
-  return assertRowInScope(variant, actor, 'Item variant not found');
-}
-
-async function deleteVariant(id, actor = {}) {
-  await getVariant(id, actor);
-
-  const movementCount = await inventoryModel.countVariantMovements(id);
-
-  if (movementCount > 0) {
-    throw ApiError.conflict('Item variant cannot be deleted because it has stock movement history');
-  }
-
-  await inventoryModel.deactivateVariant(id);
-}
-
-async function hardDeleteVariant(id, actor = {}) {
-  await getVariant(id, actor);
-  await runHardDelete(
-    () => inventoryModel.hardDeleteVariant(id),
-    'Variant cannot be hard-deleted while stock, packaging, production, purchase, or dispatch history references it'
-  );
-}
-
 async function listWarehouses(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listWarehouses({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listWarehouses({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('warehouses', result.rows, result.total, pagination);
 }
 
 async function getWarehouse(id, actor = {}) {
-  const warehouse = await inventoryModel.findWarehouseById(id);
-
-  return assertRowInScope(warehouse, actor, 'Warehouse not found');
+  return assertRowInScope(await inventoryModel.findWarehouseById(id), actor, 'Warehouse not found');
 }
 
 async function createWarehouse(data, userId, actor = {}) {
@@ -471,201 +440,123 @@ async function deleteWarehouse(id, actor = {}) {
 
 async function listStockBalances(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listStockBalances({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
-  const response = pagedResult('stock_balances', result.rows, result.total, pagination);
-  response.meta.batch_summary = result.batchSummary;
-  return response;
+  const result = await inventoryModel.listStockBalances({ filters: scopedQuery(query, actor), pagination });
+  return pagedResult('stock_balances', result.rows, result.total, pagination);
 }
 
 async function listStockMovements(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listStockMovements({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listStockMovements({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('stock_movements', result.rows, result.total, pagination);
 }
 
 async function listStockAdjustments(query, actor = {}) {
   const pagination = getPagination(query);
-  const result = await inventoryModel.listStockAdjustments({
-    filters: scopedQuery(query, actor),
-    pagination
-  });
-
+  const result = await inventoryModel.listStockAdjustments({ filters: scopedQuery(query, actor), pagination });
   return pagedResult('stock_adjustments', result.rows, result.total, pagination);
 }
 
-async function adjustItemPool(data, userId, audit, actor = {}) {
-  const warehouse = await getWarehouse(data.warehouse_id, actor);
-  const item = await getItem(data.item_id, actor);
-  assertSameStore(item, warehouse.store_id, 'item_id', 'Item does not belong to this store');
-
-  if (item.item_type === 'packaging') {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'item_id', message: 'Packaging stock must be adjusted at the variant level' }
-    ]);
-  }
-
-  if (item.tracking_type !== 'stocked') {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'item_id', message: 'Only stocked items can be adjusted' }
-    ]);
-  }
-
-  const direction = decimal(data.quantity_change).gte(0) ? 1 : -1;
-  const normalizedQuantity = normalizeCatalogQuantity(item, decimal(data.quantity_change).abs());
-
-  return withTransaction(async (connection) => {
-    const balance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
-      store_id: warehouse.store_id,
-      warehouse_id: data.warehouse_id,
-      item_id: data.item_id
-    });
-    const currentQuantity = decimal(balance.quantity_on_hand || 0);
-    const nextQuantity = direction > 0
-      ? currentQuantity.plus(normalizedQuantity)
-      : currentQuantity.minus(normalizedQuantity);
-
-    if (nextQuantity.lt(0)) {
-      throw ApiError.conflict('Insufficient item quantity available');
-    }
-
-    await inventoryModel.updateItemStockBalance(connection, balance.id, {
-      quantity_on_hand: toMoney(nextQuantity)
-    });
-    await inventoryModel.createItemStockAdjustment(connection, {
-      store_id: warehouse.store_id,
-      warehouse_id: data.warehouse_id,
-      item_id: data.item_id,
-      quantity_change: toMoney(normalizedQuantity.mul(direction)),
-      quantity_before: toMoney(currentQuantity),
-      quantity_after: toMoney(nextQuantity),
-      unit_cost: data.unit_cost,
-      notes: data.reason,
-      created_by: userId
-    });
-
-    return {
-      target_type: 'item',
-      item_id: data.item_id,
-      warehouse_id: data.warehouse_id,
-      quantity_before: toMoney(currentQuantity),
-      quantity_after: toMoney(nextQuantity),
-      quantity_change: toMoney(normalizedQuantity.mul(direction)),
-      reason: data.reason,
-      audit
-    };
-  });
+async function listCartonLots(query, actor = {}) {
+  const pagination = getPagination(query);
+  const result = await inventoryModel.listCartonLots({ filters: scopedQuery(query, actor), pagination });
+  return pagedResult('carton_lots', result.rows, result.total, pagination);
 }
 
-async function adjustVariantFromItemPool(data, userId, audit, actor = {}) {
-  const warehouse = await getWarehouse(data.warehouse_id, actor);
-  const variant = await getVariant(data.item_variant_id, actor);
-  assertSameStore(variant, warehouse.store_id, 'item_variant_id', 'Item variant does not belong to this store');
-  assertStockedVariant(variant);
-  if (variant.item_type === 'packaging') {
-    return stockService.adjustStock({
-      storeId: warehouse.store_id,
-      warehouseId: data.warehouse_id,
-      itemVariantId: data.item_variant_id,
-      quantityChange: data.quantity_change,
-      unitCost: data.unit_cost,
-      reason: data.reason,
-      createdBy: userId,
-      audit
-    });
-  }
+async function listOpenCartonShelves(query, actor = {}) {
+  const pagination = getPagination(query);
+  const result = await inventoryModel.listOpenCartonShelves({ filters: scopedQuery(query, actor), pagination });
+  return pagedResult('open_carton_shelves', result.rows, result.total, pagination);
+}
 
-  const item = await getItem(variant.item_id, actor);
-  const direction = decimal(data.quantity_change).gte(0) ? 1 : -1;
-  const entryQuantity = decimal(data.quantity_change).abs();
-  const normalizedQuantity = normalizeCatalogQuantity(item, entryQuantity);
+async function receiveStock(data, userId, audit, actor = {}) {
+  const scoped = scopedData(data, actor);
+  const warehouse = await getWarehouse(scoped.warehouse_id, actor);
+  const item = await getItem(scoped.item_id, actor);
+  assertSameStore(item, warehouse.store_id, 'item_id', 'Item does not belong to this store');
+  if (warehouse.status !== 'active') throw validationError('warehouse_id', 'Warehouse must be active');
 
-  return withTransaction(async (connection) => {
-    const itemBalance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
-      store_id: warehouse.store_id,
-      warehouse_id: data.warehouse_id,
-      item_id: item.id
-    });
-    const currentItemQuantity = decimal(itemBalance.quantity_on_hand || 0);
-
-    let movement;
-    if (direction > 0) {
-      if (currentItemQuantity.lt(normalizedQuantity)) {
-        throw ApiError.conflict('Insufficient item quantity available');
+  const result = await withTransaction(async (connection) => {
+    if (item.stock_mode === 'carton_weight') {
+      if (!scoped.carton_count || scoped.quantity) {
+        throw validationError('carton_count', 'Carton-weight receipts require carton count only');
       }
-
-      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
-        quantity_on_hand: toMoney(currentItemQuantity.minus(normalizedQuantity))
-      });
-
-      movement = await stockService.increaseStock(connection, {
+      return stockService.receiveCartonStock(connection, {
         storeId: warehouse.store_id,
-        warehouseId: data.warehouse_id,
-        itemVariantId: data.item_variant_id,
-        quantity: entryQuantity,
-        unitCost: data.unit_cost,
-        movementType: 'adjustment',
-        referenceType: 'stock_adjustment',
-        referenceId: null,
-        notes: data.reason,
+        warehouseId: warehouse.id,
+        itemId: item.id,
+        item,
+        cartonCount: scoped.carton_count,
+        costPerCarton: scoped.cost_per_carton,
+        movementType: 'purchase_receive',
+        referenceType: 'stock_receipt',
+        notes: scoped.notes,
         createdBy: userId
-      });
-    } else {
-      movement = await stockService.decreaseStock(connection, {
-        storeId: warehouse.store_id,
-        warehouseId: data.warehouse_id,
-        itemVariantId: data.item_variant_id,
-        quantity: entryQuantity,
-        unitCost: data.unit_cost,
-        movementType: 'adjustment',
-        referenceType: 'stock_adjustment',
-        referenceId: null,
-        notes: data.reason,
-        createdBy: userId
-      });
-
-      await inventoryModel.updateItemStockBalance(connection, itemBalance.id, {
-        quantity_on_hand: toMoney(currentItemQuantity.plus(normalizedQuantity))
       });
     }
+    if (!scoped.quantity || scoped.carton_count) {
+      throw validationError('quantity', 'This item requires quantity receipt only');
+    }
+    return stockService.increaseItemStock(connection, {
+      storeId: warehouse.store_id,
+      warehouseId: warehouse.id,
+      itemId: item.id,
+      item,
+      quantity: toCanonicalQuantity(item, scoped.quantity),
+      unitCost: scoped.unit_cost,
+      movementType: 'purchase_receive',
+      referenceType: 'stock_receipt',
+      notes: scoped.notes,
+      createdBy: userId
+    });
+  });
+  return result;
+}
 
-    const { writeAuditLog } = require('../../middleware/audit.middleware');
+async function adjustStock(data, userId, audit, actor = {}) {
+  const scoped = scopedData(data, actor);
+  const warehouse = await getWarehouse(scoped.warehouse_id, actor);
+  const item = await getItem(scoped.item_id, actor);
+  assertSameStore(item, warehouse.store_id, 'item_id', 'Item does not belong to this store');
+  if (warehouse.status !== 'active') throw validationError('warehouse_id', 'Warehouse must be active');
+
+  return withTransaction(async (connection) => {
+    const result = await stockService.adjustItemStock(connection, {
+      storeId: warehouse.store_id,
+      warehouseId: warehouse.id,
+      itemId: item.id,
+      item,
+      quantityChange: scoped.quantity_change === undefined
+        ? undefined
+        : toCanonicalQuantity(item, scoped.quantity_change, 'quantity_change'),
+      cartonCountChange: scoped.carton_count_change,
+      looseUnitsChange: scoped.loose_units_change,
+      unitCost: scoped.unit_cost,
+      costPerCarton: scoped.cost_per_carton,
+      movementType: 'stock_adjustment',
+      referenceType: 'stock_adjustment',
+      notes: scoped.reason,
+      createdBy: userId
+    });
     await writeAuditLog(connection, {
       userId,
       module: 'inventory',
       action: 'stock_adjustment',
-      tableName: 'stock_balances',
-      recordId: movement.stock_balance_id,
+      tableName: 'item_stock_balances',
+      recordId: result.stock_balance_id,
       storeId: warehouse.store_id,
       newValues: {
-        warehouse_id: data.warehouse_id,
-        item_variant_id: data.item_variant_id,
-        quantity_change: toMoney(data.quantity_change),
-        quantity_after: movement.quantity_after,
-        stock_movement_id: movement.stock_movement_id
+        warehouse_id: warehouse.id,
+        item_id: item.id,
+        quantity_after: result.quantity_after,
+        quantity_reserved_after: result.quantity_reserved_after,
+        stock_movement_id: result.stock_movement_id
       },
-      ipAddress: audit && audit.ipAddress,
-      userAgent: audit && audit.userAgent,
-      description: data.reason || 'Manual stock adjustment'
+      ipAddress: audit?.ipAddress,
+      userAgent: audit?.userAgent,
+      description: scoped.reason
     });
-
-    return movement;
+    return result;
   });
-}
-
-async function adjustStock(data, userId, audit, actor = {}) {
-  if (data.target_type === 'item') {
-    return adjustItemPool(data, userId, audit, actor);
-  }
-
-  return adjustVariantFromItemPool(data, userId, audit, actor);
 }
 
 module.exports = {
@@ -673,32 +564,29 @@ module.exports = {
   createCategory,
   createItem,
   createUnit,
-  createVariant,
   createWarehouse,
   deleteCategory,
   deleteItem,
   deleteUnit,
-  deleteVariant,
   deleteWarehouse,
   getCategory,
   getItem,
   getUnit,
-  getVariant,
   getWarehouse,
   hardDeleteCategory,
   hardDeleteItem,
-  hardDeleteVariant,
+  listCartonLots,
   listCategories,
   listItems,
-  listStockBalances,
+  listOpenCartonShelves,
   listStockAdjustments,
+  listStockBalances,
   listStockMovements,
   listUnits,
-  listVariants,
   listWarehouses,
+  receiveStock,
   updateCategory,
   updateItem,
   updateUnit,
-  updateVariant,
   updateWarehouse
 };

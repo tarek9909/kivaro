@@ -1,57 +1,39 @@
 const service = require('./dispatch.service');
+const settingsModel = require('../settings/settings.model');
 const {
-  sendDispatchCustomerReceiptsPdf,
-  sendDispatchSummaryPdf
+  sendDispatchCustomerChecklistPdf,
+  sendDispatchQuantityPdf,
+  sendInvoicePdf
 } = require('../../utils/pdf');
 const { successResponse } = require('../../utils/response');
 
 async function listDispatches(req, res) {
   const result = await service.listDispatchRequests(req.query, req.user);
-  successResponse(res, { message: 'Dispatch requests fetched', data: { dispatch_requests: result.rows }, meta: result.meta });
+  successResponse(res, { message: 'Dispatches fetched', data: { dispatch_requests: result.rows }, meta: result.meta });
 }
 
 async function createDispatch(req, res) {
   const dispatch_request = await service.createDispatchRequest(req.body, req.user.id, req.user);
-  successResponse(res, { statusCode: 201, message: 'Dispatch request created', data: { dispatch_request } });
+  successResponse(res, { statusCode: 201, message: 'Dispatch draft created', data: { dispatch_request } });
 }
 
-async function getDispatch(req, res) {
-  const dispatch_request = await service.getDispatchRequest(req.params.id, req.user);
-  successResponse(res, { message: 'Dispatch request fetched', data: { dispatch_request } });
-}
-
-async function printDispatchSummary(req, res) {
-  const dispatch_request = await service.getDispatchRequest(req.params.id, req.user);
-
-  if (req.query.format === 'pdf') {
-    return sendDispatchSummaryPdf(res, dispatch_request);
-  }
-
-  return successResponse(res, {
-    message: 'Dispatch summary fetched',
+async function createDispatchFromPos(req, res) {
+  const dispatch_request = await service.createDispatchFromPos(req.body, req.user.id, req.user);
+  successResponse(res, {
+    statusCode: 201,
+    message: 'Selected POS orders converted into a combined dispatch draft',
     data: { dispatch_request }
   });
 }
 
-async function printCustomerReceipts(req, res) {
+async function getDispatch(req, res) {
   const dispatch_request = await service.getDispatchRequest(req.params.id, req.user);
-
-  if (req.query.format === 'pdf') {
-    return sendDispatchCustomerReceiptsPdf(res, dispatch_request, { noPrice: req.query.no_price });
-  }
-
-  return successResponse(res, {
-    message: 'Dispatch customer receipts fetched',
-    data: {
-      dispatch_request,
-      customer_receipts: dispatch_request.customers
-    }
-  });
+  successResponse(res, { message: 'Dispatch fetched', data: { dispatch_request } });
 }
 
 async function updateDispatch(req, res) {
   const dispatch_request = await service.updateDispatchRequest(req.params.id, req.body, req.user);
-  successResponse(res, { message: 'Dispatch request updated', data: { dispatch_request } });
+  successResponse(res, { message: 'Dispatch updated', data: { dispatch_request } });
 }
 
 async function addCustomer(req, res) {
@@ -61,37 +43,57 @@ async function addCustomer(req, res) {
 
 async function addItem(req, res) {
   const dispatch_item = await service.addItem(req.params.id, req.body, req.user);
-  successResponse(res, { statusCode: 201, message: 'Dispatch item added', data: { dispatch_item } });
+  successResponse(res, { statusCode: 201, message: 'Dispatch line added', data: { dispatch_item } });
+}
+
+async function updateItem(req, res) {
+  const dispatch_item = await service.updateItem(req.params.id, req.body, req.user);
+  successResponse(res, { message: 'Dispatch line updated', data: { dispatch_item } });
+}
+
+async function deleteItem(req, res) {
+  const dispatch_request = await service.deleteItem(req.params.id, req.user);
+  successResponse(res, { message: 'Dispatch line removed', data: { dispatch_request } });
 }
 
 async function submitDispatch(req, res) {
   const dispatch_request = await service.submitDispatch(req.params.id, req.user);
-  successResponse(res, { message: 'Dispatch request submitted', data: { dispatch_request } });
+  successResponse(res, { message: 'Dispatch submitted and invoices issued', data: { dispatch_request } });
+}
+
+async function reworkDispatch(req, res) {
+  const dispatch_request = await service.reworkDispatch(req.params.id, req.body, req.user);
+  successResponse(res, { message: 'Dispatch returned to draft and current invoices voided', data: { dispatch_request } });
 }
 
 async function approveDispatch(req, res) {
   const dispatch_request = await service.approveDispatch(req.params.id, req.user.id, req.user);
-  successResponse(res, { message: 'Dispatch request approved', data: { dispatch_request } });
+  successResponse(res, { message: 'Dispatch approved with source reservations', data: { dispatch_request } });
 }
 
 async function dispatchStock(req, res) {
   const dispatch_request = await service.dispatchStock(req.params.id, req.user.id, req.user);
-  successResponse(res, { message: 'Dispatch stock moved out', data: { dispatch_request } });
+  successResponse(res, { message: 'Dispatch physically issued from inventory', data: { dispatch_request } });
 }
 
 async function cancelDispatch(req, res) {
   const dispatch_request = await service.cancelDispatch(req.params.id, req.user);
-  successResponse(res, { message: 'Dispatch request cancelled', data: { dispatch_request } });
+  successResponse(res, { message: 'Dispatch cancelled', data: { dispatch_request } });
 }
 
 async function createReturn(req, res) {
-  const dispatch_return = await service.createReturn(req.params.id, req.body, req.user.id, req.user);
-  successResponse(res, { statusCode: 201, message: 'Dispatch return created', data: { dispatch_return } });
+  const dispatch_request = await service.createReturn(req.params.id, req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Dispatch return recorded', data: { dispatch_request } });
 }
 
-async function createSettlement(req, res) {
-  const dispatch_settlement = await service.createSettlement(req.params.id, req.body, req.user.id, req.user);
-  successResponse(res, { statusCode: 201, message: 'Dispatch settlement created', data: { dispatch_settlement } });
+async function createCloseout(req, res) {
+  const dispatch_settlement = await service.createCloseout(req.params.id, req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Delivery closeout submitted', data: { dispatch_settlement } });
+}
+
+async function postSettlement(req, res) {
+  const dispatch_settlement = await service.postSettlement(req.params.id, req.body, req.user.id, req.user);
+  successResponse(res, { message: 'Settlement posted', data: { dispatch_settlement } });
 }
 
 async function listSettlements(req, res) {
@@ -101,42 +103,63 @@ async function listSettlements(req, res) {
 
 async function getSettlement(req, res) {
   const dispatch_settlement = await service.getSettlement(req.params.id, req.user);
-  successResponse(res, { message: 'Dispatch settlement fetched', data: { dispatch_settlement } });
+  successResponse(res, { message: 'Settlement fetched', data: { dispatch_settlement } });
 }
 
-async function addSettlementCustomer(req, res) {
-  const dispatch_settlement_customer = await service.addSettlementCustomer(req.params.id, req.body, req.user);
-  successResponse(res, { statusCode: 201, message: 'Settlement customer added', data: { dispatch_settlement_customer } });
+async function generateCustomerChecklist(req, res) {
+  const generated = await service.recordDocumentGeneration(req.params.id, 'customer_table', {}, req.user.id, req.user);
+  const dispatch = await service.getDispatchRequest(req.params.id, req.user);
+  const company = await settingsModel.getCompanyProfile(dispatch.store_id);
+  return sendDispatchCustomerChecklistPdf(res, dispatch, company || {});
 }
 
-async function completeSettlement(req, res) {
-  const dispatch_request = await service.completeSettlement(req.params.id, req.body, req.user.id, req.user);
-  successResponse(res, { message: 'Dispatch settlement completed', data: { dispatch_request } });
+async function generateQuantityTable(req, res) {
+  await service.recordDocumentGeneration(req.params.id, 'quantity_table', {}, req.user.id, req.user);
+  const dispatch = await service.getDispatchRequest(req.params.id, req.user);
+  const company = await settingsModel.getCompanyProfile(dispatch.store_id);
+  return sendDispatchQuantityPdf(res, dispatch, company || {});
 }
 
-async function cancelSettlement(req, res) {
-  const dispatch_request = await service.cancelSettlement(req.params.id, req.user);
-  successResponse(res, { message: 'Dispatch settlement cancelled', data: { dispatch_request } });
+async function listInvoices(req, res) {
+  const result = await service.listInvoices(req.query, req.user);
+  successResponse(res, { message: 'Invoices fetched', data: { invoices: result.rows }, meta: result.meta });
+}
+
+async function getInvoice(req, res) {
+  const invoice = await service.getInvoice(req.params.id, req.user);
+  successResponse(res, { message: 'Invoice fetched', data: { invoice } });
+}
+
+async function generateInvoicePdf(req, res) {
+  const invoice = await service.getInvoice(req.params.id, req.user);
+  await service.recordDocumentGeneration(invoice.dispatch_request_id, 'invoice', { invoice_id: invoice.id }, req.user.id, req.user);
+  const company = await settingsModel.getCompanyProfile(invoice.store_id);
+  return sendInvoicePdf(res, invoice, invoice.lines, company || {});
 }
 
 module.exports = {
   addCustomer,
   addItem,
-  addSettlementCustomer,
   approveDispatch,
   cancelDispatch,
-  cancelSettlement,
-  completeSettlement,
+  createCloseout,
   createDispatch,
+  createDispatchFromPos,
   createReturn,
-  createSettlement,
+  deleteItem,
   dispatchStock,
+  generateCustomerChecklist,
+  generateInvoicePdf,
+  generateQuantityTable,
   getDispatch,
+  getInvoice,
   getSettlement,
-  listSettlements,
   listDispatches,
-  printCustomerReceipts,
-  printDispatchSummary,
+  listInvoices,
+  listSettlements,
+  postSettlement,
+  reworkDispatch,
   submitDispatch,
+  updateItem,
   updateDispatch
 };

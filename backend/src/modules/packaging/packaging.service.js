@@ -1,760 +1,833 @@
 const ApiError = require('../../utils/ApiError');
 const { decimal, toMoney } = require('../../utils/money');
-const { getPagination, getPaginationMeta } = require('../../utils/pagination');
+const { createDocumentNumber } = require('../../utils/documentNumber');
 const { assertRowInScope, assertSameStore, scopedData, scopedQuery } = require('../../utils/storeScope');
 const { withTransaction } = require('../../utils/transaction');
+const { query } = require('../../bootstrap/db');
 const inventoryModel = require('../inventory/inventory.model');
 const stockService = require('../inventory/stock.service');
-const productionModel = require('../production/production.model');
+const storeConfigService = require('../../services/storeConfig.service');
 const model = require('./packaging.model');
 
-const LEVELS = ['category', 'item', 'sub_item', 'sub_sub_item'];
-const CAPACITY_UNIT_TO_KG = {
-  g: 0.001,
-  kg: 1,
-  ton: 1000,
-  pc: 1
-};
-const WEIGHT_UNIT_TO_KG = {
-  g: 0.001,
-  kg: 1,
-  ton: 1000
-};
-const PREVIOUS_LEVEL = {
-  category: null,
-  item: 'category',
-  sub_item: 'item',
-  sub_sub_item: 'sub_item'
-};
+const COMPONENT_ROLES = ['outer_sellable', 'inner_sellable', 'consumable'];
+const NORMAL_ENTRY_TYPES = ['normal_carton', 'normal_loose_unit', 'normal_weight', 'normal_piece'];
+const READY_ENTRY_TYPES = ['ready_outer_carton', 'ready_inner_unit'];
 
-function pagedResult(resourceName, rows, total, pagination) {
-  return {
-    [resourceName]: rows,
-    meta: getPaginationMeta({ ...pagination, total })
-  };
+function positive(value, field) {
+  const parsed = decimal(value);
+  if (!parsed.isFinite() || parsed.lte(0)) {
+    throw ApiError.badRequest('Validation failed', [{ field, message: 'Must be greater than zero' }]);
+  }
+  return parsed;
 }
 
-function isConstraintError(error) {
-  return ['ER_ROW_IS_REFERENCED_2', 'ER_ROW_IS_REFERENCED', 'ER_NO_REFERENCED_ROW_2'].includes(error?.code);
+function wholePositive(value, field) {
+  const parsed = positive(value, field);
+  if (!parsed.isInteger()) {
+    throw ApiError.badRequest('Validation failed', [{ field, message: 'Must be a whole number' }]);
+  }
+  return parsed;
 }
 
-async function runHardDelete(action, message) {
-  try {
-    await action();
-  } catch (error) {
-    if (isConstraintError(error)) {
-      throw ApiError.conflict(message);
+function assertActive(row, field, label) {
+  if (!row || row.status !== 'active') {
+    throw ApiError.badRequest('Validation failed', [{ field, message: `${label} must be active` }]);
+  }
+  return row;
+}
+
+async function findItem(id, field, storeId, connection = null) {
+  const item = await inventoryModel.findItemById(id, connection);
+  if (!item) {
+    throw ApiError.badRequest('Validation failed', [{ field, message: 'Item not found' }]);
+  }
+  assertSameStore(item, storeId, field, 'Item does not belong to this store');
+  return item;
+}
+
+async function findWarehouse(id, field, storeId) {
+  const warehouse = await inventoryModel.findWarehouseById(id);
+  if (!warehouse) {
+    throw ApiError.badRequest('Validation failed', [{ field, message: 'Warehouse not found' }]);
+  }
+  assertSameStore(warehouse, storeId, field, 'Warehouse does not belong to this store');
+  return assertActive(warehouse, field, 'Warehouse');
+}
+
+async function assertNormalInputItem(itemId, storeId, connection = null) {
+  const item = await findItem(itemId, 'input_item_id', storeId, connection);
+  assertActive(item, 'input_item_id', 'Input item');
+  if (item.item_kind !== 'normal') {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'input_item_id',
+      message: 'A packaging group input must be a normal item'
+    }]);
+  }
+  if (!['carton_weight', 'weight'].includes(item.stock_mode)) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'input_item_id',
+      message: 'Packaging input must use carton-weight or weight stock mode'
+    }]);
+  }
+  return item;
+}
+
+function assertPackagingPieceItem(item, field) {
+  assertActive(item, field, 'Packaging component item');
+  if (item.item_kind !== 'packaging' || item.stock_mode !== 'piece') {
+    throw ApiError.badRequest('Validation failed', [{
+      field,
+      message: 'Packaging components must be active packaging items stocked by piece'
+    }]);
+  }
+  return item;
+}
+
+function componentNumber(component, field) {
+  return positive(component.quantity_per_outer, field);
+}
+
+async function validateFlatComponents(components, storeId, connection = null) {
+  if (!Array.isArray(components) || components.length < 2) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'components',
+      message: 'A packaging group needs one outer and one inner sellable component'
+    }]);
+  }
+
+  const roles = new Map();
+  const seenItemIds = new Set();
+  const normalized = [];
+  for (const [index, component] of components.entries()) {
+    const role = component.component_role;
+    if (!COMPONENT_ROLES.includes(role)) {
+      throw ApiError.badRequest('Validation failed', [{
+        field: `components.${index}.component_role`,
+        message: 'Invalid component role'
+      }]);
     }
-    throw error;
+    const item = await findItem(component.item_id, `components.${index}.item_id`, storeId, connection);
+    assertPackagingPieceItem(item, `components.${index}.item_id`);
+    if (seenItemIds.has(Number(item.id))) {
+      throw ApiError.badRequest('Validation failed', [{
+        field: `components.${index}.item_id`,
+        message: 'Each physical packaging item can only appear once in a group'
+      }]);
+    }
+    seenItemIds.add(Number(item.id));
+    const quantity = componentNumber(component, `components.${index}.quantity_per_outer`);
+    if ((role === 'inner_sellable' || role === 'consumable') && !quantity.isInteger()) {
+      throw ApiError.badRequest('Validation failed', [{
+        field: `components.${index}.quantity_per_outer`,
+        message: 'Inner sellable and consumable quantities must be whole pieces'
+      }]);
+    }
+    if (!roles.has(role)) roles.set(role, []);
+    roles.get(role).push({
+      ...component,
+      item,
+      quantity_per_outer: toMoney(quantity),
+      sort_order: component.sort_order ?? index
+    });
+    normalized.push(roles.get(role)[roles.get(role).length - 1]);
   }
-}
 
-function parseJson(value, fallback) {
-  if (!value) return fallback;
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
+  const outer = roles.get('outer_sellable') || [];
+  const inner = roles.get('inner_sellable') || [];
+  if (outer.length !== 1 || !decimal(outer[0].quantity_per_outer).eq(1)) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'components',
+      message: 'A group must have exactly one outer sellable component with quantity one'
+    }]);
   }
-}
+  if (inner.length !== 1) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'components',
+      message: 'A group must have exactly one inner sellable component'
+    }]);
+  }
 
-function toPositiveNumber(value, fallback = null) {
-  if (value === undefined || value === null || value === '') return fallback;
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
+  const groupCapacity = decimal(inner[0].quantity_per_outer).mul(inner[0].item.max_content_weight_kg || 0);
+  const outerCapacity = decimal(outer[0].item.max_content_weight_kg || 0);
+  if (outerCapacity.gt(0) && outerCapacity.lt(groupCapacity)) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'components',
+      message: 'Outer package capacity is lower than the derived inner capacity'
+    }]);
+  }
 
-function componentAttributes(component = {}) {
-  const source = component || {};
-  return parseJson(source.variant_attributes_json || source.attributes_json, {});
-}
-
-function componentCapacityKg(component = {}) {
-  const source = component || {};
-  const ownCapacity = toPositiveNumber(source.capacity_kg);
-  if (ownCapacity) return ownCapacity;
-
-  const attributes = componentAttributes(source);
-  return toPositiveNumber(attributes.capacity_kg_per_pc ?? attributes.capacity_kg);
-}
-
-function normalizeCapacityKg(value, unitSymbol = 'pc') {
-  if (value === undefined || value === null || value === '') return null;
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return null;
-  return numericValue * (CAPACITY_UNIT_TO_KG[unitSymbol] || 1);
-}
-
-function normalizeWeightToKg(value, unitSymbol = 'kg') {
-  if (value === undefined || value === null || value === '') return decimal(0);
-  return decimal(value).mul(WEIGHT_UNIT_TO_KG[unitSymbol] || 1);
-}
-
-function withNormalizedComponentCapacity(component) {
-  const capacity = componentCapacityKg(component);
   return {
-    ...component,
-    capacity_kg: capacity ? toMoney(capacity) : null
+    components: normalized,
+    outer: outer[0],
+    inner: inner[0],
+    group_capacity_kg: groupCapacity
   };
+}
+
+async function loadGroupConfiguration(groupId, actor = {}, connection = null, lock = false) {
+  const group = connection && lock
+    ? await model.lockGroupById(connection, groupId)
+    : await model.findGroupById(groupId, connection);
+  assertRowInScope(group, actor, 'Packaging group not found');
+  const components = await model.getGroupComponents(groupId, connection, lock);
+  const validated = await validateFlatComponents(components, group.store_id, connection);
+  return { group, ...validated };
+}
+
+function ensurePackableCapacity(configuration) {
+  if (configuration.group_capacity_kg.lte(0)) {
+    throw ApiError.badRequest('Packaging group cannot be completed because its inner sellable item has zero content capacity');
+  }
+}
+
+function calculateInputRequirement(inputItem, innerBagCapacityKg, innerQuantityPerOuter, outputCartonCount) {
+  const outputCount = wholePositive(outputCartonCount, 'output_carton_count');
+  const bagCapacity = decimal(innerBagCapacityKg);
+  const innerQuantity = wholePositive(innerQuantityPerOuter, 'inner_quantity_per_outer');
+  const rawQuantityKg = bagCapacity.mul(innerQuantity).mul(outputCount);
+  if (inputItem.stock_mode === 'weight') {
+    return {
+      output_carton_count: outputCount,
+      raw_quantity_kg: rawQuantityKg,
+      loose_units_required: null,
+      loose_unit_weight_kg: null
+    };
+  }
+  if (inputItem.stock_mode !== 'carton_weight') {
+    throw ApiError.badRequest('Packaging input must use carton-weight or weight stock mode');
+  }
+  const cartonKg = positive(inputItem.kg_per_carton, 'input_item_id');
+  const looseUnitsPerCarton = wholePositive(inputItem.loose_units_per_carton, 'input_item_id');
+  const looseUnitWeight = cartonKg.div(looseUnitsPerCarton);
+  if (!looseUnitWeight.eq(bagCapacity)) {
+    throw ApiError.badRequest('Carton input loose-unit weight must exactly match the group inner-bag capacity');
+  }
+  const looseUnitsRequired = outputCount.mul(innerQuantity);
+  return {
+    output_carton_count: outputCount,
+    raw_quantity_kg: rawQuantityKg,
+    loose_units_required: looseUnitsRequired,
+    loose_unit_weight_kg: looseUnitWeight
+  };
+}
+
+async function getBalanceSnapshot(warehouseId, itemId, connection = null, lock = false) {
+  const suffix = connection && lock ? ' FOR UPDATE' : '';
+  const sql = `SELECT id, store_id, warehouse_id, item_id, quantity_on_hand, quantity_reserved, average_cost
+     FROM item_stock_balances
+     WHERE warehouse_id = ? AND item_id = ?
+     LIMIT 1${suffix}`;
+  const rows = connection
+    ? (await connection.execute(sql, [warehouseId, itemId]))[0]
+    : await query(sql, [warehouseId, itemId]);
+  const balance = rows[0] || {
+    quantity_on_hand: 0,
+    quantity_reserved: 0,
+    average_cost: 0
+  };
+  return {
+    ...balance,
+    available_quantity: decimal(balance.quantity_on_hand).minus(balance.quantity_reserved)
+  };
+}
+
+function shortageFor({ label, required, available, unit }) {
+  const needed = decimal(required);
+  const actual = decimal(available);
+  const shortage = needed.minus(actual);
+  return {
+    label,
+    required_quantity: toMoney(needed),
+    available_quantity: toMoney(actual),
+    shortage_quantity: toMoney(shortage.gt(0) ? shortage : 0),
+    unit,
+    available: actual.gte(needed)
+  };
+}
+
+function publicComponent(component, balance, required, totalCost) {
+  const shortage = decimal(required).minus(balance.available_quantity);
+  return {
+    item_id: component.item.id,
+    item_name: component.item.name,
+    component_role: component.component_role,
+    quantity_per_outer: component.quantity_per_outer,
+    required_quantity: toMoney(required),
+    available_quantity: toMoney(balance.available_quantity),
+    unit_cost: toMoney(balance.average_cost || 0),
+    total_cost: toMoney(totalCost),
+    shortage_quantity: toMoney(shortage.gt(0) ? shortage : 0)
+  };
+}
+
+async function buildPackagingPreview(groupId, data, actor = {}, connection = null, lock = false) {
+  const configuration = await loadGroupConfiguration(groupId, actor, connection, lock);
+  const { group, components, outer, inner, group_capacity_kg: groupCapacityKg } = configuration;
+  if (group.status !== 'active') throw ApiError.conflict('Inactive packaging groups cannot be used');
+  ensurePackableCapacity(configuration);
+
+  const warehouseId = data.warehouse_id || group.default_warehouse_id;
+  if (!warehouseId) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'warehouse_id',
+      message: 'A warehouse is required when the group has no default warehouse'
+    }]);
+  }
+  await findWarehouse(warehouseId, 'warehouse_id', group.store_id);
+  const inputItem = await assertNormalInputItem(group.input_item_id, group.store_id, connection);
+  const inputRequirement = calculateInputRequirement(
+    inputItem,
+    inner.item.max_content_weight_kg || 0,
+    inner.quantity_per_outer,
+    data.output_carton_count
+  );
+  const inputBalance = await getBalanceSnapshot(warehouseId, inputItem.id, connection, lock);
+
+  const rawTotalCost = decimal(inputRequirement.raw_quantity_kg).mul(inputBalance.average_cost || 0);
+  const componentPreviews = [];
+  const shortages = [shortageFor({
+    label: inputItem.name,
+    required: inputRequirement.raw_quantity_kg,
+    available: inputBalance.available_quantity,
+    unit: 'kg'
+  })];
+  let packagingCost = decimal(0);
+  for (const component of components) {
+    const required = decimal(component.quantity_per_outer).mul(inputRequirement.output_carton_count);
+    const balance = await getBalanceSnapshot(warehouseId, component.item.id, connection, lock);
+    const totalCost = required.mul(balance.average_cost || 0);
+    packagingCost = packagingCost.plus(totalCost);
+    componentPreviews.push({ component, balance, required, totalCost });
+    shortages.push(shortageFor({
+      label: component.item.name,
+      required,
+      available: balance.available_quantity,
+      unit: 'pc'
+    }));
+  }
+  const totalCost = rawTotalCost.plus(packagingCost);
+  const outputCount = inputRequirement.output_carton_count;
+  const innerPerOuter = decimal(inner.quantity_per_outer);
+  return {
+    group,
+    input_item: inputItem,
+    warehouse_id: Number(warehouseId),
+    output_carton_count: toMoney(outputCount),
+    group_capacity_kg: toMoney(groupCapacityKg),
+    input: {
+      item_id: inputItem.id,
+      item_name: inputItem.name,
+      stock_mode: inputItem.stock_mode,
+      raw_quantity_kg: toMoney(inputRequirement.raw_quantity_kg),
+      loose_units_required: inputRequirement.loose_units_required === null ? null : toMoney(inputRequirement.loose_units_required),
+      loose_unit_weight_kg: inputRequirement.loose_unit_weight_kg === null ? null : toMoney(inputRequirement.loose_unit_weight_kg),
+      unit_cost: toMoney(inputBalance.average_cost || 0),
+      total_cost: toMoney(rawTotalCost),
+      available_quantity_kg: toMoney(inputBalance.available_quantity)
+    },
+    components: componentPreviews.map(({ component, balance, required, totalCost: componentCost }) =>
+      publicComponent(component, balance, required, componentCost)
+    ),
+    output: {
+      outer_item_id: outer.item.id,
+      outer_item_name: outer.item.name,
+      inner_item_id: inner.item.id,
+      inner_item_name: inner.item.name,
+      inner_quantity_per_outer: toMoney(innerPerOuter),
+      total_inner_quantity: toMoney(innerPerOuter.mul(outputCount)),
+      full_outer_cartons: toMoney(outputCount)
+    },
+    costs: {
+      raw_cost: toMoney(rawTotalCost),
+      packaging_cost: toMoney(packagingCost),
+      total_cost: toMoney(totalCost),
+      cost_per_outer: toMoney(totalCost.div(outputCount)),
+      cost_per_inner: toMoney(totalCost.div(outputCount.mul(innerPerOuter)))
+    },
+    shortages,
+    can_complete: shortages.every((entry) => entry.available),
+    _configuration: configuration,
+    _component_previews: componentPreviews,
+    _input_requirement: inputRequirement
+  };
+}
+
+function removePrivatePreviewFields(preview) {
+  const { _configuration, _component_previews, _input_requirement, ...publicPreview } = preview;
+  return publicPreview;
+}
+
+function groupSnapshot(preview) {
+  return {
+    id: preview.group.id,
+    name: preview.group.name,
+    code: preview.group.code,
+    capacity_kg: preview.group_capacity_kg,
+    outer: preview._configuration.outer && {
+      item_id: preview._configuration.outer.item.id,
+      name: preview._configuration.outer.item.name,
+      quantity_per_outer: preview._configuration.outer.quantity_per_outer,
+      max_content_weight_kg: preview._configuration.outer.item.max_content_weight_kg
+    },
+    inner: preview._configuration.inner && {
+      item_id: preview._configuration.inner.item.id,
+      name: preview._configuration.inner.item.name,
+      quantity_per_outer: preview._configuration.inner.quantity_per_outer,
+      max_content_weight_kg: preview._configuration.inner.item.max_content_weight_kg
+    },
+    components: preview._component_previews.map(({ component }) => ({
+      item_id: component.item.id,
+      item_name: component.item.name,
+      component_role: component.component_role,
+      quantity_per_outer: component.quantity_per_outer,
+      max_content_weight_kg: component.item.max_content_weight_kg
+    }))
+  };
+}
+
+function inputSnapshot(preview) {
+  const { input_item: item, input } = preview;
+  return {
+    item_id: item.id,
+    item_name: item.name,
+    stock_mode: item.stock_mode,
+    kg_per_carton: item.kg_per_carton,
+    loose_units_per_carton: item.loose_units_per_carton,
+    raw_quantity_kg: input.raw_quantity_kg,
+    loose_units_required: input.loose_units_required,
+    loose_unit_weight_kg: input.loose_unit_weight_kg,
+    unit_cost: input.unit_cost
+  };
+}
+
+async function createGroup(data, userId, actor = {}) {
+  const scoped = scopedData(data, actor);
+  if (!Array.isArray(scoped.components)) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'components',
+      message: 'A packaging group requires its complete flat component template'
+    }]);
+  }
+  await assertNormalInputItem(scoped.input_item_id, scoped.store_id);
+  if (scoped.default_warehouse_id) {
+    await findWarehouse(scoped.default_warehouse_id, 'default_warehouse_id', scoped.store_id);
+  }
+  const groupId = await withTransaction(async (connection) => {
+    const group = await model.createGroup({ ...scoped, created_by: userId }, connection);
+    if (scoped.components !== undefined) {
+      const validated = await validateFlatComponents(scoped.components, scoped.store_id, connection);
+      await model.replaceGroupComponents(connection, group.id, scoped.store_id, validated.components);
+    }
+    return group.id;
+  });
+  return getGroup(groupId, actor);
 }
 
 async function getGroup(id, actor = {}) {
   const group = await model.findGroupById(id);
   assertRowInScope(group, actor, 'Packaging group not found');
+  const components = await model.getGroupComponents(id);
+  return { ...group, components };
+}
 
+async function updateGroup(id, data, actor = {}) {
+  const existing = await model.findGroupById(id);
+  assertRowInScope(existing, actor, 'Packaging group not found');
+  const { components, store_id, ...updates } = data;
+  if (updates.input_item_id) await assertNormalInputItem(updates.input_item_id, existing.store_id);
+  if (updates.default_warehouse_id) await findWarehouse(updates.default_warehouse_id, 'default_warehouse_id', existing.store_id);
+  await withTransaction(async (connection) => {
+    await model.updateGroup(id, updates, connection);
+    if (components !== undefined) {
+      const validated = await validateFlatComponents(components, existing.store_id, connection);
+      await model.replaceGroupComponents(connection, id, existing.store_id, validated.components);
+    }
+  });
+  return getGroup(id, actor);
+}
+
+async function replaceComponents(id, components, actor = {}) {
+  await withTransaction(async (connection) => {
+    const group = await model.lockGroupById(connection, id);
+    assertRowInScope(group, actor, 'Packaging group not found');
+    const validated = await validateFlatComponents(components, group.store_id, connection);
+    await model.replaceGroupComponents(connection, id, group.store_id, validated.components);
+  });
+  return getGroup(id, actor);
+}
+
+async function previewGroup(id, data, actor = {}) {
+  return removePrivatePreviewFields(await buildPackagingPreview(id, data, actor));
+}
+
+async function completePackaging(id, data, userId, actor = {}) {
+  return withTransaction(async (connection) => {
+    const preview = await buildPackagingPreview(id, data, actor, connection, true);
+    if (!preview.can_complete) {
+      throw ApiError.conflict('Packaging cannot be completed because one or more inputs are short');
+    }
+    const operationId = await model.createOperation(connection, {
+      store_id: preview.group.store_id,
+      operation_number: createDocumentNumber('PKG'),
+      packaging_group_id: preview.group.id,
+      input_item_id: preview.input_item.id,
+      warehouse_id: preview.warehouse_id,
+      output_carton_count: preview.output_carton_count,
+      raw_quantity_kg: preview.input.raw_quantity_kg,
+      raw_unit_cost: preview.input.unit_cost,
+      packaging_cost: preview.costs.packaging_cost,
+      total_cost: preview.costs.total_cost,
+      cost_per_outer: preview.costs.cost_per_outer,
+      cost_per_inner: preview.costs.cost_per_inner,
+      group_snapshot_json: groupSnapshot(preview),
+      input_snapshot_json: inputSnapshot(preview),
+      completed_by: userId,
+      notes: data.notes
+    });
+
+    const commonStockInput = {
+      storeId: preview.group.store_id,
+      warehouseId: preview.warehouse_id,
+      movementType: 'packaging_consume',
+      referenceType: 'packaging_operation',
+      referenceId: operationId,
+      notes: data.notes || `Packaging operation ${operationId}`,
+      createdBy: userId
+    };
+    if (preview.input_item.stock_mode === 'carton_weight') {
+      await stockService.consumeCartonLooseUnits(connection, {
+        ...commonStockInput,
+        itemId: preview.input_item.id,
+        looseUnits: preview._input_requirement.loose_units_required,
+        item: preview.input_item
+      });
+    } else {
+      await stockService.decreaseItemStock(connection, {
+        ...commonStockInput,
+        itemId: preview.input_item.id,
+        quantity: preview._input_requirement.raw_quantity_kg,
+        item: preview.input_item
+      });
+    }
+    await model.createOperationComponent(connection, {
+      packaging_operation_id: operationId,
+      item_id: preview.input_item.id,
+      component_role: 'raw_input',
+      quantity_per_outer: toMoney(decimal(preview.input.raw_quantity_kg).div(preview.output_carton_count)),
+      required_quantity: preview.input.raw_quantity_kg,
+      consumed_quantity: preview.input.raw_quantity_kg,
+      unit_cost: preview.input.unit_cost,
+      total_cost: preview.input.total_cost,
+      component_snapshot_json: inputSnapshot(preview)
+    });
+
+    for (const componentPreview of preview._component_previews) {
+      const { component, required, totalCost } = componentPreview;
+      await stockService.decreaseItemStock(connection, {
+        ...commonStockInput,
+        itemId: component.item.id,
+        quantity: required,
+        item: component.item
+      });
+      await model.createOperationComponent(connection, {
+        packaging_operation_id: operationId,
+        item_id: component.item.id,
+        component_role: component.component_role,
+        quantity_per_outer: component.quantity_per_outer,
+        required_quantity: toMoney(required),
+        consumed_quantity: toMoney(required),
+        unit_cost: toMoney(componentPreview.balance.average_cost || 0),
+        total_cost: toMoney(totalCost),
+        component_snapshot_json: {
+          item_id: component.item.id,
+          item_name: component.item.name,
+          item_code: component.item.code,
+          component_role: component.component_role,
+          quantity_per_outer: component.quantity_per_outer,
+          unit_cost: toMoney(componentPreview.balance.average_cost || 0)
+        }
+      });
+    }
+
+    const containers = [];
+    const count = Number(preview.output_carton_count);
+    for (let index = 0; index < count; index += 1) {
+      const containerId = await model.createReadyStockContainer(connection, {
+        store_id: preview.group.store_id,
+        packaging_operation_id: operationId,
+        packaging_group_id: preview.group.id,
+        warehouse_id: preview.warehouse_id,
+        outer_item_id: preview._configuration.outer.item.id,
+        inner_item_id: preview._configuration.inner.item.id,
+        outer_name_snapshot: preview._configuration.outer.item.name,
+        inner_name_snapshot: preview._configuration.inner.item.name,
+        initial_inner_quantity: preview.output.inner_quantity_per_outer,
+        remaining_inner_quantity: preview.output.inner_quantity_per_outer,
+        capacity_kg: preview.group_capacity_kg,
+        total_cost: preview.costs.cost_per_outer,
+        remaining_cost: preview.costs.cost_per_outer,
+        status: 'full'
+      });
+      containers.push(containerId);
+      await model.createReadyStockMovement(connection, {
+        store_id: preview.group.store_id,
+        warehouse_id: preview.warehouse_id,
+        ready_stock_container_id: containerId,
+        movement_type: 'packaging_complete',
+        inner_quantity_change: preview.output.inner_quantity_per_outer,
+        inner_quantity_before: 0,
+        inner_quantity_after: preview.output.inner_quantity_per_outer,
+        cost_change: preview.costs.cost_per_outer,
+        cost_before: 0,
+        cost_after: preview.costs.cost_per_outer,
+        reference_type: 'packaging_operation',
+        reference_id: operationId,
+        notes: data.notes,
+        created_by: userId
+      });
+    }
+    return {
+      packaging_operation: await model.findOperationById(operationId, connection),
+      ready_stock_container_ids: containers
+    };
+  });
+}
+
+async function validateCatalogTarget(data, storeId, connection = null) {
+  const normal = NORMAL_ENTRY_TYPES.includes(data.entry_type);
+  const ready = READY_ENTRY_TYPES.includes(data.entry_type);
+  if (!normal && !ready) {
+    throw ApiError.badRequest('Validation failed', [{ field: 'entry_type', message: 'Invalid sale catalog entry type' }]);
+  }
+  if (normal) {
+    if (!data.item_id || data.packaging_group_id) {
+      throw ApiError.badRequest('Validation failed', [{
+        field: 'item_id', message: 'Normal sale offers require an item and cannot reference a packaging group'
+      }]);
+    }
+    const item = await findItem(data.item_id, 'item_id', storeId, connection);
+    assertActive(item, 'item_id', 'Item');
+    if (item.item_kind !== 'normal') {
+      throw ApiError.badRequest('Validation failed', [{ field: 'item_id', message: 'Normal sale offers require a normal item' }]);
+    }
+    const expected = {
+      normal_carton: 'carton_weight',
+      normal_loose_unit: 'carton_weight',
+      normal_weight: 'weight',
+      normal_piece: 'piece'
+    }[data.entry_type];
+    if (item.stock_mode !== expected) {
+      throw ApiError.badRequest('Validation failed', [{
+        field: 'entry_type', message: `This offer type requires an item using ${expected} stock mode`
+      }]);
+    }
+    return { item, group: null };
+  }
+  if (!data.packaging_group_id || data.item_id) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'packaging_group_id', message: 'Ready-stock offers require a packaging group and cannot reference an item'
+    }]);
+  }
+  const group = await model.findGroupById(data.packaging_group_id, connection);
+  if (!group || Number(group.store_id) !== Number(storeId)) {
+    throw ApiError.badRequest('Validation failed', [{ field: 'packaging_group_id', message: 'Packaging group not found in this store' }]);
+  }
+  if (group.status !== 'active') {
+    throw ApiError.badRequest('Validation failed', [{ field: 'packaging_group_id', message: 'Packaging group must be active' }]);
+  }
+  return { item: null, group };
+}
+
+function defaultCatalogName(entryType, target) {
+  if (target.item) {
+    const label = {
+      normal_carton: 'Carton',
+      normal_loose_unit: 'Loose unit',
+      normal_weight: 'Kg',
+      normal_piece: 'Piece'
+    }[entryType];
+    return `${target.item.name} — ${label}`;
+  }
+  return `${target.group.name} — ${entryType === 'ready_outer_carton' ? 'Ready carton' : 'Ready bag'}`;
+}
+
+function defaultCatalogUnit(entryType) {
   return {
-    ...group,
-    components: (await model.getGroupComponents(id)).map(withNormalizedComponentCapacity)
-  };
+    normal_carton: 'carton',
+    normal_loose_unit: 'unit',
+    normal_weight: 'kg',
+    normal_piece: 'piece',
+    ready_outer_carton: 'carton',
+    ready_inner_unit: 'bag'
+  }[entryType];
 }
 
-async function validateVariant(id, field, storeId, options = {}) {
-  const variant = await inventoryModel.findVariantById(id);
-
-  if (!variant) {
-    throw ApiError.badRequest('Validation failed', [{ field, message: 'Variant not found' }]);
-  }
-
-  assertSameStore(variant, storeId, field, 'Variant does not belong to this store');
-
-  if (variant.status !== 'active') {
-    throw ApiError.badRequest('Validation failed', [{ field, message: 'Variant must be active' }]);
-  }
-
-  if (variant.tracking_type !== 'stocked') {
-    throw ApiError.badRequest('Validation failed', [{ field, message: 'Variant must belong to a stocked item' }]);
-  }
-
-  if (options.itemType && variant.item_type !== options.itemType) {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: `Variant must belong to a ${options.itemType.replace(/_/g, ' ')} item` }
-    ]);
-  }
-
-  return variant;
-}
-
-async function validateWarehouse(id, field, storeId) {
-  if (!id) return null;
-  const warehouse = await inventoryModel.findWarehouseById(id);
-
-  if (!warehouse) {
-    throw ApiError.badRequest('Validation failed', [{ field, message: 'Warehouse not found' }]);
-  }
-
-  return assertSameStore(warehouse, storeId, field, 'Warehouse does not belong to this store');
-}
-
-async function validateGroupReferences(data, storeId) {
-  if (data.charcoal_variant_id) {
-    await validateVariant(data.charcoal_variant_id, 'charcoal_variant_id', storeId);
-  }
-  if (data.default_warehouse_id) {
-    await validateWarehouse(data.default_warehouse_id, 'default_warehouse_id', storeId);
-  }
-}
-
-async function createGroup(data, userId, actor = {}) {
+async function createSaleCatalogEntry(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
-  await validateGroupReferences(scoped, scoped.store_id);
-
-  return model.createGroup({
+  const target = await validateCatalogTarget(scoped, scoped.store_id);
+  const duplicate = await model.findActiveSaleCatalogDuplicate(null, scoped);
+  if (duplicate) throw ApiError.conflict('An active offer for this item or group and fulfillment type already exists');
+  const vatSettings = await storeConfigService.getStoreVatSettings(scoped.store_id);
+  return model.createSaleCatalogEntry({
     ...scoped,
+    display_name: scoped.display_name || defaultCatalogName(scoped.entry_type, target),
+    unit_label: scoped.unit_label || defaultCatalogUnit(scoped.entry_type),
+    vat_rate: scoped.vat_rate ?? (vatSettings.enabled ? vatSettings.rate : 0),
     created_by: userId
   });
 }
 
-async function updateGroup(id, data, actor = {}) {
-  const current = await getGroup(id, actor);
+async function updateSaleCatalogEntry(id, data, actor = {}) {
+  const current = await model.findSaleCatalogEntryById(id);
+  assertRowInScope(current, actor, 'Sale catalog entry not found');
   const { store_id, ...updates } = data;
-  await validateGroupReferences(updates, current.store_id);
-
-  return model.updateGroup(id, updates);
+  const next = { ...current, ...updates, store_id: current.store_id };
+  await validateCatalogTarget(next, current.store_id);
+  if ((updates.entry_type || updates.item_id || updates.packaging_group_id || updates.status === 'active') && next.status === 'active') {
+    const duplicate = await model.findActiveSaleCatalogDuplicate(null, next, id);
+    if (duplicate) throw ApiError.conflict('An active offer for this item or group and fulfillment type already exists');
+  }
+  return model.updateSaleCatalogEntry(id, updates);
 }
 
-function deriveQuantity(parent, child) {
-  if (child.quantity_per_parent) {
-    return Number(child.quantity_per_parent);
-  }
-
-  const parentCapacity = componentCapacityKg(parent);
-  const childCapacity = componentCapacityKg(child);
-
-  if (parentCapacity && childCapacity) {
-    const quantity = Math.floor(parentCapacity / childCapacity);
-    if (quantity > 0) return quantity;
-  }
-
-  return null;
+async function getSaleCatalogEntry(id, actor = {}) {
+  const entry = await model.findSaleCatalogEntryById(id);
+  return assertRowInScope(entry, actor, 'Sale catalog entry not found');
 }
 
-function maxQuantityFromCapacity(parent, child) {
-  const parentCapacity = componentCapacityKg(parent);
-  const childCapacity = componentCapacityKg(child);
-
-  if (!parentCapacity || !childCapacity) return null;
-  return Math.floor(parentCapacity / childCapacity);
-}
-
-async function validateComponentPayload(group, data, current = null) {
-  const next = { ...current, ...data };
-  const hasCapacityInput = Object.prototype.hasOwnProperty.call(data, 'capacity_kg');
-  const level = next.level_key;
-
-  if (!LEVELS.includes(level)) {
-    throw ApiError.badRequest('Validation failed', [{ field: 'level_key', message: 'Invalid packaging level' }]);
-  }
-
-  const variant = await validateVariant(next.item_variant_id, 'item_variant_id', group.store_id, { itemType: 'packaging' });
-  next.variant_attributes_json = variant.attributes_json;
-
-  if (next.unit_symbol && !CAPACITY_UNIT_TO_KG[next.unit_symbol]) {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'unit_symbol', message: 'Unit must be g, kg, ton, or pc' }
-    ]);
-  }
-
-  const unitSymbol = next.unit_symbol || 'pc';
-  if (hasCapacityInput) {
-    next.capacity_kg = normalizeCapacityKg(next.capacity_kg, unitSymbol);
-  }
-
-  if (level === 'category' && next.parent_component_id) {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'parent_component_id', message: 'Category components cannot have a parent' }
-    ]);
-  }
-
-  let parent = null;
-
-  if (level !== 'category') {
-    if (!next.parent_component_id) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'parent_component_id', message: `${level.replace(/_/g, ' ')} requires a parent` }
-      ]);
+async function saleEntryAvailability(entry, warehouseId) {
+  if (!warehouseId) return { available_quantity: null, available: true };
+  if (NORMAL_ENTRY_TYPES.includes(entry.entry_type)) {
+    if (entry.entry_type === 'normal_carton') {
+      const rows = await query(
+        `SELECT COALESCE(SUM(GREATEST(
+           FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0) / l.kg_per_carton),
+           0
+         )), 0) AS quantity
+         FROM carton_stock_lots l
+         LEFT JOIN (
+           SELECT carton_stock_lot_id, SUM(inventory_quantity) AS reserved_inventory_quantity
+           FROM dispatch_line_allocations
+           WHERE allocation_type = 'carton_lot' AND status = 'reserved'
+           GROUP BY carton_stock_lot_id
+         ) reserved ON reserved.carton_stock_lot_id = l.id
+         WHERE l.warehouse_id = ? AND l.item_id = ?`,
+        [warehouseId, entry.item_id]
+      );
+      const quantity = decimal(rows[0]?.quantity || 0);
+      return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
     }
-
-    parent = await model.findComponentById(next.parent_component_id);
-    if (!parent || Number(parent.packaging_group_id) !== Number(group.id)) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'parent_component_id', message: 'Parent component must belong to this packaging group' }
-      ]);
+    const balance = await getBalanceSnapshot(warehouseId, entry.item_id);
+    if (entry.entry_type === 'normal_loose_unit') {
+      const unitWeight = decimal(entry.kg_per_carton).div(entry.loose_units_per_carton);
+      const quantity = unitWeight.eq(0) ? decimal(0) : balance.available_quantity.div(unitWeight).floor();
+      return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
     }
-
-    if (current && Number(parent.id) === Number(current.id)) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'parent_component_id', message: 'Component cannot be its own parent' }
-      ]);
-    }
-
-    if (parent.level_key !== PREVIOUS_LEVEL[level]) {
-      throw ApiError.badRequest('Validation failed', [
-        { field: 'parent_component_id', message: `${level.replace(/_/g, ' ')} can only be connected to ${PREVIOUS_LEVEL[level].replace(/_/g, ' ')}` }
-      ]);
-    }
-  }
-
-  const quantity = deriveQuantity(parent, next);
-  if (level !== 'category' && !quantity) {
-    throw ApiError.badRequest('Validation failed', [
-      {
-        field: 'quantity_per_parent',
-        message: 'Enter quantity per parent, or set parent and child capacities so it can be calculated'
-      }
-    ]);
-  }
-
-  const maxQuantity = level === 'category' ? null : maxQuantityFromCapacity(parent, next);
-  if (maxQuantity !== null && maxQuantity < 1) {
-    throw ApiError.badRequest('Validation failed', [
-      {
-        field: 'capacity_kg',
-        message: 'Child capacity must be lower than or equal to the parent capacity'
-      }
-    ]);
-  }
-  if (maxQuantity !== null && quantity > maxQuantity) {
-    throw ApiError.badRequest('Validation failed', [
-      {
-        field: 'quantity_per_parent',
-        message: `Quantity per parent cannot exceed ${maxQuantity} based on parent and child capacities`
-      }
-    ]);
-  }
-
-  return {
-    ...next,
-    parent_component_id: level === 'category' ? null : next.parent_component_id,
-    quantity_per_parent: level === 'category' ? null : quantity,
-    unit_symbol: unitSymbol,
-    capacity_kg: next.capacity_kg === undefined || next.capacity_kg === '' ? null : next.capacity_kg
-  };
-}
-
-async function addComponent(groupId, data, actor = {}) {
-  const group = await getGroup(groupId, actor);
-  const payload = await validateComponentPayload(group, data);
-
-  return model.createComponent({
-    store_id: group.store_id,
-    packaging_group_id: groupId,
-    parent_component_id: payload.parent_component_id,
-    level_key: payload.level_key,
-    item_variant_id: payload.item_variant_id,
-    unit_symbol: payload.unit_symbol,
-    quantity_per_parent: payload.quantity_per_parent,
-    capacity_kg: payload.capacity_kg,
-    sort_order: payload.sort_order || 0,
-    notes: payload.notes
-  });
-}
-
-async function updateComponent(id, data, actor = {}) {
-  const current = await model.findComponentById(id);
-  assertRowInScope(current, actor, 'Packaging component not found');
-  const group = await getGroup(current.packaging_group_id, actor);
-  const payload = await validateComponentPayload(group, data, current);
-
-  return model.updateComponent(id, {
-    parent_component_id: payload.parent_component_id,
-    level_key: payload.level_key,
-    item_variant_id: payload.item_variant_id,
-    unit_symbol: payload.unit_symbol,
-    quantity_per_parent: payload.quantity_per_parent,
-    capacity_kg: payload.capacity_kg,
-    sort_order: payload.sort_order,
-    notes: payload.notes
-  });
-}
-
-async function deleteComponent(id, actor = {}) {
-  const current = await model.findComponentById(id);
-  assertRowInScope(current, actor, 'Packaging component not found');
-  const childCount = await model.countComponentChildren(id);
-
-  if (childCount > 0) {
-    throw ApiError.conflict('Packaging component cannot be deleted while child components are connected');
-  }
-
-  await model.deleteComponent(id);
-}
-
-function buildChildrenByParent(components) {
-  const byParent = new Map();
-  for (const component of components) {
-    const key = component.parent_component_id ? Number(component.parent_component_id) : 0;
-    byParent.set(key, [...(byParent.get(key) || []), component]);
-  }
-  return byParent;
-}
-
-function buildEffectiveCapacityMap(components, byParent) {
-  const capacities = new Map();
-
-  function effectiveCapacity(component) {
-    const componentId = Number(component.id);
-    if (capacities.has(componentId)) return capacities.get(componentId);
-
-    const ownCapacity = componentCapacityKg(component);
-    let childCapacity = null;
-
-    for (const child of byParent.get(componentId) || []) {
-      const childEffectiveCapacity = effectiveCapacity(child);
-      const quantity = toPositiveNumber(child.quantity_per_parent);
-      if (childEffectiveCapacity && quantity) {
-        childCapacity = (childCapacity || 0) + childEffectiveCapacity * quantity;
-      }
-    }
-
-    const value = ownCapacity && childCapacity
-      ? Math.min(ownCapacity, childCapacity)
-      : ownCapacity || childCapacity;
-    capacities.set(componentId, value || null);
-    return capacities.get(componentId);
-  }
-
-  for (const component of components) {
-    effectiveCapacity(component);
-  }
-
-  return capacities;
-}
-
-function findPrimaryContainer(components, effectiveCapacityById) {
-  return components.find((component) => componentCapacityKg(component))
-    || components.find((component) => toPositiveNumber(effectiveCapacityById.get(Number(component.id))));
-}
-
-function calculateRequirements(group, charcoalQuantityKg, balances = [], options = {}) {
-  const components = [...(group.components || [])].sort((a, b) => {
-    const byLevel = LEVELS.indexOf(a.level_key) - LEVELS.indexOf(b.level_key);
-    if (byLevel !== 0) return byLevel;
-    return Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.id) - Number(b.id);
-  });
-
-  if (components.length === 0) {
-    throw ApiError.conflict('Packaging group must have at least one component');
-  }
-
-  const byParent = buildChildrenByParent(components);
-  const effectiveCapacityById = buildEffectiveCapacityMap(components, byParent);
-
-  const primary = findPrimaryContainer(components, effectiveCapacityById);
-  if (!primary) {
-    throw ApiError.conflict('Packaging group must include a container with capacity in kg');
-  }
-
-  const primaryEffectiveCapacity = effectiveCapacityById.get(Number(primary.id));
-  const primaryCapacity = decimal(primaryEffectiveCapacity);
-  if (primaryCapacity.lte(0)) {
-    throw ApiError.conflict('Primary container capacity must be greater than zero');
-  }
-
-  const primaryCount = decimal(charcoalQuantityKg).div(primaryCapacity).ceil();
-  const requiredById = new Map();
-  const balanceByVariant = new Map(
-    balances.map((balance) => [
-      Number(balance.item_variant_id),
-      Number(balance.quantity_on_hand || 0) - Number(balance.quantity_reserved || 0)
-    ])
-  );
-  const charcoalAvailableQuantity = options.stockChecked
-    ? options.charcoalAvailableQuantity || 0
-    : null;
-
-  function assign(component, parentQuantity) {
-    let requiredQuantity;
-    if (Number(component.id) === Number(primary.id)) {
-      requiredQuantity = primaryCount;
-    } else if (!component.parent_component_id) {
-      const rootCapacity = toPositiveNumber(effectiveCapacityById.get(Number(component.id)));
-      requiredQuantity = rootCapacity
-        ? decimal(charcoalQuantityKg).div(rootCapacity).ceil()
-        : decimal(1);
-    } else {
-      requiredQuantity = decimal(parentQuantity).mul(component.quantity_per_parent || 1);
-    }
-
-    requiredById.set(Number(component.id), requiredQuantity);
-    for (const child of byParent.get(Number(component.id)) || []) {
-      assign(child, requiredQuantity);
-    }
-  }
-
-  for (const root of byParent.get(0) || []) {
-    assign(root, decimal(1));
-  }
-
-  let totalCost = decimal(0);
-  const requirements = components.map((component) => {
-    const requiredQuantity = requiredById.get(Number(component.id)) || decimal(0);
-    const unitCost = decimal(component.cost || 0);
-    const total = requiredQuantity.mul(unitCost);
-    const availableQuantity = balanceByVariant.get(Number(component.item_variant_id)) || 0;
-    totalCost = totalCost.plus(total);
-
     return {
-      component_id: component.id,
-      parent_component_id: component.parent_component_id,
-      level_key: component.level_key,
-      item_variant_id: component.item_variant_id,
-      item_name: component.item_name,
-      variant_name: component.variant_name,
-      sku: component.sku,
-      unit_symbol: component.unit_symbol,
-      quantity_per_parent: component.quantity_per_parent,
-      capacity_kg: componentCapacityKg(component) ? toMoney(componentCapacityKg(component)) : null,
-      effective_capacity_kg: toMoney(effectiveCapacityById.get(Number(component.id)) || 0),
-      required_quantity: toMoney(requiredQuantity),
-      available_quantity: toMoney(availableQuantity),
-      shortage_quantity: toMoney(Math.max(0, Number(requiredQuantity) - availableQuantity)),
-      unit_cost: toMoney(unitCost),
-      total_cost: toMoney(total)
+      available_quantity: toMoney(balance.available_quantity),
+      available: balance.available_quantity.gt(0)
     };
-  });
-  const packagingCost = totalCost;
-  const charcoalUnitCost = decimal(options.charcoalUnitCost || 0);
-  const charcoalCost = decimal(charcoalQuantityKg).mul(charcoalUnitCost);
-  const totalMaterialCost = packagingCost.plus(charcoalCost);
-  const costPerPrimaryContainer = totalMaterialCost.div(primaryCount);
-
-  return {
-    packaging_group_id: group.id,
-    packaging_group_name: group.name,
-    charcoal_quantity_kg: toMoney(charcoalQuantityKg),
-    charcoal_available_quantity: charcoalAvailableQuantity === null ? null : toMoney(charcoalAvailableQuantity),
-    charcoal_shortage_quantity: charcoalAvailableQuantity === null
-      ? null
-      : toMoney(Math.max(0, Number(charcoalQuantityKg) - charcoalAvailableQuantity)),
-    primary_container_component_id: primary.id,
-    primary_container_item_name: primary.item_name,
-    primary_container_variant_name: primary.variant_name,
-    primary_container_sku: primary.sku,
-    primary_container_name: `${primary.item_name} - ${primary.variant_name}`,
-    primary_container_capacity_kg: toMoney(primaryEffectiveCapacity),
-    primary_container_count: Number(primaryCount.toFixed(0)),
-    charcoal_unit_cost: toMoney(charcoalUnitCost),
-    total_charcoal_cost: toMoney(charcoalCost),
-    total_packaging_cost: toMoney(packagingCost),
-    total_cost: toMoney(totalMaterialCost),
-    packaging_cost_per_kg: toMoney(packagingCost.div(charcoalQuantityKg)),
-    cost_per_kg: toMoney(totalMaterialCost.div(charcoalQuantityKg)),
-    cost_per_primary_container: toMoney(costPerPrimaryContainer),
-    cost_per_packaging_group: toMoney(costPerPrimaryContainer),
-    requirements
-  };
-}
-
-function assertNoRequirementShortages(calculation) {
-  if (decimal(calculation.charcoal_shortage_quantity || 0).gt(0)) {
-    throw ApiError.conflict('Packaging assignment cannot be saved while raw charcoal stock is short');
   }
-
-  const hasShortage = (calculation.requirements || []).some((requirement) => {
-    const quantity = decimal(requirement.required_quantity || 0);
-    if (quantity.lte(0)) return false;
-    if (!requirement.parent_component_id && !Number(requirement.capacity_kg || 0)) return false;
-    return decimal(requirement.shortage_quantity || 0).gt(0);
-  });
-  if (hasShortage) {
-    throw ApiError.conflict('Packaging assignment cannot be saved while required materials are short');
+  if (entry.entry_type === 'ready_outer_carton') {
+    const rows = await query(
+      `SELECT COUNT(*) AS quantity
+       FROM ready_stock_containers rsc
+       WHERE rsc.warehouse_id = ? AND rsc.packaging_group_id = ? AND rsc.status = 'full'
+         AND rsc.remaining_inner_quantity = rsc.initial_inner_quantity
+         AND NOT EXISTS (
+           SELECT 1
+           FROM dispatch_line_allocations dla
+           WHERE dla.ready_stock_container_id = rsc.id AND dla.status = 'reserved'
+         )`,
+      [warehouseId, entry.packaging_group_id]
+    );
+    const quantity = decimal(rows[0]?.quantity || 0);
+    return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
   }
-}
-
-async function calculateGroup(groupId, data, actor = {}, warehouseId = null) {
-  const group = await getGroup(groupId, actor);
-  if (warehouseId) {
-    await validateWarehouse(warehouseId, 'warehouse_id', group.store_id);
-  }
-  const charcoalVariantId = data.charcoal_variant_id || group.charcoal_variant_id || null;
-  if (charcoalVariantId) {
-    await validateVariant(charcoalVariantId, 'charcoal_variant_id', group.store_id);
-  }
-  const variantIds = group.components.map((component) => Number(component.item_variant_id));
-  if (charcoalVariantId) {
-    variantIds.push(Number(charcoalVariantId));
-  }
-  const balances = warehouseId
-    ? await model.getWarehouseVariantBalances(warehouseId, [...new Set(variantIds)])
-    : [];
-  const charcoalVariantAvailable = balances
-    .filter((balance) => Number(balance.item_variant_id) === Number(charcoalVariantId))
-    .reduce((sum, balance) => sum.plus(decimal(balance.quantity_on_hand || 0).minus(balance.quantity_reserved || 0)), decimal(0));
-
-  const charcoalQuantityKg = normalizeWeightToKg(data.charcoal_quantity_kg, data.charcoal_quantity_unit || 'kg');
-  const charcoalUnitCost = charcoalVariantId ? await model.getVariantCost(charcoalVariantId, warehouseId) : 0;
-  return calculateRequirements(group, charcoalQuantityKg, balances, {
-    charcoalUnitCost,
-    charcoalAvailableQuantity: charcoalVariantAvailable,
-    stockChecked: Boolean(warehouseId)
-  });
-}
-
-async function decreaseRawCharcoalStock(connection, assignment, data = {}, userId) {
-  const rawMovement = await stockService.decreaseStock(connection, {
-    storeId: assignment.store_id,
-    warehouseId: assignment.warehouse_id,
-    itemVariantId: assignment.charcoal_variant_id,
-    quantity: assignment.charcoal_quantity_kg,
-    quantityAlreadyNormalized: true,
-    unitCost: null,
-    movementType: 'production_consume',
-    referenceType: 'packaging_assignment_raw',
-    referenceId: assignment.id,
-    notes: data.notes || assignment.notes || 'Packaging assignment raw charcoal consumption',
-    createdBy: userId
-  });
-
-  return [{
-    role: 'raw_charcoal',
-    item_variant_id: assignment.charcoal_variant_id,
-    required_quantity: toMoney(assignment.charcoal_quantity_kg),
-    stock_movement_id: rawMovement.stock_movement_id,
-    quantity_after: rawMovement.quantity_after
-  }];
-}
-
-async function consumeAssignmentStock(connection, assignment, data = {}, userId) {
-  const calculation = parseJson(assignment.calculation_json, assignment.calculation_json);
-  const requirements = calculation?.requirements || [];
-
-  if (!requirements.length) {
-    throw ApiError.conflict('Packaging assignment has no calculated requirements');
-  }
-
-  const movements = [];
-  movements.push(...await decreaseRawCharcoalStock(connection, assignment, data, userId));
-
-  for (const requirement of requirements) {
-    const quantity = decimal(requirement.required_quantity || 0);
-    if (quantity.lte(0)) continue;
-    if (!requirement.parent_component_id && !Number(requirement.capacity_kg || 0)) continue;
-
-    const movement = await stockService.decreaseStock(connection, {
-      storeId: assignment.store_id,
-      warehouseId: assignment.warehouse_id,
-      itemVariantId: requirement.item_variant_id,
-      quantity,
-      unitCost: requirement.unit_cost,
-      movementType: 'production_consume',
-      referenceType: 'packaging_assignment',
-      referenceId: assignment.id,
-      notes: data.notes || assignment.notes || 'Packaging assignment consumption',
-      createdBy: userId
-    });
-
-    movements.push({
-      role: 'packaging',
-      component_id: requirement.component_id,
-      item_variant_id: requirement.item_variant_id,
-      required_quantity: toMoney(quantity),
-      stock_movement_id: movement.stock_movement_id,
-      quantity_after: movement.quantity_after
-    });
-  }
-
-  const producedQuantity = decimal(assignment.primary_container_count || calculation.primary_container_count || 0);
-  if (producedQuantity.lte(0)) {
-    throw ApiError.conflict('Primary container count must be greater than zero');
-  }
-
-  await model.updateAssignment(connection, assignment.id, {
-    status: 'consumed',
-    produced_quantity: toMoney(producedQuantity),
-    consumed_at: new Date(),
-    consumed_by: userId,
-    consumed_movements_json: movements
-  });
-
-  return movements;
-}
-
-async function createAssignment(data, userId, actor = {}) {
-  const scoped = scopedData(data, actor);
-  const group = await getGroup(scoped.packaging_group_id, actor);
-  await validateWarehouse(scoped.warehouse_id, 'warehouse_id', scoped.store_id);
-  await validateVariant(scoped.charcoal_variant_id, 'charcoal_variant_id', scoped.store_id);
-  if (scoped.production_batch_id) {
-    const batch = await productionModel.findProductionBatchById(scoped.production_batch_id);
-    assertSameStore(batch, scoped.store_id, 'production_batch_id', 'Production batch does not belong to this store');
-  }
-
-  if (group.charcoal_variant_id && Number(group.charcoal_variant_id) !== Number(scoped.charcoal_variant_id)) {
-    throw ApiError.badRequest('Validation failed', [
-      { field: 'charcoal_variant_id', message: 'Charcoal variant must match the packaging group default' }
-    ]);
-  }
-
-  const charcoalQuantityKg = normalizeWeightToKg(scoped.charcoal_quantity_kg, scoped.charcoal_quantity_unit || 'kg');
-  const calculation = await calculateGroup(group.id, {
-    ...scoped,
-    charcoal_quantity_kg: charcoalQuantityKg,
-    charcoal_quantity_unit: 'kg'
-  }, actor, scoped.warehouse_id);
-  assertNoRequirementShortages(calculation);
-
-  const assignmentId = await withTransaction(async (connection) => {
-    const assignment = await model.createAssignment({
-      store_id: scoped.store_id,
-      packaging_group_id: scoped.packaging_group_id,
-      warehouse_id: scoped.warehouse_id,
-      charcoal_variant_id: scoped.charcoal_variant_id,
-      output_item_variant_id: scoped.output_item_variant_id || null,
-      charcoal_quantity_kg: toMoney(charcoalQuantityKg),
-      primary_container_count: calculation.primary_container_count,
-      total_packaging_cost: calculation.total_packaging_cost,
-      cost_per_kg: calculation.cost_per_kg,
-      status: 'calculated',
-      produced_quantity: toMoney(calculation.primary_container_count),
-      production_batch_id: scoped.production_batch_id || null,
-      calculation_json: calculation,
-      notes: scoped.notes,
-      created_by: userId
-    }, connection);
-
-    await consumeAssignmentStock(connection, assignment, { notes: scoped.notes }, userId);
-    return assignment.id;
-  });
-
-  return getAssignment(assignmentId, actor);
-}
-
-async function getAssignment(id, actor = {}) {
-  const assignment = await model.findAssignmentById(id);
-  assertRowInScope(assignment, actor, 'Packaging assignment not found');
-
-  return {
-    ...assignment,
-    calculation_json: parseJson(assignment.calculation_json, null),
-    consumed_movements_json: parseJson(assignment.consumed_movements_json, null)
-  };
-}
-
-async function consumeAssignment(id, data = {}, userId, actor = {}) {
-  const assignment = await getAssignment(id, actor);
-
-  if (!['calculated', 'batched'].includes(assignment.status)) {
-    throw ApiError.conflict('Only calculated or batched packaging assignments can be consumed');
-  }
-
-  await withTransaction(async (connection) => {
-    await consumeAssignmentStock(connection, assignment, data, userId);
-  });
-
-  return getAssignment(id, actor);
-}
-
-async function hardDeleteAssignment(id, actor = {}) {
-  await getAssignment(id, actor);
-  await runHardDelete(
-    () => model.deleteAssignment(id),
-    'Packaging assignment cannot be hard-deleted while related history references it'
+  const rows = await query(
+    `SELECT COALESCE(SUM(GREATEST(
+       rsc.remaining_inner_quantity - COALESCE(reserved.reserved_inner_quantity, 0),
+       0
+     )), 0) AS quantity
+     FROM ready_stock_containers rsc
+     LEFT JOIN (
+       SELECT dla.ready_stock_container_id,
+         SUM(CASE WHEN di.fulfillment_type = 'ready_inner_unit' THEN dla.allocated_quantity ELSE 0 END) AS reserved_inner_quantity,
+         SUM(CASE WHEN di.fulfillment_type = 'ready_outer_carton' THEN dla.allocated_quantity ELSE 0 END) AS reserved_outer_quantity
+       FROM dispatch_line_allocations dla
+       JOIN dispatch_items di ON di.id = dla.dispatch_item_id
+       WHERE dla.status = 'reserved' AND dla.ready_stock_container_id IS NOT NULL
+       GROUP BY dla.ready_stock_container_id
+     ) reserved ON reserved.ready_stock_container_id = rsc.id
+     WHERE rsc.warehouse_id = ? AND rsc.packaging_group_id = ?
+       AND rsc.status IN ('full', 'partial')
+       AND COALESCE(reserved.reserved_outer_quantity, 0) = 0`,
+    [warehouseId, entry.packaging_group_id]
   );
+  const quantity = decimal(rows[0]?.quantity || 0);
+  return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
+}
+
+async function listSaleCatalogEntries(input, actor = {}, options = {}) {
+  const scoped = scopedQuery(input, actor);
+  const result = await model.listSaleCatalogEntries(scoped);
+  if (!input.warehouse_id) return result;
+  const entries = await Promise.all(result.rows.map(async (entry) => ({
+    ...entry,
+    ...(await saleEntryAvailability(entry, input.warehouse_id))
+  })));
+  return {
+    ...result,
+    rows: options.hideQuantities
+      ? entries.map(({ available_quantity, ...entry }) => entry)
+      : entries
+  };
+}
+
+async function listPosCatalog(input, actor = {}) {
+  const result = await listSaleCatalogEntries({
+    ...input,
+    status: 'active',
+    is_pos_active: 1
+  }, actor, { hideQuantities: true });
+  return {
+    ...result,
+    rows: result.rows.filter((entry) => entry.available)
+  };
 }
 
 module.exports = {
-  addComponent,
-  calculateGroup,
-  createAssignment,
-  createGroup,
-  deleteComponent,
-  deleteGroup: async (id, actor = {}) => {
-    await getGroup(id, actor);
-    return model.deactivateGroup(id);
+  assertCatalogOffer: async (id, actor = {}) => {
+    const entry = await getSaleCatalogEntry(id, actor);
+    if (entry.status !== 'active') throw ApiError.conflict('Sale catalog entry is inactive');
+    return entry;
   },
-  hardDeleteGroup: async (id, actor = {}) => {
-    await getGroup(id, actor);
-    return runHardDelete(
-      () => model.hardDeleteGroup(id),
-      'Packaging group cannot be hard-deleted while assignments reference it'
-    );
+  completePackaging,
+  createGroup,
+  createSaleCatalogEntry,
+  deleteGroup: async (id, actor = {}) => {
+    const group = await model.findGroupById(id);
+    assertRowInScope(group, actor, 'Packaging group not found');
+    await model.deactivateGroup(id);
   },
   getGroup,
-  getAssignment,
-  hardDeleteAssignment,
-  listAssignments: (query, actor = {}) => {
-    const pagination = getPagination(query);
-    return model.listAssignments(scopedQuery(query, actor)).then((result) =>
-      pagedResult(
-        'packaging_assignments',
-        result.rows.map((row) => ({
-          ...row,
-          calculation_json: parseJson(row.calculation_json, null),
-          consumed_movements_json: parseJson(row.consumed_movements_json, null)
-        })),
-        result.meta.total,
-        pagination
-      )
-    );
+  getOperation: async (id, actor = {}) => {
+    const operation = await model.findOperationById(id);
+    return assertRowInScope(operation, actor, 'Packaging operation not found');
   },
-  listGroups: (query, actor = {}) => {
-    const pagination = getPagination(query);
-    return model.listGroups(scopedQuery(query, actor)).then((result) =>
-      pagedResult('packaging_groups', result.rows, result.meta.total, pagination)
-    );
-  },
-  consumeAssignment,
-  updateComponent,
-  updateGroup
+  getSaleCatalogEntry,
+  listGroups: async (input, actor = {}) => model.listGroups(scopedQuery(input, actor)),
+  listOperations: async (input, actor = {}) => model.listOperations(scopedQuery(input, actor)),
+  listPosCatalog,
+  listReadyStock: async (input, actor = {}) => model.listReadyStockContainers(scopedQuery(input, actor)),
+  listSaleCatalogEntries,
+  previewGroup,
+  replaceComponents,
+  updateGroup,
+  updateSaleCatalogEntry,
+  _private: {
+    buildPackagingPreview,
+    calculateInputRequirement,
+    validateFlatComponents
+  }
 };

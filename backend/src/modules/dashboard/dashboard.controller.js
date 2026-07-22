@@ -2,7 +2,7 @@ const service = require('./dashboard.service');
 const { successResponse } = require('../../utils/response');
 
 async function getDashboard(req, res) {
-  const dashboard = await service.getDashboard(req.user);
+  const dashboard = await service.getDashboard(req.user, req.query);
   return successResponse(res, {
     message: 'Dashboard fetched',
     data: { dashboard }

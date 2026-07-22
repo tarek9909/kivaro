@@ -7,7 +7,6 @@ describe('store-scoped update schemas', () => {
     ['inventory category', inventorySchemas.updateCategorySchema, { name: 'Retail' }],
     ['inventory unit', inventorySchemas.updateUnitSchema, { symbol: 'kg' }],
     ['inventory item', inventorySchemas.updateItemSchema, { name: 'Premium charcoal' }],
-    ['inventory variant', inventorySchemas.updateVariantSchema, { variant_name: 'Large bag' }],
     ['customer', customerSchemas.updateCustomerSchema, { name: 'Corner Market' }],
     ['commission rule', commissionSchemas.ruleUpdateSchema, { name: 'Monthly plan' }]
   ])('%s update strips store_id from payloads', (_label, schema, body) => {

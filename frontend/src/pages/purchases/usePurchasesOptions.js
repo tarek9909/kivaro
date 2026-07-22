@@ -21,10 +21,10 @@ export function usePurchaseOrdersOptions(enabled = true) {
   });
 }
 
-export function useCashAccountsOptions(enabled = true) {
+export function useCashAccountsOptions(enabled = true, params = {}) {
   return useQuery({
-    queryKey: ['purchases', 'options', 'cash-accounts'],
-    queryFn: () => api.accounting.cashAccounts.list(PAGE),
+    queryKey: ['purchases', 'options', 'cash-accounts', params],
+    queryFn: () => api.accounting.cashAccounts.list({ ...PAGE, status: 'active', ...params }),
     staleTime: 60_000,
     enabled
   });

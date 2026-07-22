@@ -46,8 +46,9 @@ export function getDebtStatusTone(status) {
 
 export const RECEIPT_TYPES = [
   { value: 'sale', label: 'Sale' },
-  { value: 'debt', label: 'Debt' },
-  { value: 'payment', label: 'Payment' }
+  { value: 'payment', label: 'Payment' },
+  { value: 'credit', label: 'Credit applied' },
+  { value: 'other', label: 'Other' }
 ];
 
 export const RECEIPT_TYPE_FILTER_OPTIONS = [

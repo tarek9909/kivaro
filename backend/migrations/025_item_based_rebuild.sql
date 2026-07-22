@@ -1,0 +1,5 @@
+-- Clean-baseline ledger entry.
+--
+-- The item-based schema is intentionally supplied by charcoal_erp_clean.sql after
+-- a verified archive/reset.  db:migrate validates this row and will refuse to run
+-- the legacy 001–024 migrations against the new baseline.

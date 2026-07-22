@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { createDatabaseConnection, ensureDatabaseExists } = require('./lib');
+const {
+  createDatabaseConnection,
+  databaseTables,
+  ensureDatabaseExists,
+  TARGET_BASELINE_MIGRATION
+} = require('./lib');
 
 const migrationsDir = path.resolve(__dirname, '..', '..', 'migrations');
 
@@ -12,6 +17,13 @@ function readMigrations() {
   return fs.readdirSync(migrationsDir)
     .filter((file) => file.endsWith('.sql'))
     .sort()
+    // The historical 001-024 files describe the retired variant/batch model.
+    // They are deliberately retained as repository history, but a clean
+    // item-based baseline must never replay them.
+    .filter((file) => {
+      const match = file.match(/^(\d+)_/);
+      return match && Number(match[1]) >= 25;
+    })
     .map((file) => ({
       name: file,
       sql: fs.readFileSync(path.join(migrationsDir, file), 'utf8')
@@ -32,13 +44,38 @@ async function appliedMigrations(connection) {
   return new Set(rows.map((row) => row.migration_name));
 }
 
-async function markMigrationsApplied(connection, migrations) {
-  for (const migration of migrations) {
-    await connection.execute(
-      'INSERT IGNORE INTO schema_migrations (migration_name) VALUES (?)',
-      [migration.name]
+async function assertTargetBaseline(connection) {
+  const tables = new Set(await databaseTables(connection));
+  const required = [
+    'items',
+    'item_stock_balances',
+    'item_stock_movements',
+    'carton_stock_lots',
+    'open_carton_shelves',
+    'packaging_groups',
+    'ready_stock_containers',
+    'dispatch_line_allocations',
+    'invoices',
+    'pos_orders'
+  ];
+  const missing = required.filter((table) => !tables.has(table));
+
+  if (missing.length) {
+    throw new Error(
+      `Legacy or incomplete schema detected (missing: ${missing.join(', ')}). ` +
+      'This release requires a verified archive and clean database reset; do not run legacy migrations.'
     );
   }
+
+  const applied = await appliedMigrations(connection);
+  if (!applied.has(TARGET_BASELINE_MIGRATION)) {
+    throw new Error(
+      `Target baseline migration ${TARGET_BASELINE_MIGRATION} is missing from schema_migrations. ` +
+      'Re-import the clean baseline instead of marking migrations manually.'
+    );
+  }
+
+  return applied;
 }
 
 function splitStatements(sql) {
@@ -97,20 +134,10 @@ async function runMigrations({ dryRun = false } = {}) {
   try {
     await ensureMigrationsTable(connection);
 
-    if (bootstrap.created) {
-      await markMigrationsApplied(connection, migrations);
-      return {
-        pending: [],
-        applied: [],
-        bootstrapped: true,
-        database: bootstrap.database,
-        schemaPath: bootstrap.schemaPath,
-        recordedMigrations: migrations.map((migration) => migration.name)
-      };
-    }
-
-    const applied = await appliedMigrations(connection);
-    const pending = migrations.filter((migration) => !applied.has(migration.name));
+    const applied = await assertTargetBaseline(connection);
+    const pending = migrations.filter(
+      (migration) => migration.name !== TARGET_BASELINE_MIGRATION && !applied.has(migration.name)
+    );
 
     if (dryRun) {
       return { pending: pending.map((migration) => migration.name), applied: [], bootstrapped: false };
@@ -133,7 +160,13 @@ async function runMigrations({ dryRun = false } = {}) {
       }
     }
 
-    return { pending: pending.map((migration) => migration.name), applied: appliedNow, bootstrapped: false };
+    return {
+      pending: pending.map((migration) => migration.name),
+      applied: appliedNow,
+      bootstrapped: Boolean(bootstrap.created),
+      database: bootstrap.created ? bootstrap.database : undefined,
+      schemaPath: bootstrap.created ? bootstrap.schemaPath : undefined
+    };
   } finally {
     await connection.end();
   }
@@ -157,7 +190,7 @@ async function main() {
   if (!result.applied.length) {
     if (result.bootstrapped) {
       console.log(`Database ${result.database} created from ${result.schemaPath}`);
-      console.log(`Recorded ${result.recordedMigrations.length} existing migrations as applied.`);
+      console.log(`Verified baseline migration ${TARGET_BASELINE_MIGRATION}.`);
       return;
     }
 

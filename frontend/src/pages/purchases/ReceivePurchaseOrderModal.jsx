@@ -11,16 +11,20 @@ import {
 } from '@/pages/inventory/stockUnits.js';
 
 function formatEntryQuantity(value, item) {
-  const unit = getEntryUnitLabel(item);
+  const unit = item?.stock_mode === 'carton_weight' ? 'cartons' : getEntryUnitLabel(item);
   const formatted = formatNumber(value, { maximumFractionDigits: 4 });
   return unit ? `${formatted} ${unit}` : formatted;
 }
 
 function stockEquivalent(value, item) {
   const quantity = Number(value);
-  if (!item || Number.isNaN(quantity) || item.base_unit_type !== 'weight') {
+  if (!item || Number.isNaN(quantity)) {
     return '';
   }
+  if (item.stock_mode === 'carton_weight') {
+    return `${formatNumber(quantity * Number(item.kg_per_carton || 0), { maximumFractionDigits: 4 })} kg / ${formatNumber(quantity * Number(item.loose_units_per_carton || 0))} loose units`;
+  }
+  if (item.base_unit_type !== 'weight') return '';
   return formatStockQuantity(quantity * Number(item.base_unit_conversion_to_base || 1), item);
 }
 
@@ -41,6 +45,9 @@ function buildLines(purchaseOrder) {
       base_unit_symbol: item.base_unit_symbol,
       base_unit_type: item.base_unit_type,
       base_unit_conversion_to_base: item.base_unit_conversion_to_base,
+      stock_mode: item.stock_mode,
+      kg_per_carton: item.kg_per_carton,
+      loose_units_per_carton: item.loose_units_per_carton,
       ordered_quantity: Number(item.ordered_quantity),
       received_quantity: Number(item.received_quantity || 0),
       remaining,
@@ -111,6 +118,8 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
         if (line.receive_quantity && value > 0) {
           if (value > line.remaining) {
             next[`items.${index}.receive_quantity`] = `Cannot exceed remaining ${line.remaining}.`;
+          } else if (line.stock_mode === 'carton_weight' && !Number.isInteger(value)) {
+            next[`items.${index}.receive_quantity`] = 'Carton count must be a whole number.';
           }
           if (line.unit_cost !== '' && line.unit_cost !== null && Number(line.unit_cost) < 0) {
             next[`items.${index}.unit_cost`] = 'Unit cost cannot be negative.';
@@ -130,12 +139,14 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
       received_date: receivedDate,
       notes: notes?.trim() || null,
       items: includedLines.map((line) => {
-        const item = {
-          purchase_order_item_id: Number(line.purchase_order_item_id),
-          received_quantity: Number(line.receive_quantity)
-        };
+        const item = { purchase_order_item_id: Number(line.purchase_order_item_id) };
+        if (line.stock_mode === 'carton_weight') {
+          item.carton_count = Number(line.receive_quantity);
+        } else {
+          item.quantity = Number(line.receive_quantity);
+        }
         if (line.unit_cost !== '' && line.unit_cost !== null && line.unit_cost !== undefined) {
-          item.unit_cost = Number(line.unit_cost);
+          item[line.stock_mode === 'carton_weight' ? 'cost_per_carton' : 'unit_cost'] = Number(line.unit_cost);
         }
         return item;
       })
@@ -153,7 +164,7 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
           ? `Receive PO ${purchaseOrder.po_number || `#${purchaseOrder.id}`}`
           : 'Receive purchase order'
       }
-      description="Post a receipt against the order. Quantities are in the item's base unit and default to the remaining amount on each line."
+      description="Post a receipt against the order. Carton-weight lines receive a whole carton count and cost per carton; other lines use their base unit."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -228,10 +239,10 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <Input
-                  label={`Receive quantity${getEntryUnitLabel(line) ? ` (${getEntryUnitLabel(line)})` : ''}`}
+                  label={line.stock_mode === 'carton_weight' ? 'Receive carton count' : `Receive quantity${getEntryUnitLabel(line) ? ` (${getEntryUnitLabel(line)})` : ''}`}
                   type="number"
                   min="0"
-                  step="0.0001"
+                  step={line.stock_mode === 'carton_weight' ? '1' : '0.0001'}
                   value={line.receive_quantity}
                   onChange={(event) =>
                     updateLine(index, 'receive_quantity', event.target.value)
@@ -247,7 +258,7 @@ export function ReceivePurchaseOrderModal({ open, onClose, purchaseOrder }) {
                   }
                 />
                 <Input
-                  label="Unit cost"
+                  label={line.stock_mode === 'carton_weight' ? 'Cost per carton' : 'Unit cost'}
                   type="number"
                   min="0"
                   step="0.0001"

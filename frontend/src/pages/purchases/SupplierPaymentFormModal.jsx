@@ -51,7 +51,7 @@ export function SupplierPaymentFormModal({ open, onClose }) {
 
   const suppliersQuery = useSuppliersOptions(open && canSeePurchaseOrders);
   const purchaseOrdersQuery = usePurchaseOrdersOptions(open && canSeePurchaseOrders);
-  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
+  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts, { cash_flow_direction: 'outgoing' });
 
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
   const purchaseOrders = purchaseOrdersQuery.data?.data?.purchase_orders || [];

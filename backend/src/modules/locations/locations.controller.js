@@ -1,5 +1,6 @@
 const service = require('./locations.service');
 const { successResponse } = require('../../utils/response');
+const { sendCsv } = require('../../utils/csv');
 
 function list(method, key, message) {
   return async (req, res) => {
@@ -41,12 +42,26 @@ async function assignSalesmanSublocation(req, res) {
   successResponse(res, { statusCode: 201, message: 'Salesman assigned to sublocation', data: { assignment } });
 }
 
+async function replaceSalesmanSublocations(req, res) {
+  const result = await service.replaceSalesmanSublocations(req.params.id, req.body, req.user);
+  successResponse(res, {
+    message: 'Salesman sublocation assignments updated',
+    data: result
+  });
+}
+
 async function listSalesmanSublocations(req, res) {
   const assignments = await service.listSalesmanSublocations(req.params.id, req.query, req.user);
   successResponse(res, {
     message: 'Salesman assignments fetched',
     data: { assignments }
   });
+}
+
+async function exportSalesmen(req, res) {
+  const rows = await service.exportSalesmen(req.query, req.user);
+  const dataset = req.query.dataset || 'performance';
+  return sendCsv(res, `salesmen-${dataset}.csv`, rows);
 }
 
 async function unassignSalesmanSublocation(req, res) {
@@ -90,10 +105,12 @@ module.exports = {
   getLocation: get(service.getLocation, 'location', 'Location fetched'),
   getLocationTarget: get(service.getLocationTarget, 'location_target', 'Location target fetched'),
   getSalesman: get(service.getSalesman, 'salesman', 'Salesman fetched'),
+  exportSalesmen,
   listLocationSublocations,
   listLocationTargets: list(service.listLocationTargets, 'location_targets', 'Location targets fetched'),
   listLocations: list(service.listLocations, 'locations', 'Locations fetched'),
   listSalesmanSublocations,
+  replaceSalesmanSublocations,
   listSalesmen: list(service.listSalesmen, 'salesmen', 'Salesmen fetched'),
   listSublocations: list(service.listSublocations, 'sublocations', 'Sublocations fetched'),
   updateLocation: update(service.updateLocation, 'location', 'Location updated'),

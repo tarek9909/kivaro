@@ -27,15 +27,6 @@ export function useReportItems(enabled = true) {
   });
 }
 
-export function useReportVariants(enabled = true) {
-  return useQuery({
-    queryKey: ['reports', 'options', 'variants'],
-    queryFn: () => api.inventory.variants.list({ ...PAGE, status: 'active' }),
-    staleTime: 60_000,
-    enabled
-  });
-}
-
 export function useReportCustomers(enabled = true) {
   return useQuery({
     queryKey: ['reports', 'options', 'customers'],

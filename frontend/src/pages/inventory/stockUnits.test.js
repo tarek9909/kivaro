@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatStockQuantity, getEntryUnitLabel, getStockUnitLabel } from './stockUnits.js';
+import { formatStockQuantity, getEntryUnitLabel, getStockMode, getStockUnitLabel } from './stockUnits.js';
 
 describe('stock unit formatting', () => {
   it('formats quantity units as whole pieces', () => {
@@ -25,5 +25,17 @@ describe('stock unit formatting', () => {
       base_unit_type: 'weight',
       base_unit_symbol: 'ton'
     })).toBe('ton');
+  });
+
+  it('uses item stock modes over legacy unit metadata', () => {
+    expect(getStockMode({ item_kind: 'packaging', stock_mode: 'piece' })).toBe('piece');
+    expect(formatStockQuantity('12.5', {
+      stock_mode: 'carton_weight',
+      base_unit_symbol: 'pc'
+    })).toBe('12.5 kg');
+    expect(formatStockQuantity('12.5', {
+      stock_mode: 'piece',
+      base_unit_symbol: 'pc'
+    })).toBe('13 pc');
   });
 });

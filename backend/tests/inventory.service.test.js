@@ -1,17 +1,12 @@
 jest.mock('../src/modules/inventory/inventory.model', () => ({
+  countItemMovements: jest.fn(),
   createItem: jest.fn(),
-  createItemStockBalance: jest.fn(),
-  createItemStockAdjustment: jest.fn(),
-  createVariant: jest.fn(),
   findCategoryById: jest.fn(),
   findItemById: jest.fn(),
   findUnitById: jest.fn(),
-  findVariantById: jest.fn(),
   findWarehouseById: jest.fn(),
-  getItemStockBalanceForUpdate: jest.fn(),
-  getOrCreateItemStockBalanceForUpdate: jest.fn(),
-  hardDeleteItemCascade: jest.fn(),
-  updateItemStockBalance: jest.fn()
+  hasItemStock: jest.fn(),
+  updateItem: jest.fn()
 }));
 
 jest.mock('../src/modules/locations/locations.model', () => ({
@@ -19,26 +14,33 @@ jest.mock('../src/modules/locations/locations.model', () => ({
 }));
 
 jest.mock('../src/modules/inventory/stock.service', () => ({
-  adjustStock: jest.fn(),
-  decreaseStock: jest.fn(),
-  increaseStock: jest.fn()
+  adjustItemStock: jest.fn(),
+  increaseItemStock: jest.fn(),
+  receiveCartonStock: jest.fn()
 }));
 
 jest.mock('../src/utils/transaction', () => ({
   withTransaction: jest.fn(async (callback) => callback({ execute: jest.fn() }))
 }));
 
+jest.mock('../src/middleware/audit.middleware', () => ({
+  writeAuditLog: jest.fn()
+}));
+
 const inventoryModel = require('../src/modules/inventory/inventory.model');
 const stockService = require('../src/modules/inventory/stock.service');
 const service = require('../src/modules/inventory/inventory.service');
 
-describe('inventory service packaging items', () => {
+const actor = { store_id: 1 };
+
+describe('canonical item configuration service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     inventoryModel.findCategoryById.mockResolvedValue({ id: 1, store_id: 1 });
+    inventoryModel.findWarehouseById.mockResolvedValue({ id: 3, store_id: 1, status: 'active' });
   });
 
-  test('requires packaging materials to use pc as their stock unit', async () => {
+  test('requires packaging materials to use a pc quantity unit', async () => {
     inventoryModel.findUnitById.mockResolvedValue({
       id: 2,
       store_id: 1,
@@ -51,342 +53,172 @@ describe('inventory service packaging items', () => {
       base_unit_id: 2,
       name: '400g bag',
       code: 'BAG-400G',
-      item_type: 'packaging',
-      tracking_type: 'stocked'
-    }, 5, { store_id: 1 })).rejects.toMatchObject({
+      item_kind: 'packaging',
+      stock_mode: 'piece'
+    }, 5, actor)).rejects.toMatchObject({
       statusCode: 400,
-      errors: expect.arrayContaining([
-        expect.objectContaining({
-          field: 'base_unit_id',
-          message: 'Packaging materials must use pc as their stock unit'
-        })
-      ])
+      errors: [expect.objectContaining({ field: 'base_unit_id' })]
     });
-
     expect(inventoryModel.createItem).not.toHaveBeenCalled();
   });
-});
 
-describe('inventory service item quantity allocation', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    inventoryModel.findCategoryById.mockResolvedValue({ id: 1, store_id: 1 });
+  test('creates carton-weight initial stock through a carton receipt and WAC flow', async () => {
     inventoryModel.findUnitById.mockResolvedValue({
       id: 2,
       store_id: 1,
-      symbol: 'pc',
-      unit_type: 'quantity',
-      conversion_to_base: 1
+      symbol: 'kg',
+      unit_type: 'weight'
     });
-    inventoryModel.findWarehouseById.mockResolvedValue({
-      id: 3,
+    inventoryModel.createItem.mockResolvedValue({
+      id: 10,
       store_id: 1,
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      kg_per_carton: 6,
+      loose_units_per_carton: 15,
       status: 'active'
-    });
-  });
-
-  test('creates an item with an item-level quantity pool', async () => {
-    inventoryModel.createItem.mockResolvedValue({
-      id: 10,
-      store_id: 1,
-      name: 'Retail charcoal',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: 1
-    });
-    inventoryModel.createItemStockBalance.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '100.0000'
-    });
-
-    const item = await service.createItem({
-      category_id: 1,
-      base_unit_id: 2,
-      warehouse_id: 3,
-      initial_quantity: 100,
-      name: 'Retail charcoal',
-      code: 'RET-CHAR',
-      item_type: 'finished_product',
-      tracking_type: 'stocked'
-    }, 5, { store_id: 1 });
-
-    expect(item.id).toBe(10);
-    expect(inventoryModel.createItemStockBalance).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        store_id: 1,
-        warehouse_id: 3,
-        item_id: 10,
-        quantity_on_hand: '100.0000'
-      })
-    );
-  });
-
-  test('converts weight initial quantities to kg for the item pool', async () => {
-    inventoryModel.findUnitById.mockResolvedValue({
-      id: 4,
-      store_id: 1,
-      symbol: 'g',
-      unit_type: 'weight',
-      conversion_to_base: 0.001
-    });
-    inventoryModel.createItem.mockResolvedValue({
-      id: 10,
-      store_id: 1,
-      name: 'Raw charcoal',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: 0.001
-    });
-    inventoryModel.createItemStockBalance.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '1.5000'
     });
 
     await service.createItem({
       category_id: 1,
-      base_unit_id: 4,
+      base_unit_id: 2,
+      warehouse_id: 3,
+      initial_cartons: 10,
+      initial_cost_per_carton: 12,
+      name: 'Raw charcoal',
+      code: 'RAW-6KG',
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      kg_per_carton: 6,
+      loose_units_per_carton: 15,
+      default_cost: 2
+    }, 5, actor);
+
+    expect(inventoryModel.createItem).toHaveBeenCalledWith(expect.objectContaining({
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      max_content_weight_kg: null,
+      created_by: 5
+    }), expect.anything());
+    expect(stockService.receiveCartonStock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      itemId: 10,
+      cartonCount: expect.anything(),
+      costPerCarton: 12,
+      movementType: 'opening_balance'
+    }));
+  });
+
+  test('does not allow a carton-weight item to receive initial kg directly', async () => {
+    inventoryModel.findUnitById.mockResolvedValue({
+      id: 2,
+      store_id: 1,
+      symbol: 'kg',
+      unit_type: 'weight'
+    });
+
+    await expect(service.createItem({
+      category_id: 1,
+      base_unit_id: 2,
+      warehouse_id: 3,
+      initial_quantity: 6,
+      name: 'Raw charcoal',
+      code: 'RAW-6KG',
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      kg_per_carton: 6,
+      loose_units_per_carton: 15
+    }, 5, actor)).rejects.toMatchObject({
+      statusCode: 400,
+      errors: [expect.objectContaining({ field: 'initial_quantity' })]
+    });
+  });
+
+  test('normalizes non-carton weight entry units to canonical kg stock', async () => {
+    inventoryModel.findUnitById.mockResolvedValue({
+      id: 2,
+      store_id: 1,
+      symbol: 'g',
+      unit_type: 'weight',
+      conversion_to_base: '0.00100000'
+    });
+    inventoryModel.createItem.mockResolvedValue({
+      id: 11,
+      store_id: 1,
+      item_kind: 'normal',
+      stock_mode: 'weight',
+      status: 'active',
+      default_cost: 2
+    });
+
+    await service.createItem({
+      category_id: 1,
+      base_unit_id: 2,
       warehouse_id: 3,
       initial_quantity: 1500,
-      name: 'Raw charcoal',
-      code: 'RAW-G',
-      item_type: 'raw_charcoal',
-      tracking_type: 'stocked'
-    }, 5, { store_id: 1 });
+      initial_unit_cost: 2,
+      name: 'Fine charcoal',
+      code: 'FINE-G',
+      item_kind: 'normal',
+      stock_mode: 'weight'
+    }, 5, actor);
 
-    expect(inventoryModel.createItemStockBalance).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        item_id: 10,
-        quantity_on_hand: '1.5000'
-      })
-    );
+    expect(stockService.increaseItemStock).toHaveBeenCalled();
+    const stockInput = stockService.increaseItemStock.mock.calls[0][1];
+    expect(stockInput.quantity.toString()).toBe('1.5');
   });
 
-  test('creates a variant by subtracting quantity from its parent item pool', async () => {
+  test('locks carton and unit configuration after stock movement history exists', async () => {
     inventoryModel.findItemById.mockResolvedValue({
       id: 10,
       store_id: 1,
-      tracking_type: 'stocked',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: 1
+      category_id: 1,
+      base_unit_id: 2,
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      kg_per_carton: '6.0000',
+      loose_units_per_carton: 15,
+      max_content_weight_kg: null
     });
-    inventoryModel.getItemStockBalanceForUpdate.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '100.0000'
-    });
-    inventoryModel.createVariant.mockResolvedValue({
-      id: 20,
+    inventoryModel.findUnitById.mockResolvedValue({
+      id: 2,
       store_id: 1,
-      item_id: 10,
-      variant_name: 'Small bag'
+      symbol: 'kg',
+      unit_type: 'weight'
     });
-    inventoryModel.updateItemStockBalance.mockResolvedValue(undefined);
-    stockService.increaseStock.mockResolvedValue({ stock_balance_id: 55 });
+    inventoryModel.countItemMovements.mockResolvedValue(1);
 
-    const variant = await service.createVariant({
-      item_id: 10,
-      warehouse_id: 3,
-      initial_quantity: 25,
-      variant_name: 'Small bag',
-      sku: 'SMALL-BAG',
-      cost: 2,
-      status: 'active'
-    }, 5, { store_id: 1 });
-
-    expect(variant.id).toBe(20);
-    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(expect.anything(), 44, {
-      quantity_on_hand: '75.0000'
-    });
-    expect(stockService.increaseStock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      storeId: 1,
-      warehouseId: 3,
-      itemVariantId: 20,
-      quantity: 25,
-      movementType: 'adjustment',
-      referenceType: 'item_variant_allocation'
-    }));
-  });
-
-  test('rejects variant quantity above its parent item pool', async () => {
-    inventoryModel.findItemById.mockResolvedValue({
-      id: 10,
-      store_id: 1,
-      tracking_type: 'stocked',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: 1
-    });
-    inventoryModel.getItemStockBalanceForUpdate.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '10.0000'
-    });
-
-    await expect(service.createVariant({
-      item_id: 10,
-      warehouse_id: 3,
-      initial_quantity: 25,
-      variant_name: 'Small bag',
-      sku: 'SMALL-BAG',
-      status: 'active'
-    }, 5, { store_id: 1 })).rejects.toMatchObject({
+    await expect(service.updateItem(10, { kg_per_carton: 8 }, actor)).rejects.toMatchObject({
       statusCode: 409,
-      message: 'Insufficient item quantity available'
+      message: 'Stock configuration cannot change after item stock activity exists'
     });
-
-    expect(inventoryModel.createVariant).not.toHaveBeenCalled();
-    expect(stockService.increaseStock).not.toHaveBeenCalled();
-  });
-});
-
-describe('inventory service hard deletes', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+    expect(inventoryModel.updateItem).not.toHaveBeenCalled();
   });
 
-  test('hard-deletes an item through the dependency cascade', async () => {
+  test('routes carton receipt input to the carton receipt stock helper', async () => {
     inventoryModel.findItemById.mockResolvedValue({
-      id: 7,
+      id: 10,
       store_id: 1,
-      name: 'Disposable item'
-    });
-    inventoryModel.hardDeleteItemCascade.mockResolvedValue({
-      itemDeleted: 1,
-      variantCount: 2
-    });
-
-    await service.hardDeleteItem(7, { store_id: 1 });
-
-    expect(inventoryModel.hardDeleteItemCascade).toHaveBeenCalledWith(7, expect.anything());
-  });
-});
-
-describe('inventory service stock adjustments', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    inventoryModel.findWarehouseById.mockResolvedValue({
-      id: 3,
-      store_id: 1,
+      item_kind: 'normal',
+      stock_mode: 'carton_weight',
+      kg_per_carton: 6,
+      loose_units_per_carton: 15,
       status: 'active'
     });
-  });
+    stockService.receiveCartonStock.mockResolvedValue({ stock_balance_id: 44 });
 
-  test('adjusts item pool quantity directly', async () => {
-    inventoryModel.findItemById.mockResolvedValue({
-      id: 10,
-      store_id: 1,
-      item_type: 'finished_product',
-      tracking_type: 'stocked',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: 1000
-    });
-    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '1000.0000'
-    });
-
-    const result = await service.adjustStock({
-      target_type: 'item',
+    await service.receiveStock({
       warehouse_id: 3,
       item_id: 10,
-      quantity_change: 0.4,
-      reason: 'seed item pool'
-    }, 5, null, { store_id: 1 });
+      carton_count: 4,
+      cost_per_carton: 14
+    }, 5, null, actor);
 
-    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(expect.anything(), 44, {
-      quantity_on_hand: '1400.0000'
-    });
-    expect(result.target_type).toBe('item');
-  });
-
-  test('rejects packaging item pool adjustments', async () => {
-    inventoryModel.findItemById.mockResolvedValue({
-      id: 12,
-      store_id: 1,
-      item_type: 'packaging',
-      tracking_type: 'stocked',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: 1
-    });
-
-    await expect(service.adjustStock({
-      target_type: 'item',
-      warehouse_id: 3,
-      item_id: 12,
-      quantity_change: 10,
-      reason: 'packaging pool adjustment'
-    }, 5, null, { store_id: 1 })).rejects.toMatchObject({
-      statusCode: 400,
-      errors: [
-        { field: 'item_id', message: 'Packaging stock must be adjusted at the variant level' }
-      ]
-    });
-    expect(inventoryModel.getOrCreateItemStockBalanceForUpdate).not.toHaveBeenCalled();
-  });
-
-  test('increasing variant stock subtracts from item pool', async () => {
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 20,
-      store_id: 1,
-      item_id: 10,
-      tracking_type: 'stocked',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: 1000
-    });
-    inventoryModel.findItemById.mockResolvedValue({
-      id: 10,
-      store_id: 1,
-      tracking_type: 'stocked',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: 1000
-    });
-    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
-      id: 44,
-      quantity_on_hand: '1000.0000'
-    });
-    stockService.increaseStock.mockResolvedValue({ stock_balance_id: 55 });
-
-    await service.adjustStock({
-      target_type: 'variant',
-      warehouse_id: 3,
-      item_variant_id: 20,
-      quantity_change: 0.4,
-      reason: 'allocate to variant'
-    }, 5, null, { store_id: 1 });
-
-    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(expect.anything(), 44, {
-      quantity_on_hand: '600.0000'
-    });
-    expect(stockService.increaseStock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      itemVariantId: 20,
-      quantity: expect.anything(),
-      movementType: 'adjustment'
+    expect(stockService.receiveCartonStock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      warehouseId: 3,
+      itemId: 10,
+      cartonCount: 4,
+      costPerCarton: 14,
+      movementType: 'purchase_receive'
     }));
-  });
-
-  test('packaging variant stock adjusts directly without item pool', async () => {
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 30,
-      store_id: 1,
-      item_id: 12,
-      item_type: 'packaging',
-      tracking_type: 'stocked',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: 1
-    });
-    stockService.adjustStock.mockResolvedValue({ stock_balance_id: 77 });
-
-    await service.adjustStock({
-      target_type: 'variant',
-      warehouse_id: 3,
-      item_variant_id: 30,
-      quantity_change: 1000,
-      unit_cost: 0.2,
-      reason: 'packaging received'
-    }, 5, null, { store_id: 1 });
-
-    expect(stockService.adjustStock).toHaveBeenCalledWith(expect.objectContaining({
-      itemVariantId: 30,
-      quantityChange: 1000,
-      unitCost: 0.2
-    }));
-    expect(inventoryModel.getOrCreateItemStockBalanceForUpdate).not.toHaveBeenCalled();
   });
 });

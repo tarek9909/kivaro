@@ -66,9 +66,15 @@ function parseLineTotal(item) {
 
 function stockEquivalent(quantity, item) {
   const qty = Number(quantity);
-  if (!item || Number.isNaN(qty) || qty <= 0 || item.base_unit_type !== 'weight') {
+  if (!item || Number.isNaN(qty) || qty <= 0) {
     return '';
   }
+  if (item.stock_mode === 'carton_weight') {
+    const kg = qty * Number(item.kg_per_carton || 0);
+    const looseUnits = qty * Number(item.loose_units_per_carton || 0);
+    return `${formatNumber(kg, { maximumFractionDigits: 4 })} kg (${formatNumber(looseUnits)} loose units)`;
+  }
+  if (item.base_unit_type !== 'weight') return '';
   return formatStockQuantity(qty * Number(item.base_unit_conversion_to_base || 1), item);
 }
 
@@ -90,7 +96,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
   const suppliersQuery = useSuppliersOptions(open);
   const warehousesQuery = useWarehousesOptions(open && canLoadInventoryOptions);
   const itemsQuery = useItemsOptions(open && canLoadInventoryOptions, { tracking_type: 'stocked' });
-  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
+  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts, { cash_flow_direction: 'outgoing' });
 
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
   const warehouses = warehousesQuery.data?.data?.warehouses || [];
@@ -179,12 +185,15 @@ export function PurchaseOrderFormModal({ open, onClose }) {
     } else {
       form.items.forEach((item, index) => {
         const itemId = Number(item.item_id);
+        const selected = items.find((option) => String(option.id) === String(item.item_id));
         if (!item.item_id || Number.isNaN(itemId) || itemId <= 0) {
           next[`items.${index}.item_id`] = 'Item is required.';
         }
         const qty = Number(item.ordered_quantity);
         if (!item.ordered_quantity || Number.isNaN(qty) || qty <= 0) {
           next[`items.${index}.ordered_quantity`] = 'Quantity must be greater than zero.';
+        } else if (selected?.stock_mode === 'carton_weight' && !Number.isInteger(qty)) {
+          next[`items.${index}.ordered_quantity`] = 'Carton count must be a whole number.';
         }
         const cost = Number(item.unit_cost);
         if (item.unit_cost === '' || Number.isNaN(cost) || cost < 0) {
@@ -210,12 +219,13 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       discount_amount: Number(form.discount_amount) || 0,
       tax_amount: 0,
       notes: form.notes?.trim() || null,
-      items: form.items.map((item) => ({
-        item_id: Number(item.item_id),
-        ordered_quantity: Number(item.ordered_quantity),
-        unit_cost: Number(item.unit_cost),
-        notes: item.notes?.trim() || null
-      }))
+      items: form.items.map((item) => {
+        const selected = items.find((option) => String(option.id) === String(item.item_id));
+        const common = { item_id: Number(item.item_id), notes: item.notes?.trim() || null };
+        return selected?.stock_mode === 'carton_weight'
+          ? { ...common, carton_count: Number(item.ordered_quantity), cost_per_carton: Number(item.unit_cost) }
+          : { ...common, quantity: Number(item.ordered_quantity), unit_cost: Number(item.unit_cost) };
+      })
     });
   }
 
@@ -225,7 +235,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
       onClose={onClose}
       size="xl"
       title="New purchase order"
-      description="Define header details, then add at least one line item. Quantities are entered in each item's base unit."
+      description="Define header details, then add at least one line item. Carton-weight items use cartons and cost per carton; other items use their base stock unit."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -387,6 +397,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
               const qtyError = errors[`items.${index}.ordered_quantity`];
               const costError = errors[`items.${index}.unit_cost`];
               const selectedItem = items.find((option) => String(option.id) === String(item.item_id));
+              const isCartonWeight = selectedItem?.stock_mode === 'carton_weight';
               const unitLabel = getEntryUnitLabel(selectedItem);
               const storedQuantity = stockEquivalent(item.ordered_quantity, selectedItem);
               return (
@@ -439,10 +450,10 @@ export function PurchaseOrderFormModal({ open, onClose }) {
                       />
                     )}
                     <Input
-                      label={`Quantity${unitLabel ? ` (${unitLabel})` : ''}`}
+                      label={isCartonWeight ? 'Carton count' : `Quantity${unitLabel ? ` (${unitLabel})` : ''}`}
                       type="number"
                       min="0"
-                      step="0.0001"
+                      step={isCartonWeight ? '1' : '0.0001'}
                       value={item.ordered_quantity}
                       onChange={(event) =>
                         updateItem(index, 'ordered_quantity', event.target.value)
@@ -453,12 +464,14 @@ export function PurchaseOrderFormModal({ open, onClose }) {
                         storedQuantity
                           ? `Stock will show as ${storedQuantity}.`
                           : unitLabel
-                            ? `Item base unit: ${unitLabel}.`
+                            ? isCartonWeight
+                              ? `Each carton is ${selectedItem.kg_per_carton} kg and contains ${selectedItem.loose_units_per_carton} loose units.`
+                              : `Item base unit: ${unitLabel}.`
                             : undefined
                       }
                     />
                     <Input
-                      label="Unit cost"
+                      label={isCartonWeight ? 'Cost per carton' : 'Unit cost'}
                       type="number"
                       min="0"
                       step="0.0001"

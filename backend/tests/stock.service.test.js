@@ -1,324 +1,283 @@
-const mockConnection = {
-  execute: jest.fn()
-};
+const mockConnection = { execute: jest.fn() };
 
 jest.mock('../src/modules/inventory/inventory.model', () => ({
-  createStockBalance: jest.fn(),
-  createStockMovement: jest.fn(),
-  findVariantById: jest.fn(),
-  getStockBalanceForUpdate: jest.fn(),
-  updateStockBalance: jest.fn()
-}));
-
-jest.mock('../src/utils/transaction', () => ({
-  withTransaction: jest.fn(async (callback) => callback(mockConnection))
-}));
-
-jest.mock('../src/middleware/audit.middleware', () => ({
-  writeAuditLog: jest.fn()
+  createCartonStockLot: jest.fn(),
+  createItemStockMovement: jest.fn(),
+  createOpenCartonShelf: jest.fn(),
+  findItemById: jest.fn(),
+  getActiveOpenCartonShelfForUpdate: jest.fn(),
+  getAvailableCartonLotsForUpdate: jest.fn(),
+  getCartonLotForUpdate: jest.fn(),
+  getOpenCartonShelfForUpdate: jest.fn(),
+  getOrCreateItemStockBalanceForUpdate: jest.fn(),
+  updateCartonStockLot: jest.fn(),
+  updateItemStockBalance: jest.fn(),
+  updateOpenCartonShelf: jest.fn()
 }));
 
 const inventoryModel = require('../src/modules/inventory/inventory.model');
-const { writeAuditLog } = require('../src/middleware/audit.middleware');
 const stockService = require('../src/modules/inventory/stock.service');
 
-describe('stock service', () => {
+const weightItem = {
+  id: 2,
+  store_id: 1,
+  item_kind: 'normal',
+  stock_mode: 'weight',
+  status: 'active',
+  default_cost: '2.0000'
+};
+
+const cartonItem = {
+  id: 3,
+  store_id: 1,
+  item_kind: 'normal',
+  stock_mode: 'carton_weight',
+  kg_per_carton: '6.0000',
+  loose_units_per_carton: 15,
+  status: 'active',
+  default_cost: '2.0000'
+};
+
+const balance = {
+  id: 10,
+  warehouse_id: 1,
+  item_id: 3,
+  quantity_on_hand: '10.0000',
+  quantity_reserved: '0.0000',
+  average_cost: '2.0000'
+};
+
+describe('canonical item stock service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 2,
-      base_unit_symbol: 'kg',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: '1.000000'
-    });
+    inventoryModel.createItemStockMovement.mockResolvedValue(99);
   });
 
-  test('adjustStock increases balance, updates average cost, and writes movement/audit records', async () => {
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '10.0000',
-      quantity_reserved: '0.0000',
-      average_cost: '2.0000'
+  test('updates item-level weighted average cost for a positive weight receipt', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
+      ...balance,
+      item_id: weightItem.id
     });
-    inventoryModel.createStockMovement.mockResolvedValue(99);
 
-    const result = await stockService.adjustStock({
+    const result = await stockService.increaseItemStock(mockConnection, {
+      storeId: 1,
       warehouseId: 1,
-      itemVariantId: 2,
-      quantityChange: 5,
+      itemId: weightItem.id,
+      item: weightItem,
+      quantity: 5,
       unitCost: 10,
-      reason: 'Opening balance',
-      createdBy: 7,
-      audit: {
-        ipAddress: '127.0.0.1',
-        userAgent: 'jest'
-      }
+      movementType: 'purchase_receive'
     });
 
-    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
-      mockConnection,
-      10,
-      {
-        quantity_on_hand: '15.0000',
-        average_cost: '4.6667'
-      }
-    );
-    expect(inventoryModel.createStockMovement).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        warehouse_id: 1,
-        item_variant_id: 2,
-        movement_type: 'adjustment',
-        quantity_change: '5.0000',
-        quantity_before: '10.0000',
-        quantity_after: '15.0000',
-        reference_type: 'stock_adjustment',
-        created_by: 7
-      })
-    );
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        userId: 7,
-        module: 'inventory',
-        action: 'stock_adjustment',
-        recordId: 10
-      })
-    );
-    expect(result).toMatchObject({
-      stock_balance_id: 10,
-      stock_movement_id: 99,
-      quantity_after: '15.0000'
+    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(mockConnection, 10, {
+      quantity_on_hand: '15.0000',
+      average_cost: '4.6667'
     });
+    expect(inventoryModel.createItemStockMovement).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      item_id: weightItem.id,
+      movement_type: 'purchase_receive',
+      quantity_change: '5.0000',
+      total_cost: '50.0000'
+    }));
+    expect(result.quantity_after).toBe('15.0000');
   });
 
-  test('adjustStock rejects decreases that exceed available quantity', async () => {
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '2.0000',
-      quantity_reserved: '0.0000',
-      average_cost: '2.0000'
-    });
-
-    await expect(
-      stockService.adjustStock({
-        warehouseId: 1,
-        itemVariantId: 2,
-        quantityChange: -3,
-        reason: 'Correction',
-        createdBy: 7
-      })
-    ).rejects.toMatchObject({
-      statusCode: 409,
-      message: 'Insufficient stock available'
-    });
-
-    expect(inventoryModel.updateStockBalance).not.toHaveBeenCalled();
-    expect(inventoryModel.createStockMovement).not.toHaveBeenCalled();
-    expect(writeAuditLog).not.toHaveBeenCalled();
-  });
-
-  test('adjustStock rejects fractional quantities for piece-based items', async () => {
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 2,
-      base_unit_symbol: 'pc',
-      base_unit_type: 'quantity',
-      base_unit_conversion_to_base: '1.000000'
-    });
-
-    await expect(
-      stockService.adjustStock({
-        warehouseId: 1,
-        itemVariantId: 2,
-        quantityChange: 1.5,
-        reason: 'Opening count',
-        createdBy: 7
-      })
-    ).rejects.toMatchObject({
-      statusCode: 400,
-      errors: expect.arrayContaining([
-        expect.objectContaining({
-          field: 'quantity',
-          message: 'Piece-based stock quantities must be whole numbers'
-        })
-      ])
-    });
-
-    expect(inventoryModel.updateStockBalance).not.toHaveBeenCalled();
-    expect(inventoryModel.createStockMovement).not.toHaveBeenCalled();
-  });
-
-  test('adjustStock allows fractional quantities for weight-based items', async () => {
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '10.0000',
-      quantity_reserved: '0.0000',
-      average_cost: '2.0000'
-    });
-    inventoryModel.createStockMovement.mockResolvedValue(99);
-
-    await stockService.adjustStock({
-      warehouseId: 1,
-      itemVariantId: 2,
-      quantityChange: 1.5,
-      unitCost: 2,
-      reason: 'Weighed intake',
-      createdBy: 7
-    });
-
-    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
-      mockConnection,
-      10,
-      expect.objectContaining({
-        quantity_on_hand: '11.5000'
-      })
-    );
-  });
-
-  test('adjustStock stores ton-based item quantities as kg', async () => {
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 2,
-      base_unit_symbol: 'ton',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: '1000.000000'
-    });
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
+  test('receives carton-weight stock as kg, creates a FIFO lot, and derives per-kg WAC', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
+      ...balance,
       quantity_on_hand: '0.0000',
-      quantity_reserved: '0.0000',
       average_cost: '0.0000'
     });
-    inventoryModel.createStockMovement.mockResolvedValue(99);
+    inventoryModel.createCartonStockLot.mockResolvedValue(42);
 
-    await stockService.adjustStock({
+    const result = await stockService.receiveCartonStock(mockConnection, {
+      storeId: 1,
       warehouseId: 1,
-      itemVariantId: 2,
-      quantityChange: 1,
-      unitCost: 500,
-      reason: 'One ton intake',
-      createdBy: 7
+      itemId: cartonItem.id,
+      item: cartonItem,
+      cartonCount: 2,
+      costPerCarton: 12,
+      movementType: 'purchase_receive'
     });
 
-    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
-      mockConnection,
-      10,
-      {
-        quantity_on_hand: '1000.0000',
-        average_cost: '0.5000'
-      }
-    );
-    expect(inventoryModel.createStockMovement).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        quantity_change: '1000.0000',
-        unit_cost: '0.5000'
-      })
-    );
-  });
-
-  test('adjustStock stores gram-based item quantities as kg', async () => {
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 2,
-      base_unit_symbol: 'g',
-      base_unit_type: 'weight',
-      base_unit_conversion_to_base: '0.001000'
-    });
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '0.0000',
-      quantity_reserved: '0.0000',
-      average_cost: '0.0000'
-    });
-    inventoryModel.createStockMovement.mockResolvedValue(99);
-
-    await stockService.adjustStock({
-      warehouseId: 1,
-      itemVariantId: 2,
-      quantityChange: 1000,
-      unitCost: 0.002,
-      reason: 'One kilogram in grams',
-      createdBy: 7
-    });
-
-    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
-      mockConnection,
-      10,
-      {
-        quantity_on_hand: '1.0000',
-        average_cost: '2.0000'
-      }
-    );
-    expect(inventoryModel.createStockMovement).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        quantity_change: '1.0000',
-        unit_cost: '2.0000'
-      })
-    );
-  });
-
-  test('reserveStock moves available stock into reserved quantity', async () => {
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
-      warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '10.0000',
-      quantity_reserved: '3.0000',
+    expect(inventoryModel.createCartonStockLot).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      item_id: cartonItem.id,
+      received_cartons: 2,
+      remaining_cartons: 2,
+      kg_per_carton: '6.0000',
+      loose_units_per_carton: 15,
+      unit_cost_per_kg: '2.0000'
+    }));
+    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(mockConnection, 10, {
+      quantity_on_hand: '12.0000',
       average_cost: '2.0000'
     });
-
-    const result = await stockService.reserveStock(mockConnection, {
-      warehouseId: 1,
-      itemVariantId: 2,
-      quantity: 4,
-      storeId: 1
-    });
-
-    expect(inventoryModel.updateStockBalance).toHaveBeenCalledWith(
-      mockConnection,
-      10,
-      { quantity_reserved: '7.0000' }
-    );
-    expect(result).toMatchObject({
-      stock_balance_id: 10,
-      quantity_reserved_before: '3.0000',
-      quantity_reserved_after: '7.0000',
-      quantity_available_after: '3.0000'
-    });
+    expect(result.carton_lot_id).toBe(42);
+    expect(result.quantity_after).toBe('12.0000');
   });
 
-  test('releaseReservedStock rejects releases larger than the reserved quantity', async () => {
-    inventoryModel.getStockBalanceForUpdate.mockResolvedValue({
-      id: 10,
+  test('uses the existing open shelf before opening another carton', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({ ...balance });
+    inventoryModel.getActiveOpenCartonShelfForUpdate.mockResolvedValue({
+      id: 11,
       warehouse_id: 1,
-      item_variant_id: 2,
-      quantity_on_hand: '10.0000',
-      quantity_reserved: '2.0000',
-      average_cost: '2.0000'
+      item_id: cartonItem.id,
+      carton_lot_id: 41,
+      remaining_loose_units: 5,
+      status: 'open'
     });
 
-    await expect(
-      stockService.releaseReservedStock(mockConnection, {
-        warehouseId: 1,
-        itemVariantId: 2,
-        quantity: 3,
-        storeId: 1
-      })
-    ).rejects.toMatchObject({
+    const result = await stockService.consumeCartonLooseUnits(mockConnection, {
+      storeId: 1,
+      warehouseId: 1,
+      itemId: cartonItem.id,
+      item: cartonItem,
+      looseUnits: 3,
+      movementType: 'packaging_consume'
+    });
+
+    expect(inventoryModel.getAvailableCartonLotsForUpdate).not.toHaveBeenCalled();
+    expect(inventoryModel.updateOpenCartonShelf).toHaveBeenCalledWith(mockConnection, 11, {
+      remaining_loose_units: 2
+    });
+    expect(inventoryModel.updateItemStockBalance).toHaveBeenCalledWith(mockConnection, 10, {
+      quantity_on_hand: '8.8000',
+      quantity_reserved: '0.0000'
+    });
+    expect(result.carton_allocations).toEqual([expect.objectContaining({
+      open_carton_shelf_id: 11,
+      loose_units: 3,
+      quantity_kg: '1.2000'
+    })]);
+  });
+
+  test('opens the oldest sealed carton when no shelf stock remains', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({ ...balance });
+    inventoryModel.getActiveOpenCartonShelfForUpdate.mockResolvedValue(null);
+    inventoryModel.getAvailableCartonLotsForUpdate.mockResolvedValue([{ id: 41 }]);
+    inventoryModel.getCartonLotForUpdate.mockResolvedValue({
+      id: 41,
+      warehouse_id: 1,
+      item_id: cartonItem.id,
+      remaining_cartons: 2,
+      loose_units_per_carton: 15
+    });
+    inventoryModel.createOpenCartonShelf.mockResolvedValue(12);
+
+    await stockService.consumeCartonLooseUnits(mockConnection, {
+      storeId: 1,
+      warehouseId: 1,
+      itemId: cartonItem.id,
+      item: cartonItem,
+      looseUnits: 15,
+      movementType: 'packaging_consume'
+    });
+
+    expect(inventoryModel.updateCartonStockLot).toHaveBeenCalledWith(mockConnection, 41, {
+      remaining_cartons: 1
+    });
+    expect(inventoryModel.createOpenCartonShelf).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      carton_lot_id: 41,
+      initial_loose_units: 15
+    }));
+    expect(inventoryModel.updateOpenCartonShelf).toHaveBeenCalledWith(mockConnection, 12, {
+      remaining_loose_units: 0,
+      status: 'closed',
+      closed_at: 'CURRENT_TIMESTAMP'
+    });
+    expect(inventoryModel.createItemStockMovement).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      movement_type: 'carton_open',
+      carton_stock_lot_id: 41,
+      open_carton_shelf_id: 12
+    }));
+  });
+
+  test('does not consume loose shelf units reserved by an approved dispatch', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({ ...balance });
+    inventoryModel.getActiveOpenCartonShelfForUpdate.mockResolvedValue({
+      id: 11,
+      warehouse_id: 1,
+      item_id: cartonItem.id,
+      carton_lot_id: 41,
+      remaining_loose_units: 5,
+      available_loose_units: 0,
+      status: 'open'
+    });
+
+    await expect(stockService.consumeCartonLooseUnits(mockConnection, {
+      storeId: 1,
+      warehouseId: 1,
+      itemId: cartonItem.id,
+      item: cartonItem,
+      looseUnits: 1,
+      movementType: 'packaging_consume'
+    })).rejects.toMatchObject({
       statusCode: 409,
-      message: 'Reserved stock cannot be released below zero'
+      message: 'The active open carton is fully reserved for dispatch'
+    });
+    expect(inventoryModel.updateItemStockBalance).not.toHaveBeenCalled();
+  });
+
+  test('creates low-stock notifications only when available stock crosses the reorder level', async () => {
+    const lowStockItem = {
+      ...weightItem,
+      name: 'Fine charcoal',
+      reorder_level: '5.0000'
+    };
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
+      ...balance,
+      item_id: lowStockItem.id,
+      quantity_on_hand: '10.0000',
+      quantity_reserved: '0.0000'
+    });
+    mockConnection.execute.mockResolvedValueOnce([[{ id: 73 }]]);
+
+    await stockService.reserveItemStock(mockConnection, {
+      storeId: 1,
+      warehouseId: 1,
+      itemId: lowStockItem.id,
+      item: lowStockItem,
+      quantity: 6,
+      movementType: 'dispatch_reserve'
     });
 
-    expect(inventoryModel.updateStockBalance).not.toHaveBeenCalled();
+    expect(mockConnection.execute.mock.calls[0][0]).toContain('FROM users u');
+    expect(mockConnection.execute.mock.calls[1][0]).toContain('INSERT INTO notifications');
+    expect(mockConnection.execute.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      1,
+      73,
+      expect.stringContaining('Low stock: Fine charcoal'),
+      expect.any(String),
+      10
+    ]));
+  });
+
+  test('consumes only the explicitly allocated sealed carton lots', async () => {
+    inventoryModel.getOrCreateItemStockBalanceForUpdate.mockResolvedValue({
+      ...balance,
+      quantity_on_hand: '18.0000'
+    });
+    inventoryModel.getCartonLotForUpdate.mockResolvedValue({
+      id: 50,
+      warehouse_id: 1,
+      item_id: cartonItem.id,
+      remaining_cartons: 2
+    });
+
+    await stockService.consumeSealedCartons(mockConnection, {
+      storeId: 1,
+      warehouseId: 1,
+      itemId: cartonItem.id,
+      item: cartonItem,
+      cartonCount: 1,
+      sourceAllocations: [{ carton_lot_id: 50, carton_count: 1 }],
+      movementType: 'dispatch_out',
+      consumeReserved: false
+    });
+
+    expect(inventoryModel.getAvailableCartonLotsForUpdate).not.toHaveBeenCalled();
+    expect(inventoryModel.updateCartonStockLot).toHaveBeenCalledWith(mockConnection, 50, {
+      remaining_cartons: 1
+    });
   });
 });

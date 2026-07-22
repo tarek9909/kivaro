@@ -29,9 +29,30 @@ const supplierBody = z.object({
 
 const poItem = z.object({
   item_id: z.coerce.number().int().positive(),
-  ordered_quantity: z.coerce.number().positive(),
-  unit_cost: z.coerce.number().min(0),
+  // `carton_count` / `cost_per_carton` are canonical for carton-weight items.
+  // The legacy quantity fields remain accepted during the UI rollout and are
+  // normalized by the service after the item stock mode is known.
+  quantity: z.coerce.number().positive().optional(),
+  ordered_quantity: z.coerce.number().positive().optional(),
+  carton_count: z.coerce.number().int().positive().optional(),
+  unit_cost: z.coerce.number().min(0).optional(),
+  cost_per_carton: z.coerce.number().min(0).optional(),
   notes: z.string().trim().optional().nullable()
+}).superRefine((item, ctx) => {
+  if (item.quantity === undefined && item.ordered_quantity === undefined && item.carton_count === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['quantity'],
+      message: 'Quantity or carton count is required'
+    });
+  }
+  if (item.unit_cost === undefined && item.cost_per_carton === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['unit_cost'],
+      message: 'Unit cost or cost per carton is required'
+    });
+  }
 });
 
 const createPurchaseOrderSchema = z.object({
@@ -71,8 +92,19 @@ const receivePurchaseOrderSchema = z.object({
     notes: z.string().trim().optional().nullable(),
     items: z.array(z.object({
       purchase_order_item_id: z.coerce.number().int().positive(),
-      received_quantity: z.coerce.number().positive(),
-      unit_cost: z.coerce.number().min(0).optional()
+      quantity: z.coerce.number().positive().optional(),
+      received_quantity: z.coerce.number().positive().optional(),
+      carton_count: z.coerce.number().int().positive().optional(),
+      unit_cost: z.coerce.number().min(0).optional(),
+      cost_per_carton: z.coerce.number().min(0).optional()
+    }).superRefine((item, ctx) => {
+      if (item.quantity === undefined && item.received_quantity === undefined && item.carton_count === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['quantity'],
+          message: 'Quantity or carton count is required'
+        });
+      }
     })).min(1)
   })
 });

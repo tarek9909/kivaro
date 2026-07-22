@@ -5,8 +5,8 @@ import {
   Truck,
   Users,
   ShoppingCart,
+  ShoppingBasket,
   Wallet,
-  Factory,
   PieChart,
   MapPinned,
   Receipt,
@@ -64,15 +64,6 @@ export const NAV_SECTIONS = [
         anyOfPermissions: ['inventory.view']
       },
       {
-        id: 'production',
-        label: 'Production',
-        labelKey: 'nav.production',
-        to: '/production',
-        icon: Factory,
-        moduleKey: 'production',
-        anyOfPermissions: ['production.view', 'production.create', 'production.complete']
-      },
-      {
         id: 'purchases',
         label: 'Purchases',
         labelKey: 'nav.purchases',
@@ -95,6 +86,19 @@ export const NAV_SECTIONS = [
           'dispatch.settle',
           'dispatch.print'
         ]
+      },
+      {
+        id: 'pos',
+        label: 'Mini POS',
+        to: '/pos',
+        icon: ShoppingBasket,
+        moduleKey: 'pos',
+        anyOfPermissions: [
+          'pos.own_orders',
+          'pos.review',
+          'pos.accept',
+          'salesman_workspace.view'
+        ]
       }
     ]
   },
@@ -111,6 +115,14 @@ export const NAV_SECTIONS = [
         icon: TrendingUp,
         moduleKey: 'reports.salesman-target-progress',
         anyOfPermissions: ['reports.view']
+      },
+      {
+        id: 'salesman-workspace',
+        label: 'My Workspace',
+        to: '/salesman-workspace',
+        icon: LayoutDashboard,
+        moduleKey: 'salesman_workspace',
+        anyOfPermissions: ['salesman_workspace.view']
       },
       {
         id: 'customers',

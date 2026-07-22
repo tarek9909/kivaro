@@ -1,7 +1,7 @@
 const {
   authRequest,
   closeIntegrationPool,
-  createInventoryFixture,
+  createPackagingFixture,
   dbQuery,
   loginOwner,
   prepareIntegrationDb
@@ -9,107 +9,75 @@ const {
 
 jest.setTimeout(30000);
 
-describe('packaging assignment stock flow', () => {
+describe('flat packaging and ready-stock integration', () => {
   let dbReady = false;
   let token;
 
   beforeAll(async () => {
     dbReady = await prepareIntegrationDb();
-    if (dbReady) {
-      token = await loginOwner();
-    }
+    if (dbReady) token = await loginOwner();
   });
 
   afterAll(async () => {
     await closeIntegrationPool();
   });
 
-  test('packaging assignment validates and consumes raw charcoal stock immediately', async () => {
+  test('previews and atomically completes a 15 x 0.4 kg flat packaging group', async () => {
     if (!dbReady) return;
 
-    const raw = await createInventoryFixture(token, 'packaging_stock_raw');
-    const [group] = await dbQuery(
-      "SELECT id FROM packaging_groups WHERE code = 'PKG_GROUP_STARTER_10KG_400G' LIMIT 1"
-    );
-    const packagingVariants = await dbQuery(
-      `SELECT sku, id
-       FROM item_variants
-       WHERE sku IN ('PKG-CARTON-10KG', 'PKG-BAG-400G', 'PKG-STICKER-STARTER')`
-    );
-    const variantBySku = Object.fromEntries(packagingVariants.map((variant) => [variant.sku, variant.id]));
+    const fixture = await createPackagingFixture(token, 'flat_packaging');
+    const previewResponse = await authRequest(token)
+      .post(`/api/packaging-groups/${fixture.group.id}/preview`)
+      .send({ warehouse_id: fixture.warehouse.id, output_carton_count: 2 })
+      .expect(200);
+    const preview = previewResponse.body.data.preview;
 
-    await dbQuery(
-      `INSERT INTO stock_balances (
-        store_id, warehouse_id, item_variant_id, quantity_on_hand, quantity_reserved, average_cost
-      ) VALUES (?, ?, ?, ?, 0, ?)
-      ON DUPLICATE KEY UPDATE quantity_on_hand = VALUES(quantity_on_hand), quantity_reserved = 0, average_cost = VALUES(average_cost)`,
-      [raw.variant.store_id, raw.warehouse.id, raw.variant.id, 50, 2]
-    );
+    expect(preview.group_capacity_kg).toBe('6.0000');
+    expect(preview.input.raw_quantity_kg).toBe('12.0000');
+    expect(preview.input.loose_units_required).toBe('30.0000');
+    expect(preview.output.total_inner_quantity).toBe('30.0000');
+    expect(preview.can_complete).toBe(true);
 
-    for (const [variantId, quantity, unitCost] of [
-      [variantBySku['PKG-CARTON-10KG'], 10, 0.5],
-      [variantBySku['PKG-BAG-400G'], 200, 0.05],
-      [variantBySku['PKG-STICKER-STARTER'], 200, 0.01]
-    ]) {
-      await authRequest(token)
-        .post('/api/stock-adjustments')
-        .send({
-          warehouse_id: raw.warehouse.id,
-          item_variant_id: variantId,
-          quantity_change: quantity,
-          unit_cost: unitCost,
-          reason: 'Packaging assignment opening stock'
-        })
-        .expect(201);
-    }
-
-    await authRequest(token)
-      .post('/api/packaging-assignments')
-      .send({
-        packaging_group_id: group.id,
-        warehouse_id: raw.warehouse.id,
-        charcoal_variant_id: raw.variant.id,
-        charcoal_quantity_kg: 70
-      })
-      .expect(409);
-
-    const assignmentResponse = await authRequest(token)
-      .post('/api/packaging-assignments')
-      .send({
-        packaging_group_id: group.id,
-        warehouse_id: raw.warehouse.id,
-        charcoal_variant_id: raw.variant.id,
-        charcoal_quantity_kg: 40
-      })
+    const completedResponse = await authRequest(token)
+      .post(`/api/packaging-groups/${fixture.group.id}/complete`)
+      .send({ warehouse_id: fixture.warehouse.id, output_carton_count: 2, notes: 'Integration run' })
       .expect(201);
 
-    const assignment = assignmentResponse.body.data.packaging_assignment;
-    expect(assignment.status).toBe('consumed');
-    expect(Number(assignment.produced_quantity)).toBe(4);
+    const operation = completedResponse.body.data.packaging_operation;
+    expect(operation.status).toBe('completed');
+    expect(completedResponse.body.data.ready_stock_container_ids).toHaveLength(2);
 
-    const [rawBalance] = await dbQuery(
-      `SELECT quantity_on_hand
-       FROM stock_balances
-       WHERE warehouse_id = ? AND item_variant_id = ?`,
-      [raw.warehouse.id, raw.variant.id]
+    const containers = await dbQuery(
+      `SELECT initial_inner_quantity, remaining_inner_quantity, capacity_kg, status
+       FROM ready_stock_containers
+       WHERE packaging_operation_id = ?
+       ORDER BY id ASC`,
+      [operation.id]
     );
-    expect(Number(rawBalance.quantity_on_hand)).toBe(10);
+    expect(containers).toEqual([
+      expect.objectContaining({
+        initial_inner_quantity: 15,
+        remaining_inner_quantity: 15,
+        capacity_kg: '6.0000',
+        status: 'full'
+      }),
+      expect.objectContaining({
+        initial_inner_quantity: 15,
+        remaining_inner_quantity: 15,
+        capacity_kg: '6.0000',
+        status: 'full'
+      })
+    ]);
 
     const movements = await dbQuery(
-      `SELECT movement_type, reference_type, quantity_change
-       FROM stock_movements
-       WHERE warehouse_id = ? AND item_variant_id = ?
+      `SELECT movement_type
+       FROM item_stock_movements
+       WHERE reference_type = 'packaging_operation' AND reference_id = ?
        ORDER BY id ASC`,
-      [raw.warehouse.id, raw.variant.id]
+      [operation.id]
     );
-    expect(movements).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          movement_type: 'production_consume',
-          reference_type: 'packaging_assignment_raw',
-          quantity_change: '-40.0000'
-        })
-      ])
+    expect(movements.map((row) => row.movement_type)).toEqual(
+      expect.arrayContaining(['packaging_consume'])
     );
   });
 });

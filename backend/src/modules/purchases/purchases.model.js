@@ -75,15 +75,19 @@ async function findPurchaseOrderById(id) {
 async function getPurchaseOrderItems(id) {
   return query(
     `SELECT
-      poi.id, poi.purchase_order_id, poi.item_id, poi.item_variant_id, iv.variant_name, iv.sku,
+      poi.id, poi.purchase_order_id, poi.item_id,
       i.base_unit_id, u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
       u.conversion_to_base AS base_unit_conversion_to_base,
-      i.name AS item_name, poi.ordered_quantity, poi.received_quantity,
-      poi.unit_cost, poi.line_total, poi.notes, poi.created_at
+      i.name AS item_name, i.item_kind, i.stock_mode, i.kg_per_carton,
+      i.loose_units_per_carton, i.max_content_weight_kg,
+      poi.ordered_quantity, poi.received_quantity, poi.unit_cost, poi.line_total,
+      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.ordered_quantity ELSE NULL END AS ordered_carton_count,
+      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.received_quantity ELSE NULL END AS received_carton_count,
+      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.unit_cost ELSE NULL END AS cost_per_carton,
+      poi.notes, poi.created_at
      FROM purchase_order_items poi
      JOIN items i ON i.id = poi.item_id
      JOIN units u ON u.id = i.base_unit_id
-     LEFT JOIN item_variants iv ON iv.id = poi.item_variant_id
      WHERE poi.purchase_order_id = ?
      ORDER BY poi.id ASC`,
     [id]
@@ -145,12 +149,11 @@ async function createPurchaseOrder(connection, data) {
 async function createPurchaseOrderItem(connection, data) {
   await connection.execute(
     `INSERT INTO purchase_order_items (
-      purchase_order_id, item_id, item_variant_id, ordered_quantity, unit_cost, line_total, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      purchase_order_id, item_id, ordered_quantity, unit_cost, line_total, notes
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
     [
       data.purchase_order_id,
       data.item_id,
-      nullable(data.item_variant_id),
       data.ordered_quantity,
       data.unit_cost,
       data.line_total,
@@ -198,7 +201,8 @@ async function lockPurchaseOrder(connection, id) {
 
 async function lockPurchaseOrderItems(connection, purchaseOrderId) {
   const [rows] = await connection.execute(
-    `SELECT poi.*, i.base_unit_id, u.symbol AS base_unit_symbol,
+    `SELECT poi.*, i.item_kind, i.stock_mode, i.kg_per_carton, i.loose_units_per_carton,
+       i.max_content_weight_kg, i.status AS item_status, i.base_unit_id, u.symbol AS base_unit_symbol,
        u.unit_type AS base_unit_type, u.conversion_to_base AS base_unit_conversion_to_base
      FROM purchase_order_items poi
      JOIN items i ON i.id = poi.item_id
@@ -232,13 +236,12 @@ async function createReceipt(connection, data) {
 async function createReceiptItem(connection, data) {
   await connection.execute(
     `INSERT INTO purchase_receipt_items (
-      purchase_receipt_id, purchase_order_item_id, item_id, item_variant_id, received_quantity, unit_cost
-    ) VALUES (?, ?, ?, ?, ?, ?)`,
+      purchase_receipt_id, purchase_order_item_id, item_id, received_quantity, unit_cost
+    ) VALUES (?, ?, ?, ?, ?)`,
     [
       data.purchase_receipt_id,
       data.purchase_order_item_id,
       data.item_id,
-      nullable(data.item_variant_id),
       data.received_quantity,
       data.unit_cost
     ]
@@ -270,12 +273,14 @@ async function listSupplierPayments(input) {
   return listRecords({
     select: `SELECT
       sp.id, sp.store_id, sp.supplier_id, s.name AS supplier_name, sp.purchase_order_id,
-      po.po_number, sp.payment_date, sp.amount, sp.payment_method, sp.reference_number,
+      po.po_number, sp.cash_account_id, ca.account_name AS cash_account_name,
+      sp.payment_date, sp.amount, sp.payment_method, sp.reference_number,
       sp.notes, sp.created_by, sp.created_at`,
     from: 'supplier_payments sp',
     joins: `
       JOIN suppliers s ON s.id = sp.supplier_id
-      LEFT JOIN purchase_orders po ON po.id = sp.purchase_order_id`,
+      LEFT JOIN purchase_orders po ON po.id = sp.purchase_order_id
+      LEFT JOIN cash_accounts ca ON ca.id = sp.cash_account_id`,
     filters: [
       { key: 'supplier_id', column: 'sp.supplier_id' },
       { key: 'store_id', column: 'sp.store_id' },
@@ -295,8 +300,8 @@ async function createSupplierPaymentRecord(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO supplier_payments (
       store_id, supplier_id, purchase_order_id, payment_date, amount, payment_method,
-      reference_number, notes, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      reference_number, cash_account_id, notes, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.store_id,
       data.supplier_id,
@@ -305,6 +310,7 @@ async function createSupplierPaymentRecord(connection, data) {
       data.amount,
       data.payment_method || 'cash',
       nullable(data.reference_number),
+      nullable(data.cash_account_id),
       nullable(data.notes),
       nullable(data.created_by)
     ]

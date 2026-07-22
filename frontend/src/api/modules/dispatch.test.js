@@ -20,185 +20,62 @@ function buildClientStub() {
 }
 
 describe('dispatch API module', () => {
-  it('exposes only backend-supported request methods', () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    // No 'remove' or 'replace' because the backend does not expose them.
+  it('exposes the item-based dispatch, document, invoice, and settlement contracts', () => {
+    const api = createDispatchApi(buildClientStub());
     expect(Object.keys(api.requests).sort()).toEqual([
-      'addCustomer',
-      'approve',
-      'cancel',
-      'create',
-      'createReturn',
-      'createSettlement',
-      'dispatchStock',
-      'get',
-      'list',
-      'printCustomerReceipts',
-      'printCustomerReceiptsPdf',
-      'printSummary',
-      'printSummaryPdf',
-      'settlements',
-      'submit',
-      'update'
+      'addCustomer', 'approve', 'cancel', 'create', 'createCloseout', 'createFromPos',
+      'createReturn', 'dispatchStock', 'get', 'list', 'rework', 'settlements', 'submit', 'update'
     ]);
+    expect(Object.keys(api.customers)).toEqual(['addItem']);
+    expect(Object.keys(api.items).sort()).toEqual(['remove', 'update']);
+    expect(Object.keys(api.documents).sort()).toEqual(['customerTablePdf', 'quantityTablePdf']);
+    expect(Object.keys(api.invoices).sort()).toEqual(['get', 'list', 'pdf']);
+    expect(Object.keys(api.settlements).sort()).toEqual(['get', 'post']);
   });
 
-  it('exposes only addItem on dispatch customers and supported settlement helpers', () => {
+  it('uses catalog-backed dispatch line and lifecycle endpoints', async () => {
     const client = buildClientStub();
     const api = createDispatchApi(client);
-    expect(Object.keys(api.customers).sort()).toEqual(['addItem']);
-    expect(Object.keys(api.settlements).sort()).toEqual(['addCustomer', 'cancel', 'complete', 'get']);
-  });
-
-  it('lists, creates, gets, and updates dispatch requests via the correct paths', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    await api.requests.list({ page: 2, status: 'draft' });
-    await api.requests.create({ salesman_id: 1, warehouse_id: 2, request_date: '2026-05-27' });
-    await api.requests.get(11);
-    await api.requests.update(11, { request_date: '2026-05-28', notes: 'edit' });
-    expect(client.calls).toEqual([
-      {
-        method: 'get',
-        path: '/dispatch-requests',
-        rest: [{ params: { page: 2, status: 'draft' } }]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-requests',
-        rest: [{ salesman_id: 1, warehouse_id: 2, request_date: '2026-05-27' }, undefined]
-      },
-      { method: 'get', path: '/dispatch-requests/11', rest: [undefined] },
-      {
-        method: 'patch',
-        path: '/dispatch-requests/11',
-        rest: [{ request_date: '2026-05-28', notes: 'edit' }, undefined]
-      }
-    ]);
-  });
-
-  it('routes lifecycle actions to the correct backend endpoints', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    await api.requests.submit(7);
-    await api.requests.approve(7);
-    await api.requests.dispatchStock(7);
-    await api.requests.cancel(7);
-    expect(client.calls).toEqual([
-      { method: 'post', path: '/dispatch-requests/7/submit', rest: [undefined, undefined] },
-      { method: 'post', path: '/dispatch-requests/7/approve', rest: [undefined, undefined] },
-      { method: 'post', path: '/dispatch-requests/7/dispatch', rest: [undefined, undefined] },
-      { method: 'post', path: '/dispatch-requests/7/cancel', rest: [undefined, undefined] }
-    ]);
-  });
-
-  it('posts customer/item/return/settlement payloads to the right endpoints', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
+    await api.requests.create({ salesman_id: 1, warehouse_id: 2, request_date: '2026-07-22' });
     await api.requests.addCustomer(7, { customer_id: 12 });
     await api.customers.addItem(33, {
-      item_variant_id: 4,
+      sale_catalog_entry_id: 4,
       quantity: 2,
-      unit_price: 5
+      line_type: 'free_gift'
     });
-    await api.requests.createReturn(7, {
-      dispatch_item_id: 22,
-      returned_quantity: 1
-    });
-    await api.requests.createSettlement(7, { settlement_date: '2026-05-30' });
-    await api.settlements.get(91);
-    await api.settlements.addCustomer(91, {
-      dispatch_customer_id: 100,
-      collected_amount: 250
-    });
-    await api.settlements.complete(91, { payment_method: 'cash' });
-    await api.settlements.cancel(92);
+    await api.requests.submit(7);
+    await api.requests.rework(7, { reason: 'Correct price' });
+    await api.requests.approve(7);
+    await api.requests.dispatchStock(7);
+    await api.requests.createCloseout(7, { settlement_date: '2026-07-22', customers: [] });
+    await api.items.update(33, { quantity: 3, unit_price: 4 });
+    await api.items.remove(33);
+    await api.settlements.post(91, { cash_account_id: 3 });
     expect(client.calls).toEqual([
-      {
-        method: 'post',
-        path: '/dispatch-requests/7/customers',
-        rest: [{ customer_id: 12 }, undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-customers/33/items',
-        rest: [{ item_variant_id: 4, quantity: 2, unit_price: 5 }, undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-requests/7/returns',
-        rest: [{ dispatch_item_id: 22, returned_quantity: 1 }, undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-requests/7/settlements',
-        rest: [{ settlement_date: '2026-05-30' }, undefined]
-      },
-      {
-        method: 'get',
-        path: '/dispatch-settlements/91',
-        rest: [undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-settlements/91/customers',
-        rest: [{ dispatch_customer_id: 100, collected_amount: 250 }, undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-settlements/91/complete',
-        rest: [{ payment_method: 'cash' }, undefined]
-      },
-      {
-        method: 'post',
-        path: '/dispatch-settlements/92/cancel',
-        rest: [undefined, undefined]
-      }
+      { method: 'post', path: '/dispatch-requests', rest: [{ salesman_id: 1, warehouse_id: 2, request_date: '2026-07-22' }, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/customers', rest: [{ customer_id: 12 }, undefined] },
+      { method: 'post', path: '/dispatch-customers/33/items', rest: [{ sale_catalog_entry_id: 4, quantity: 2, line_type: 'free_gift' }, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/submit', rest: [undefined, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/rework', rest: [{ reason: 'Correct price' }, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/approve', rest: [undefined, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/dispatch', rest: [undefined, undefined] },
+      { method: 'post', path: '/dispatch-requests/7/closeout', rest: [{ settlement_date: '2026-07-22', customers: [] }, undefined] },
+      { method: 'patch', path: '/dispatch-items/33', rest: [{ quantity: 3, unit_price: 4 }, undefined] },
+      { method: 'delete', path: '/dispatch-items/33', rest: [undefined] },
+      { method: 'post', path: '/dispatch-settlements/91/post', rest: [{ cash_account_id: 3 }, undefined] }
     ]);
   });
 
-  it('GETs the printable summary as JSON by default', async () => {
+  it('downloads the required documents and invoices as blobs', async () => {
     const client = buildClientStub();
     const api = createDispatchApi(client);
-    await api.requests.printSummary(7);
-    expect(client.calls[0]).toEqual({
-      method: 'get',
-      path: '/dispatch-requests/7/print-summary',
-      rest: [{ params: undefined }]
-    });
-  });
-
-  it('requests the printable summary PDF as a blob', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    await api.requests.printSummaryPdf(7);
-    expect(client.calls[0]).toEqual({
-      method: 'get',
-      path: '/dispatch-requests/7/print-summary',
-      rest: [{ params: { format: 'pdf' }, responseType: 'blob' }]
-    });
-  });
-
-  it('requests the printable customer receipts PDF as a blob', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    await api.requests.printCustomerReceiptsPdf(7);
-    expect(client.calls[0]).toEqual({
-      method: 'get',
-      path: '/dispatch-requests/7/print-customer-receipts',
-      rest: [{ params: { format: 'pdf' }, responseType: 'blob' }]
-    });
-  });
-
-  it('GETs the in-session settlements helper without assuming a list/detail shape', async () => {
-    const client = buildClientStub();
-    const api = createDispatchApi(client);
-    await api.requests.settlements(7);
-    expect(client.calls[0]).toEqual({
-      method: 'get',
-      path: '/dispatch-requests/7/settlements',
-      rest: [undefined]
-    });
+    await api.documents.customerTablePdf(7);
+    await api.documents.quantityTablePdf(7);
+    await api.invoices.pdf(14);
+    expect(client.calls).toEqual([
+      { method: 'get', path: '/dispatch-requests/7/documents/customer-table', rest: [{ responseType: 'blob' }] },
+      { method: 'get', path: '/dispatch-requests/7/documents/quantity-table', rest: [{ responseType: 'blob' }] },
+      { method: 'get', path: '/invoices/14/pdf', rest: [{ responseType: 'blob' }] }
+    ]);
   });
 });

@@ -3,20 +3,38 @@
  * place so forms, filters, and tabs stay in sync with the backend schema.
  */
 
-export const ITEM_TYPES = [
-  { value: 'raw_charcoal', label: 'Raw charcoal' },
-  { value: 'packaging', label: 'Packaging' },
-  { value: 'finished_product', label: 'Finished product' },
-  { value: 'service', label: 'Service' },
-  { value: 'other', label: 'Other' }
+/**
+ * The inventory model is item-based.  `item_kind` tells us whether an item
+ * is normal stock or a packaging material; `stock_mode` tells us how normal
+ * stock is physically handled.  Keep these values in sync with the inventory
+ * API rather than reintroducing item variants in a client form.
+ */
+export const ITEM_KINDS = [
+  { value: 'normal', label: 'Normal item' },
+  { value: 'packaging', label: 'Packaging item' }
 ];
 
-export const PRODUCT_ITEM_TYPES = ITEM_TYPES.filter((option) => option.value !== 'packaging');
-
-export const TRACKING_TYPES = [
-  { value: 'stocked', label: 'Stocked' },
-  { value: 'non_stocked', label: 'Non stocked' }
+export const STOCK_MODES = [
+  {
+    value: 'carton_weight',
+    label: 'Cartons with loose units',
+    description: 'Received as cartons, stocked by kg, and opened into loose units when needed.'
+  },
+  {
+    value: 'weight',
+    label: 'Weight',
+    description: 'Received, stored, and sold by weight.'
+  },
+  {
+    value: 'piece',
+    label: 'Piece',
+    description: 'Received, stored, and sold as whole pieces.'
+  }
 ];
+
+export const STOCK_MODE_LABELS = Object.fromEntries(
+  STOCK_MODES.map((option) => [option.value, option.label])
+);
 
 export const STATUSES = [
   { value: 'active', label: 'Active' },
@@ -54,24 +72,25 @@ export const PACKAGING_LEVEL_PARENT = {
 
 export const MOVEMENT_TYPES = [
   { value: 'purchase_receive', label: 'Purchase receive' },
-  { value: 'production_consume', label: 'Production consume' },
-  { value: 'production_output', label: 'Production output' },
+  { value: 'opening_balance', label: 'Opening balance' },
+  { value: 'stock_adjustment', label: 'Stock adjustment' },
+  { value: 'carton_open', label: 'Carton opened' },
+  { value: 'packaging_consume', label: 'Packaging consume' },
+  { value: 'packaging_output', label: 'Packaging output' },
   { value: 'dispatch_reserve', label: 'Dispatch reserve' },
   { value: 'dispatch_unreserve', label: 'Dispatch unreserve' },
-  { value: 'dispatch_out', label: 'Dispatch out' },
+  { value: 'dispatch_out', label: 'Dispatch sale' },
+  { value: 'free_gift', label: 'Free gift' },
   { value: 'dispatch_return', label: 'Dispatch return' },
-  { value: 'batch_movement', label: 'Batches movement' },
-  { value: 'sales_settle', label: 'Sales settle' },
   { value: 'damage', label: 'Damage' },
-  { value: 'adjustment', label: 'Adjustment' },
   { value: 'transfer_in', label: 'Transfer in' },
   { value: 'transfer_out', label: 'Transfer out' }
 ];
 
 export const REFERENCE_TYPES = [
   { value: 'purchase_receipt', label: 'Purchase receipt' },
-  { value: 'production_batch', label: 'Production batch' },
-  { value: 'packaging_assignment', label: 'Packaging assignment' },
+  { value: 'stock_receipt', label: 'Stock receipt' },
+  { value: 'packaging_operation', label: 'Packaging operation' },
   { value: 'dispatch_request', label: 'Dispatch request' },
   { value: 'dispatch_return', label: 'Dispatch return' },
   { value: 'stock_adjustment', label: 'Stock adjustment' }
@@ -107,13 +126,6 @@ export const INVENTORY_TABS = [
     featureKey: 'inventory.items',
     label: 'Items',
     to: '/inventory/items',
-    anyOfPermissions: [INVENTORY_PERMISSIONS.view]
-  },
-  {
-    id: 'variants',
-    featureKey: 'inventory.variants',
-    label: 'Product variants',
-    to: '/inventory/variants',
     anyOfPermissions: [INVENTORY_PERMISSIONS.view]
   },
   {

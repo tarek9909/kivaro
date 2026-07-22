@@ -57,7 +57,7 @@ export function CustomerPaymentFormModal({ open, onClose }) {
 
   const customersQuery = useCustomersList(open && canPickCustomers);
   const salesmenQuery = useSalesmenList(open && canPickSalesmen);
-  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts);
+  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts, { cash_flow_direction: 'incoming' });
 
   const customers = customersQuery.data?.data?.customers || [];
   const salesmen = salesmenQuery.data?.data?.salesmen || [];

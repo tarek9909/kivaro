@@ -185,7 +185,7 @@ export function ReceiptPrintModal({ open, onClose, receipt: receiptRow }) {
               <table className="w-full min-w-[420px] border-collapse text-left text-xs">
                 <thead className="text-[10px] uppercase tracking-[0.18em] text-ink-400">
                   <tr className="border-b border-white/5">
-                    <th className="px-3 py-2 font-medium">Variant</th>
+                    <th className="px-3 py-2 font-medium">Item</th>
                     <th className="px-3 py-2 text-right font-medium">Qty</th>
                     <th className="px-3 py-2 text-right font-medium">Unit price</th>
                     <th className="px-3 py-2 text-right font-medium">Line total</th>
@@ -196,11 +196,10 @@ export function ReceiptPrintModal({ open, onClose, receipt: receiptRow }) {
                     <tr key={item.id} className="border-b border-white/5 last:border-0">
                       <td className="px-3 py-2 align-top">
                         <p className="truncate text-ink-50">
-                          {item.item_name || ''}
-                          {item.variant_name ? ` - ${item.variant_name}` : ''}
+                          {item.item_name_snapshot || item.item_name || item.catalog_display_name || 'Item'}
                         </p>
                         <p className="truncate font-mono text-[11px] text-ink-400">
-                          {item.sku || `variant #${item.item_variant_id}`}
+                          {item.unit_label_snapshot || item.unit_label || item.fulfillment_type || `item #${item.item_id || item.id}`}
                         </p>
                       </td>
                       <td className="px-3 py-2 text-right align-top font-mono text-ink-100">

@@ -12,6 +12,10 @@ async function main() {
       console.error(`Missing tables: ${result.missingTables.join(', ')}`);
     }
 
+    if (result.missingMigrations.length) {
+      console.error(`Missing baseline migrations: ${result.missingMigrations.join(', ')}`);
+    }
+
     if (result.missingPermissions.length) {
       console.error(`Missing permissions: ${result.missingPermissions.join(', ')}`);
     }

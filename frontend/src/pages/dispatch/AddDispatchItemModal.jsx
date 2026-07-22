@@ -2,128 +2,145 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/index.js';
-import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import { Button, Input, Modal, Select } from '@/components/ui/index.js';
-import { useVariantsOptions } from '@/pages/inventory/useInventoryOptions.js';
 import { formatNumber } from '@/lib/formatters.js';
 
-const INVENTORY_VIEW = 'inventory.view';
+const ENTRY_LABELS = {
+  normal_carton: 'Normal — sealed carton',
+  normal_loose_unit: 'Normal — loose unit',
+  normal_weight: 'Normal — weight',
+  normal_piece: 'Normal — piece',
+  ready_outer_carton: 'Ready stock — outer carton',
+  ready_inner_unit: 'Ready stock — inner bag'
+};
 
+const WHOLE_QUANTITY_TYPES = new Set([
+  'normal_carton',
+  'normal_loose_unit',
+  'normal_piece',
+  'ready_outer_carton',
+  'ready_inner_unit'
+]);
+
+function emptyForm(dispatchItem = null) {
+  return {
+    sale_catalog_entry_id: dispatchItem?.sale_catalog_entry_id ? String(dispatchItem.sale_catalog_entry_id) : '',
+    quantity: dispatchItem?.quantity === undefined || dispatchItem?.quantity === null ? '' : String(dispatchItem.quantity),
+    unit_price: dispatchItem?.unit_price === undefined || dispatchItem?.unit_price === null ? '' : String(dispatchItem.unit_price),
+    line_type: dispatchItem?.line_type || 'sale'
+  };
+}
+
+function offerName(offer) {
+  return offer?.display_name || offer?.item_name || offer?.packaging_group_name || `Offer #${offer?.id}`;
+}
+
+/**
+ * Lines identify a sale-catalog entry only.  The backend selects and locks
+ * actual cartons, shelf units, or ready containers during approval, so a
+ * draft never claims a client-calculated source or availability quantity.
+ */
 export function AddDispatchItemModal({
   open,
   onClose,
   dispatchCustomer,
   dispatchRequestId,
-  dispatchRequest
+  dispatchRequest,
+  dispatchItem = null
 }) {
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const refreshUser = useAuthStore((state) => state.refreshUser);
-  const user = useAuthStore((state) => state.user);
-  const canPickInventory = hasPermission(INVENTORY_VIEW);
   const queryClient = useQueryClient();
-
-  const [form, setForm] = useState({
-    packaging_assignment_id: '',
-    item_variant_id: '',
-    quantity: '',
-    unit_price: '',
-    unit_cost: ''
-  });
+  const [form, setForm] = useState(() => emptyForm(dispatchItem));
   const [errors, setErrors] = useState({});
 
   useEffect(() => {
     if (!open) return;
-    setForm({ packaging_assignment_id: '', item_variant_id: '', quantity: '', unit_price: '', unit_cost: '' });
+    setForm(emptyForm(dispatchItem));
     setErrors({});
-    refreshUser().catch(() => {});
-  }, [open, dispatchCustomer?.id, refreshUser]);
+  }, [open, dispatchCustomer?.id, dispatchItem]);
 
-  const variantsQuery = useVariantsOptions(open && canPickInventory, { tracking_type: 'stocked' });
-  const variants = variantsQuery.data?.data?.item_variants || [];
-  const assignmentsQuery = useQuery({
-    queryKey: ['inventory', 'packaging', 'assignments', 'dispatchable', dispatchRequest?.warehouse_id],
-    queryFn: () => api.inventory.packagingAssignments.list({
+  const catalogQuery = useQuery({
+    queryKey: ['packaging', 'sale-catalog', 'dispatch', dispatchRequest?.warehouse_id],
+    queryFn: () => api.packaging.saleCatalog.list({
       page: 1,
-      limit: 100,
+      limit: 250,
+      status: 'active',
       warehouse_id: dispatchRequest?.warehouse_id
     }),
-    enabled: Boolean(open && canPickInventory && dispatchRequest?.warehouse_id)
+    enabled: Boolean(open && dispatchRequest?.warehouse_id)
   });
-  const assignments = (assignmentsQuery.data?.data?.packaging_assignments || []).filter((assignment) =>
-    ['batched', 'consumed'].includes(assignment.status)
+  const offers = catalogQuery.data?.data?.sale_catalog_entries || [];
+  const selectedOffer = useMemo(
+    () => offers.find((offer) => String(offer.id) === String(form.sale_catalog_entry_id)),
+    [form.sale_catalog_entry_id, offers]
   );
-  const selectedAssignment = useMemo(
-    () => assignments.find((assignment) => String(assignment.id) === String(form.packaging_assignment_id)),
-    [assignments, form.packaging_assignment_id]
-  );
-  const selectedAssignmentVariantId = selectedAssignment?.output_item_variant_id || selectedAssignment?.charcoal_variant_id || '';
-  const vat = user?.store?.vat;
-  const vatEnabled = Boolean(vat?.enabled);
-  const vatRate = vatEnabled ? Number(vat?.rate || 0) : 0;
-  const subtotalPreview = Number(form.quantity || 0) * Number(form.unit_price || 0);
-  const vatPreview = vatEnabled ? (subtotalPreview * vatRate) / 100 : 0;
-  const totalPreview = subtotalPreview + vatPreview;
+  const isWholeQuantity = WHOLE_QUANTITY_TYPES.has(selectedOffer?.entry_type);
+  const isGift = form.line_type === 'free_gift';
+  const quantityPreview = Number(form.quantity || 0);
+  const pricePreview = isGift ? 0 : Number(form.unit_price || 0);
+  const subtotal = quantityPreview * pricePreview;
+  const vatRate = isGift ? 0 : Number(selectedOffer?.vat_rate || 0);
+  const vat = subtotal * vatRate / 100;
 
   const mutation = useMutation({
-    mutationFn: (payload) => api.dispatch.customers.addItem(dispatchCustomer.id, payload),
+    mutationFn: (payload) => (
+      dispatchItem
+        ? api.dispatch.items.update(dispatchItem.id, payload)
+        : api.dispatch.customers.addItem(dispatchCustomer.id, payload)
+    ),
     onSuccess: () => {
-      toast.success('Item added');
+      toast.success(dispatchItem ? 'Dispatch line updated' : isGift ? 'Gift line added' : 'Dispatch line added');
       queryClient.invalidateQueries({ queryKey: ['dispatch', 'request', dispatchRequestId] });
       queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
       onClose?.();
     },
     onError: (error) => {
       setErrors(mapFieldErrors(error));
-      toast.error(getErrorMessage(error, 'Could not add item.'));
+      toast.error(getErrorMessage(error, dispatchItem ? 'Could not update the dispatch line.' : 'Could not add the dispatch line.'));
     }
   });
 
+  function change(field, value) {
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === 'sale_catalog_entry_id') {
+        const offer = offers.find((entry) => String(entry.id) === String(value));
+        next.unit_price = offer?.default_price === undefined || offer?.default_price === null
+          ? ''
+          : String(offer.default_price);
+      }
+      return next;
+    });
+    if (errors[field]) setErrors((current) => ({ ...current, [field]: undefined }));
+  }
+
   function validate() {
     const next = {};
-    if (canPickInventory) {
-      if (!form.packaging_assignment_id) {
-        next.packaging_assignment_id = 'Batch is required.';
-      }
+    if (!form.sale_catalog_entry_id || !selectedOffer) {
+      next.sale_catalog_entry_id = 'Choose an active sale offer.';
     }
-    const effectiveVariantId = selectedAssignmentVariantId || form.item_variant_id;
-    const variantId = Number(effectiveVariantId);
-    if (!effectiveVariantId || Number.isNaN(variantId) || variantId <= 0) {
-      next.item_variant_id = 'Variant is required.';
-    }
-    const qty = Number(form.quantity);
-    if (!form.quantity || Number.isNaN(qty) || qty <= 0) {
+    const parsedQuantity = Number(form.quantity);
+    if (!form.quantity || !Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
       next.quantity = 'Quantity must be greater than zero.';
+    } else if (isWholeQuantity && !Number.isInteger(parsedQuantity)) {
+      next.quantity = 'This offer must be sold or gifted in whole units.';
     }
-    if (selectedAssignment && qty > Number(selectedAssignment.available_quantity || 0)) {
-      next.quantity = `Only ${formatNumber(selectedAssignment.available_quantity)} primary containers are available.`;
-    }
-    if (form.unit_price === '' || Number.isNaN(Number(form.unit_price)) || Number(form.unit_price) < 0) {
-      next.unit_price = 'Unit price is required.';
-    }
-    if (form.unit_cost !== '' && Number(form.unit_cost) < 0) {
-      next.unit_cost = 'Unit cost cannot be negative.';
+    if (!isGift && (form.unit_price === '' || !Number.isFinite(Number(form.unit_price)) || Number(form.unit_price) < 0)) {
+      next.unit_price = 'Enter a non-negative unit price.';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(event) {
+  function submit(event) {
     event.preventDefault();
     if (!validate()) return;
     const payload = {
+      sale_catalog_entry_id: Number(form.sale_catalog_entry_id),
       quantity: Number(form.quantity),
-      unit_price: Number(form.unit_price)
+      line_type: form.line_type
     };
-    if (form.packaging_assignment_id) {
-      payload.packaging_assignment_id = Number(form.packaging_assignment_id);
-      if (selectedAssignmentVariantId) {
-        payload.item_variant_id = Number(selectedAssignmentVariantId);
-      }
-    } else {
-      payload.item_variant_id = Number(form.item_variant_id);
-    }
-    if (form.unit_cost !== '') payload.unit_cost = Number(form.unit_cost);
+    if (!isGift) payload.unit_price = Number(form.unit_price);
     mutation.mutate(payload);
   }
 
@@ -132,148 +149,93 @@ export function AddDispatchItemModal({
       open={open}
       onClose={onClose}
       size="md"
-      title={
-        dispatchCustomer
-          ? `Add item for ${dispatchCustomer.customer_name || `customer #${dispatchCustomer.customer_id}`}`
-          : 'Add dispatch item'
-      }
-      description="Add a line item to this customer for the route. Assignment batches are requested by primary-container count."
+      title={dispatchItem ? `Edit line for ${dispatchCustomer?.customer_name || 'customer'}` : dispatchCustomer ? `Add line for ${dispatchCustomer.customer_name || 'customer'}` : 'Add dispatch line'}
+      description={dispatchItem ? 'Update the draft line before resubmitting. The next invoice revision snapshots the corrected offer, price, VAT, and gift status.' : 'Choose a configured sale offer. Availability, costs, carton opening, and ready-container allocation are verified by the server at approval.'}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
-            Cancel
-          </Button>
+          <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form="add-dispatch-item-form" isLoading={mutation.isPending}>
-            Add item
+            {dispatchItem ? 'Save line' : isGift ? 'Add gift' : 'Add line'}
           </Button>
         </>
       }
     >
-      <form
-        id="add-dispatch-item-form"
-        onSubmit={handleSubmit}
-        className="space-y-4"
-        noValidate
-      >
+      <form id="add-dispatch-item-form" onSubmit={submit} className="space-y-4" noValidate>
         {dispatchCustomer && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">
-              Customer
-            </p>
-            <p className="mt-1 font-medium text-ink-50">
-              {dispatchCustomer.customer_name || `Customer #${dispatchCustomer.customer_id}`}
-            </p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Customer</p>
+            <p className="mt-1 font-medium text-ink-50">{dispatchCustomer.customer_name || `Customer #${dispatchCustomer.customer_id}`}</p>
             <p className="mt-0.5 text-xs text-ink-400">
-              {dispatchCustomer.location_name || '-'}
-              {dispatchCustomer.sublocation_name ? ` - ${dispatchCustomer.sublocation_name}` : ''}
+              {[dispatchCustomer.location_name, dispatchCustomer.sublocation_name].filter(Boolean).join(' · ') || 'No territory label'}
             </p>
           </div>
         )}
-        {canPickInventory && (
-          <Select
-            label="Batch"
-            value={form.packaging_assignment_id}
-            onChange={(event) => {
-              const nextAssignment = assignments.find((assignment) => String(assignment.id) === String(event.target.value));
-              setForm((prev) => ({
-                ...prev,
-                packaging_assignment_id: event.target.value,
-                item_variant_id: nextAssignment?.output_item_variant_id || nextAssignment?.charcoal_variant_id || prev.item_variant_id
-              }));
-              setErrors((prev) => ({ ...prev, packaging_assignment_id: undefined, item_variant_id: undefined, quantity: undefined }));
-            }}
-            error={errors.packaging_assignment_id}
-            required
-            description={selectedAssignment ? `${formatNumber(selectedAssignment.available_quantity)} containers available for assignment / cost ${formatNumber(selectedAssignment.calculation_json?.cost_per_primary_container ?? selectedAssignment.cost_per_kg, { maximumFractionDigits: 4 })} each` : 'Select the packaging batch for this customer.'}
-          >
-            <option value="">Select batch</option>
-            {assignments.map((assignment) => (
-              <option
-                key={assignment.id}
-                value={assignment.id}
-                disabled={Number(assignment.available_quantity || 0) <= 0}
-              >
-                Batch #{assignment.id} - {assignment.output_item_name || assignment.packaging_group_name || 'Packaging group'} ({formatNumber(assignment.available_quantity)} available)
-              </option>
-            ))}
-          </Select>
+
+        <Select
+          label="Sale offer"
+          value={form.sale_catalog_entry_id}
+          onChange={(event) => change('sale_catalog_entry_id', event.target.value)}
+          error={errors.sale_catalog_entry_id}
+          required
+          disabled={catalogQuery.isPending}
+        >
+          <option value="">{catalogQuery.isPending ? 'Loading offers…' : 'Select sale offer'}</option>
+          {offers.map((offer) => (
+            <option key={offer.id} value={offer.id}>
+              {offerName(offer)} — {ENTRY_LABELS[offer.entry_type] || offer.entry_type}
+            </option>
+          ))}
+        </Select>
+        {catalogQuery.isError && (
+          <p className="text-xs text-danger-300">
+            {getErrorMessage(catalogQuery.error, 'Could not load the sale catalogue.')}
+          </p>
         )}
-        {canPickInventory ? (
+
+        <Select
+          label="Line type"
+          value={form.line_type}
+          onChange={(event) => change('line_type', event.target.value)}
+          description="Free gifts remain visible on the invoice and dispatch history but are issued at zero price."
+        >
+          <option value="sale">Sale</option>
+          <option value="free_gift">Free gift</option>
+        </Select>
+
+        <div className="grid gap-4 sm:grid-cols-2">
           <Input
-            label="Batch item"
-            value={selectedAssignment ? [
-              selectedAssignment.output_item_name,
-              selectedAssignment.output_variant_name || selectedAssignment.charcoal_variant_name,
-              selectedAssignment.output_sku || selectedAssignment.charcoal_sku
-            ].filter(Boolean).join(' - ') : ''}
-            readOnly
-            placeholder="Select a batch to determine variant"
-            error={errors.item_variant_id}
-            description="Determined by the selected batch."
-          />
-        ) : (
-          <Input
-            label="Variant ID"
+            label={`Quantity${selectedOffer?.unit_label ? ` (${selectedOffer.unit_label})` : ''}`}
             type="number"
-            min="1"
-            value={form.item_variant_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, item_variant_id: event.target.value }))
-            }
-            error={errors.item_variant_id}
-            required
-            description="Numeric only."
-          />
-        )}
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Input
-            label={selectedAssignment ? 'Containers for customer' : 'Quantity (base unit)'}
             min="0"
-            step="0.0001"
+            step={isWholeQuantity ? '1' : '0.0001'}
+            inputMode="decimal"
             value={form.quantity}
-            onChange={(event) => setForm((prev) => ({ ...prev, quantity: event.target.value }))}
+            onChange={(event) => change('quantity', event.target.value)}
             error={errors.quantity}
             required
+            description={isWholeQuantity ? 'Whole units only.' : 'Weight may use decimal quantities.'}
           />
           <Input
-            label={vatEnabled ? 'Unit price excluding VAT' : 'Unit price'}
+            label={isGift ? 'Unit price' : `Unit price${selectedOffer?.vat_rate ? ` (VAT ${formatNumber(selectedOffer.vat_rate)}%)` : ''}`}
             type="number"
             min="0"
             step="0.0001"
-            value={form.unit_price}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, unit_price: event.target.value }))
-            }
+            inputMode="decimal"
+            value={isGift ? '0' : form.unit_price}
+            onChange={(event) => change('unit_price', event.target.value)}
             error={errors.unit_price}
-            required
-          />
-          <Input
-            label="Unit cost"
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.unit_cost}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, unit_cost: event.target.value }))
-            }
-            error={errors.unit_cost}
-            description={selectedAssignment ? 'Optional. Defaults to the selected batch cost.' : 'Optional. Defaults to the variant cost.'}
+            disabled={isGift}
+            required={!isGift}
+            description={isGift ? 'Zero by policy.' : 'Starts from the offer default; override only when allowed.'}
           />
         </div>
-        {vatEnabled && (
+
+        {selectedOffer && (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-ink-300">Subtotal</span>
-              <span className="font-mono text-ink-100">{formatNumber(subtotalPreview)}</span>
-            </div>
-            <div className="mt-1 flex items-center justify-between gap-3">
-              <span className="text-ink-300">VAT {formatNumber(vatRate)}%</span>
-              <span className="font-mono text-ink-100">{formatNumber(vatPreview)}</span>
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/10 pt-2">
-              <span className="font-medium text-ink-100">Total</span>
-              <span className="font-mono font-medium text-ink-50">{formatNumber(totalPreview)}</span>
-            </div>
+            <div className="flex justify-between gap-3"><span className="text-ink-300">Offer type</span><span className="text-ink-100">{ENTRY_LABELS[selectedOffer.entry_type] || selectedOffer.entry_type}</span></div>
+            <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">Subtotal</span><span className="font-mono text-ink-100">{formatNumber(subtotal, { maximumFractionDigits: 4 })}</span></div>
+            <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">VAT</span><span className="font-mono text-ink-100">{formatNumber(vat, { maximumFractionDigits: 4 })}</span></div>
+            <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2"><span className="font-medium text-ink-100">Line total</span><span className="font-mono font-medium text-ink-50">{formatNumber(subtotal + vat, { maximumFractionDigits: 4 })}</span></div>
           </div>
         )}
       </form>

@@ -52,8 +52,9 @@ describe('payments config', () => {
   it('lists receipt types used for filtering', () => {
     expect(RECEIPT_TYPES.map((entry) => entry.value)).toEqual([
       'sale',
-      'debt',
-      'payment'
+      'payment',
+      'credit',
+      'other'
     ]);
   });
 

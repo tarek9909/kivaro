@@ -7,6 +7,12 @@ import { useAuthStore } from '@/app/stores/authStore.js';
 import { useDebouncedValue } from '@/lib/useDebouncedValue.js';
 import { getErrorMessage } from '@/lib/errors.js';
 import {
+  buildCustomerExport,
+  CUSTOMER_EXPORT_OPTIONS,
+  downloadBlob
+} from '@/lib/csvExport.js';
+import { CsvExportControl } from '@/components/CsvExportControl.jsx';
+import {
   Badge,
   Button,
   ConfirmDialog,
@@ -47,6 +53,7 @@ export default function CustomersPage() {
   const canCreate = hasPermission(CUSTOMERS_PERMISSIONS.create);
   const canUpdate = hasPermission(CUSTOMERS_PERMISSIONS.update);
   const canDelete = hasPermission(CUSTOMERS_PERMISSIONS.delete);
+  const canExport = canView && hasPermission('reports.export');
   const canPickLocations = hasPermission(LOCATIONS_PERMISSIONS.locations);
   const canPickSalesmen = hasPermission(LOCATIONS_PERMISSIONS.salesmen);
   const queryClient = useQueryClient();
@@ -63,6 +70,8 @@ export default function CustomersPage() {
   const [editing, setEditing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [openCustomerId, setOpenCustomerId] = useState(null);
+  const [exportOption, setExportOption] = useState('directory_filtered');
+  const [isExporting, setIsExporting] = useState(false);
 
   const debouncedSearch = useDebouncedValue(search, 300);
 
@@ -111,6 +120,26 @@ export default function CustomersPage() {
     onError: (error) =>
       toast.error(getErrorMessage(error, 'Could not deactivate customer.'))
   });
+
+  async function exportCsv() {
+    const { option, params } = buildCustomerExport({
+      optionValue: exportOption,
+      filters: queryParams
+    });
+    setIsExporting(true);
+    try {
+      const response = await api.customers.exportCsv(params);
+      const blob = response instanceof Blob ? response : response?.data;
+      if (!downloadBlob(blob, option.filename)) {
+        throw new Error('The export response did not include a CSV file.');
+      }
+      toast.success('Customer CSV downloaded');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Could not export customer CSV.'));
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   const rows = listQuery.data?.data?.customers || [];
   const meta = listQuery.data?.meta || {};
@@ -201,9 +230,21 @@ export default function CustomersPage() {
             : 'You can add new customers here. Browsing the directory or opening a customer for history requires the view permission.'
         }
         actions={
-          <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
-            New customer
-          </Button>
+          <div className="flex flex-wrap items-end justify-end gap-2">
+            {canExport && (
+              <CsvExportControl
+                options={CUSTOMER_EXPORT_OPTIONS}
+                value={exportOption}
+                onChange={setExportOption}
+                onExport={exportCsv}
+                isLoading={isExporting}
+                label="Customer export dataset"
+              />
+            )}
+            <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
+              New customer
+            </Button>
+          </div>
         }
       />
 

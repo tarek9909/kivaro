@@ -7,6 +7,9 @@ const salesmanIdParam = z.object({
 });
 const status = z.enum(['active', 'inactive']);
 const targetStatus = z.enum(['draft', 'active', 'closed', 'cancelled']);
+const isoDate = z.string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected date in YYYY-MM-DD format');
 
 const listSchema = z.object({
   query: z.object({
@@ -74,6 +77,14 @@ const assignSchema = z.object({
   })
 });
 
+const replaceAssignmentsSchema = z.object({
+  params: idParam,
+  body: z.object({
+    sublocation_ids: z.array(z.coerce.number().int().positive()).default([]),
+    assigned_at: z.string().trim().min(1).optional()
+  })
+});
+
 const locationTargetBody = z.object({
   location_id: z.coerce.number().int().positive(),
   target_period: z.enum(['daily', 'weekly', 'monthly', 'quarterly', 'yearly']).default('monthly'),
@@ -108,6 +119,28 @@ module.exports = {
   createSublocationSchema: z.object({ body: sublocationBody }),
   idSchema: z.object({ params: idParam }),
   listSchema,
+  replaceAssignmentsSchema,
+  salesmanExportSchema: z.object({
+    query: z.object({
+      dataset: z.enum(['performance', 'orders', 'invoices', 'delivered_customers', 'revenue']).default('performance'),
+      salesman_id: z.coerce.number().int().positive().optional(),
+      salesman_status: status.optional(),
+      pos_status: z.enum(['pending', 'accepted', 'cancelled', 'converted', 'rejected']).optional(),
+      invoice_status: z.enum(['issued', 'voided', 'cancelled']).optional(),
+      search: z.string().trim().max(200).optional(),
+      date_from: isoDate.optional(),
+      date_to: isoDate.optional(),
+      store_id: z.coerce.number().int().positive().optional()
+    }).strict().superRefine((value, context) => {
+      if (value.date_from && value.date_to && value.date_from > value.date_to) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['date_to'],
+          message: 'date_to must be on or after date_from'
+        });
+      }
+    })
+  }),
   salesmanSublocationIdSchema: z.object({ params: salesmanIdParam.required({ sublocationId: true }) }),
   sublocationTargetSchema,
   updateLocationSchema: updateSchema(locationBody),

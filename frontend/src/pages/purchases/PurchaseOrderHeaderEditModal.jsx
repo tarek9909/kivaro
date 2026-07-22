@@ -64,7 +64,7 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
 
   // Only load supplier options while the modal is open and the user can.
   const suppliersQuery = useSuppliersOptions(open && canSeeSuppliers);
-  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts);
+  const cashAccountsQuery = useCashAccountsOptions(open && canSeeCashAccounts, { cash_flow_direction: 'outgoing' });
   const suppliers = suppliersQuery.data?.data?.suppliers || [];
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 

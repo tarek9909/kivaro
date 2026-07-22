@@ -49,6 +49,7 @@ describe('commission integration', () => {
       .send({
         account_name: `Commission Cash ${Date.now()}`,
         account_type: 'cash',
+        cash_flow_permission: 'outgoing',
         opening_balance: 100
       })
       .expect(201);
@@ -126,18 +127,12 @@ describe('commission integration', () => {
 
     await dbQuery(
       `INSERT INTO dispatch_items (
-        dispatch_customer_id,
-        dispatch_request_id,
-        item_variant_id,
-        quantity,
-        unit_price,
-        unit_cost,
-        subtotal_amount,
-        vat_rate,
-        vat_amount,
-        line_total
-      ) VALUES (?, ?, ?, 1, 150, 2, 150, 0, 0, 150)`,
-      [dispatchCustomerRow.id, dispatchRow.id, inventory.variant.id]
+        store_id, dispatch_customer_id, dispatch_request_id, item_id,
+        line_type, fulfillment_type, quantity, unit_price, unit_cost,
+        subtotal_amount, vat_rate, vat_amount, line_total,
+        item_name_snapshot, unit_label_snapshot
+      ) VALUES (1, ?, ?, ?, 'sale', 'normal_piece', 1, 150, 2, 150, 0, 0, 150, ?, 'piece')`,
+      [dispatchCustomerRow.id, dispatchRow.id, inventory.item.id, inventory.item.name]
     );
 
     const calculateResponse = await authRequest(token)

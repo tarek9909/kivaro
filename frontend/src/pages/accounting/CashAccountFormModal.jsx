@@ -15,6 +15,7 @@ function emptyForm() {
   return {
     account_name: '',
     account_type: 'cash',
+    cash_flow_permission: 'both',
     opening_balance: '0',
     status: 'active'
   };
@@ -25,6 +26,7 @@ function fromAccount(account) {
   return {
     account_name: account.account_name || '',
     account_type: account.account_type || 'cash',
+    cash_flow_permission: account.cash_flow_permission || 'both',
     opening_balance:
       account.opening_balance !== undefined && account.opening_balance !== null
         ? String(account.opening_balance)
@@ -80,6 +82,7 @@ export function CashAccountFormModal({ open, onClose, account }) {
     const payload = {
       account_name: form.account_name.trim(),
       account_type: form.account_type,
+      cash_flow_permission: form.cash_flow_permission,
       status: form.status
     };
     if (!isEdit) {
@@ -116,7 +119,7 @@ export function CashAccountFormModal({ open, onClose, account }) {
           error={errors.account_name}
           required
         />
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Select
             label="Type"
             value={form.account_type}
@@ -142,6 +145,18 @@ export function CashAccountFormModal({ open, onClose, account }) {
                 {option.label}
               </option>
             ))}
+          </Select>
+          <Select
+            label="Allowed cash flow"
+            value={form.cash_flow_permission}
+            onChange={(event) =>
+              setForm((prev) => ({ ...prev, cash_flow_permission: event.target.value }))
+            }
+            description="Incoming accounts collect money; outgoing accounts pay money."
+          >
+            <option value="both">Incoming and outgoing</option>
+            <option value="incoming">Incoming only</option>
+            <option value="outgoing">Outgoing only</option>
           </Select>
         </div>
         {!isEdit && (

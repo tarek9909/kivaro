@@ -1,7 +1,8 @@
-const { resetDatabase } = require('./lib');
+const { archiveAndResetDatabase } = require('./lib');
 
 async function main() {
-  const result = await resetDatabase();
+  const result = await archiveAndResetDatabase();
+  console.log(`Verified archive created: ${result.archive.archivePath}`);
   console.log(`Database reset completed: ${result.database}`);
 }
 

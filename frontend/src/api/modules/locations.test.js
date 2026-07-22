@@ -44,15 +44,17 @@ describe('locations API module', () => {
     ]);
   });
 
-  it('exposes salesmen CRUD plus assign and unassign actions', () => {
+  it('exposes salesmen CRUD plus individual and atomic bulk territory actions', () => {
     const client = buildClientStub();
     const api = createLocationsApi(client);
     expect(Object.keys(api.salesmen).sort()).toEqual([
       'assignSublocation',
       'create',
+      'exportCsv',
       'get',
       'list',
       'remove',
+      'replaceSublocations',
       'sublocations',
       'unassignSublocation',
       'update'
@@ -90,6 +92,34 @@ describe('locations API module', () => {
       },
       { method: 'delete', path: '/salesmen/7/sublocations/9', rest: [undefined] }
     ]);
+  });
+
+  it('downloads salesman CSV exports from the canonical export endpoint', async () => {
+    const client = buildClientStub();
+    const api = createLocationsApi(client);
+    await api.salesmen.exportCsv({ dataset: 'revenue', salesman_status: 'active' });
+    expect(client.calls[0]).toEqual({
+      method: 'get',
+      path: '/salesmen/export',
+      rest: [{
+        params: { dataset: 'revenue', salesman_status: 'active' },
+        responseType: 'blob'
+      }]
+    });
+  });
+
+  it('replaces all salesman territories in one PUT request', async () => {
+    const client = buildClientStub();
+    const api = createLocationsApi(client);
+    await api.salesmen.replaceSublocations(7, {
+      sublocation_ids: [9, 10],
+      assigned_at: '2026-07-22'
+    });
+    expect(client.calls[0]).toEqual({
+      method: 'put',
+      path: '/salesmen/7/sublocations',
+      rest: [{ sublocation_ids: [9, 10], assigned_at: '2026-07-22' }, undefined]
+    });
   });
 
   it('reads a salesman\'s sublocations via GET /salesmen/:id/sublocations', async () => {

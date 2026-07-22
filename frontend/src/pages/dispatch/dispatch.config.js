@@ -8,7 +8,8 @@ export const DISPATCH_PERMISSIONS = {
   create: 'dispatch.create',
   approve: 'dispatch.approve',
   settle: 'dispatch.settle',
-  print: 'dispatch.print'
+  print: 'dispatch.print',
+  salesmanWorkspace: 'salesman_workspace.view'
 };
 
 /**
@@ -20,7 +21,8 @@ export const DISPATCH_PARENT_PERMISSIONS = [
   DISPATCH_PERMISSIONS.create,
   DISPATCH_PERMISSIONS.approve,
   DISPATCH_PERMISSIONS.settle,
-  DISPATCH_PERMISSIONS.print
+  DISPATCH_PERMISSIONS.print,
+  DISPATCH_PERMISSIONS.salesmanWorkspace
 ];
 
 export const DISPATCH_STATUSES = [
@@ -55,7 +57,8 @@ export const PAYMENT_METHODS = [
  *
  * Status flow:
  *   draft -> pending_approval -> approved -> dispatched -> partially_settled -> completed
- *   any non-dispatched stage can be cancelled; dispatched/completed cannot.
+ * A submitted revision can be reworked by a creator, which voids the issued
+ * invoices and invalidates the document checklist before it returns to draft.
  */
 export function getAvailableDispatchActions(dispatchRequest) {
   if (!dispatchRequest) return new Set();
@@ -71,18 +74,20 @@ export function getAvailableDispatchActions(dispatchRequest) {
   }
   if (status === 'pending_approval') {
     actions.add('approve');
+    actions.add('rework');
     actions.add('cancel');
   }
   if (status === 'approved') {
+    actions.add('rework');
     actions.add('dispatchStock');
     actions.add('cancel');
   }
   if (status === 'dispatched') {
     actions.add('createReturn');
-    actions.add('createSettlement');
+    actions.add('createCloseout');
   }
   if (status === 'partially_settled') {
-    actions.add('createSettlement');
+    actions.add('createCloseout');
   }
   return actions;
 }
@@ -98,7 +103,8 @@ export const DISPATCH_TABS = [
       DISPATCH_PERMISSIONS.create,
       DISPATCH_PERMISSIONS.approve,
       DISPATCH_PERMISSIONS.settle,
-      DISPATCH_PERMISSIONS.print
+      DISPATCH_PERMISSIONS.print,
+      DISPATCH_PERMISSIONS.salesmanWorkspace
     ]
   }
 ];

@@ -2,7 +2,6 @@ const {
   authRequest,
   closeIntegrationPool,
   createInventoryFixture,
-  createLocationFixture,
   dbQuery,
   loginOwner,
   prepareIntegrationDb
@@ -10,373 +9,123 @@ const {
 
 jest.setTimeout(30000);
 
-describe('inventory and purchase integration', () => {
+describe('canonical inventory and purchase integration', () => {
   let dbReady = false;
   let token;
 
   beforeAll(async () => {
     dbReady = await prepareIntegrationDb();
-    if (dbReady) {
-      token = await loginOwner();
-    }
+    if (dbReady) token = await loginOwner();
   });
 
   afterAll(async () => {
     await closeIntegrationPool();
   });
 
-  test('purchase approval records a supplier payment and partial receiving increases item stock', async () => {
+  test('receives carton-weight purchases as sealed carton lots with kg WAC', async () => {
     if (!dbReady) return;
 
-    const fixture = await createInventoryFixture(token, 'inventory_purchase');
+    const fixture = await createInventoryFixture(token, 'carton_purchase', {
+      stock_mode: 'carton_weight',
+      kg_per_carton: 12,
+      loose_units_per_carton: 30,
+      receive: false
+    });
     const cashAccountResponse = await authRequest(token)
       .post('/api/cash-accounts')
       .send({
-        account_name: `Purchase Cash ${Date.now()}`,
+        account_name: `Purchase cash ${Date.now()}`,
         account_type: 'cash',
+        cash_flow_permission: 'outgoing',
         opening_balance: 100
       })
       .expect(201);
-    const cashAccountId = cashAccountResponse.body.data.cash_account.id;
-
     const supplierResponse = await authRequest(token)
       .post('/api/suppliers')
-      .send({ name: 'Integration Supplier' })
+      .send({ name: `Carton supplier ${Date.now()}` })
       .expect(201);
 
-    const poResponse = await authRequest(token)
-      .post('/api/purchase-orders')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        warehouse_id: fixture.warehouse.id,
-        cash_account_id: cashAccountId,
-        payment_method: 'cash',
-        order_date: '2026-05-26',
-        items: [
-          {
-            item_id: fixture.item.id,
-            ordered_quantity: 5,
-            unit_cost: 3
-          }
-        ]
-      })
-      .expect(201);
-
-    const purchaseOrder = poResponse.body.data.purchase_order;
-    const purchaseOrderItem = purchaseOrder.items[0];
-    expect(Number(purchaseOrderItem.item_id)).toBe(Number(fixture.item.id));
-    expect(purchaseOrderItem.item_variant_id).toBeNull();
-
-    await authRequest(token)
-      .post('/api/supplier-payments')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        purchase_order_id: purchaseOrder.id,
-        payment_date: '2026-05-26',
-        amount: 1,
-        payment_method: 'cash',
-        cash_account_id: cashAccountId
-      })
-      .expect(409);
-
-    const cancelledPoResponse = await authRequest(token)
-      .post('/api/purchase-orders')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        warehouse_id: fixture.warehouse.id,
-        cash_account_id: cashAccountId,
-        payment_method: 'cash',
-        order_date: '2026-05-26',
-        items: [
-          {
-            item_id: fixture.item.id,
-            ordered_quantity: 1,
-            unit_cost: 3
-          }
-        ]
-      })
-      .expect(201);
-    await authRequest(token)
-      .post(`/api/purchase-orders/${cancelledPoResponse.body.data.purchase_order.id}/cancel`)
-      .expect(200);
-    await authRequest(token)
-      .post('/api/supplier-payments')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        purchase_order_id: cancelledPoResponse.body.data.purchase_order.id,
-        payment_date: '2026-05-26',
-        amount: 1,
-        payment_method: 'cash',
-        cash_account_id: cashAccountId
-      })
-      .expect(409);
-
-    await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/submit`).expect(200);
-    const approvedResponse = await authRequest(token)
-      .post(`/api/purchase-orders/${purchaseOrder.id}/approve`)
-      .expect(200);
-    expect(Number(approvedResponse.body.data.purchase_order.amount_paid)).toBe(15);
-    expect(Number(approvedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
-
-    const automaticPaymentsResponse = await authRequest(token)
-      .get(`/api/supplier-payments?purchase_order_id=${purchaseOrder.id}`)
-      .expect(200);
-    expect(automaticPaymentsResponse.body.data.supplier_payments).toHaveLength(1);
-    expect(Number(automaticPaymentsResponse.body.data.supplier_payments[0].amount)).toBe(15);
-
-    await authRequest(token)
-      .post(`/api/purchase-orders/${purchaseOrder.id}/receipts`)
-      .send({
-        received_date: '2026-05-26',
-        items: [
-          {
-            purchase_order_item_id: purchaseOrderItem.id,
-            received_quantity: 2,
-            unit_cost: 3
-          }
-        ]
-      })
-      .expect(201);
-
-    const receiptsResponse = await authRequest(token)
-      .get(`/api/purchase-orders/${purchaseOrder.id}/receipts`)
-      .expect(200);
-
-    expect(receiptsResponse.body.data.purchase_receipts).toHaveLength(1);
-    expect(receiptsResponse.body.data.purchase_order).toBeUndefined();
-
-    const closedResponse = await authRequest(token)
-      .post(`/api/purchase-orders/${purchaseOrder.id}/cancel`)
-      .expect(200);
-    expect(closedResponse.body.data.purchase_order.status).toBe('closed');
-    expect(Number(closedResponse.body.data.purchase_order.payable_amount)).toBe(6);
-    expect(Number(closedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
-
-    await authRequest(token)
-      .post('/api/supplier-payments')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        purchase_order_id: purchaseOrder.id,
-        payment_date: '2026-05-26',
-        amount: 7,
-        payment_method: 'cash',
-        cash_account_id: cashAccountId
-      })
-      .expect(409);
-
-    await authRequest(token)
-      .post('/api/supplier-payments')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        purchase_order_id: purchaseOrder.id,
-        payment_date: '2026-05-26',
-        amount: 6,
-        payment_method: 'cash',
-        cash_account_id: cashAccountId
-      })
-      .expect(409);
-
-    const paidClosedResponse = await authRequest(token)
-      .get(`/api/purchase-orders/${purchaseOrder.id}`)
-      .expect(200);
-    expect(paidClosedResponse.body.data.purchase_order.status).toBe('closed');
-    expect(Number(paidClosedResponse.body.data.purchase_order.outstanding_amount)).toBe(0);
-
-    const itemBalances = await dbQuery(
-      `SELECT quantity_on_hand
-       FROM item_stock_balances
-       WHERE warehouse_id = ? AND item_id = ?
-       ORDER BY id ASC`,
-      [fixture.warehouse.id, fixture.item.id]
-    );
-
-    expect(Number(itemBalances[0]?.quantity_on_hand)).toBe(2);
-  });
-
-  test('non-stocked variants are rejected from stock-moving flows', async () => {
-    if (!dbReady) return;
-
-    const fixture = await createInventoryFixture(token, 'non_stocked');
-    const market = await createLocationFixture(token, 'non_stocked');
-    const itemResponse = await authRequest(token)
-      .post('/api/items')
-      .send({
-        category_id: 1,
-        base_unit_id: 1,
-        name: `Non Stocked Item ${Date.now()}`,
-        code: `NS_${Date.now()}`,
-        item_type: 'service',
-        tracking_type: 'non_stocked',
-        default_cost: 0,
-        default_selling_price: 5,
-        reorder_level: 0
-      })
-      .expect(201);
-    const variantResponse = await authRequest(token)
-      .post('/api/item-variants')
-      .send({
-        item_id: itemResponse.body.data.item.id,
-        variant_name: 'Service',
-        sku: `NS_SKU_${Date.now()}`,
-        cost: 0,
-        selling_price: 5
-      })
-      .expect(201);
-    const variantId = variantResponse.body.data.item_variant.id;
-
-    const listedVariantsResponse = await authRequest(token)
-      .get('/api/item-variants?tracking_type=stocked&limit=1000')
-      .expect(200);
-    expect(listedVariantsResponse.body.data.item_variants.some((variant) => Number(variant.id) === Number(variantId))).toBe(false);
-
-    await authRequest(token)
-      .post('/api/stock-adjustments')
-      .send({
-        warehouse_id: fixture.warehouse.id,
-        item_variant_id: variantId,
-        quantity_change: 1,
-        unit_cost: 0,
-        reason: 'Should not move stock'
-      })
-      .expect(400);
-
-    const supplierResponse = await authRequest(token)
-      .post('/api/suppliers')
-      .send({ name: `Non Stocked Supplier ${Date.now()}` })
-      .expect(201);
-    const cashAccountResponse = await authRequest(token)
-      .post('/api/cash-accounts')
-      .send({
-        account_name: `Non Stocked Purchase Cash ${Date.now()}`,
-        account_type: 'cash',
-        opening_balance: 100
-      })
-      .expect(201);
-
-    await authRequest(token)
+    const purchaseOrderResponse = await authRequest(token)
       .post('/api/purchase-orders')
       .send({
         supplier_id: supplierResponse.body.data.supplier.id,
         warehouse_id: fixture.warehouse.id,
         cash_account_id: cashAccountResponse.body.data.cash_account.id,
         payment_method: 'cash',
-        order_date: '2026-05-26',
-        items: [
-          {
-            item_id: itemResponse.body.data.item.id,
-            ordered_quantity: 1,
-            unit_cost: 1
-          }
-        ]
+        order_date: '2026-07-22',
+        items: [{ item_id: fixture.item.id, carton_count: 2, cost_per_carton: 24 }]
       })
-      .expect(400);
+      .expect(201);
+    const purchaseOrder = purchaseOrderResponse.body.data.purchase_order;
+    const orderItem = purchaseOrder.items[0];
 
-    const dispatchResponse = await authRequest(token)
-      .post('/api/dispatch-requests')
-      .send({
-        salesman_id: market.salesman.id,
-        warehouse_id: fixture.warehouse.id,
-        request_date: '2026-05-26'
-      })
-      .expect(201);
-    const dispatchCustomerResponse = await authRequest(token)
-      .post(`/api/dispatch-requests/${dispatchResponse.body.data.dispatch_request.id}/customers`)
-      .send({ customer_id: market.customer.id })
-      .expect(201);
-
-    await authRequest(token)
-      .post(`/api/dispatch-customers/${dispatchCustomerResponse.body.data.dispatch_customer.id}/items`)
-      .send({
-        item_variant_id: variantId,
-        quantity: 1,
-        unit_price: 5,
-        unit_cost: 0
-      })
-      .expect(400);
-  });
-
-  test('purchase receiving normalizes item base units into kg stock', async () => {
-    if (!dbReady) return;
-
-    const warehouseResponse = await authRequest(token)
-      .post('/api/warehouses')
-      .send({
-        name: `Ton Purchase Warehouse ${Date.now()}`,
-        code: `TPW_${Date.now()}`
-      })
-      .expect(201);
-    const itemResponse = await authRequest(token)
-      .post('/api/items')
-      .send({
-        category_id: 1,
-        base_unit_id: 3,
-        name: `Ton Charcoal ${Date.now()}`,
-        code: `TON_CHAR_${Date.now()}`,
-        item_type: 'raw_charcoal',
-        tracking_type: 'stocked',
-        default_cost: 300,
-        default_selling_price: 500,
-        reorder_level: 0
-      })
-      .expect(201);
-    const supplierResponse = await authRequest(token)
-      .post('/api/suppliers')
-      .send({ name: `Ton Supplier ${Date.now()}` })
-      .expect(201);
-    const cashAccountResponse = await authRequest(token)
-      .post('/api/cash-accounts')
-      .send({
-        account_name: `Ton Purchase Cash ${Date.now()}`,
-        account_type: 'cash',
-        opening_balance: 1000
-      })
-      .expect(201);
-
-    const poResponse = await authRequest(token)
-      .post('/api/purchase-orders')
-      .send({
-        supplier_id: supplierResponse.body.data.supplier.id,
-        warehouse_id: warehouseResponse.body.data.warehouse.id,
-        cash_account_id: cashAccountResponse.body.data.cash_account.id,
-        payment_method: 'cash',
-        order_date: '2026-05-26',
-        items: [
-          {
-            item_id: itemResponse.body.data.item.id,
-            ordered_quantity: 2,
-            unit_cost: 300
-          }
-        ]
-      })
-      .expect(201);
-
-    const purchaseOrder = poResponse.body.data.purchase_order;
-    const purchaseOrderItem = purchaseOrder.items[0];
-    expect(purchaseOrderItem.base_unit_symbol).toBe('ton');
-    expect(Number(purchaseOrderItem.ordered_quantity)).toBe(2);
+    expect(orderItem.item_id).toBe(fixture.item.id);
+    expect(orderItem.ordered_quantity).toBe('2.0000');
+    expect(orderItem.unit_cost).toBe('24.0000');
 
     await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/submit`).expect(200);
     await authRequest(token).post(`/api/purchase-orders/${purchaseOrder.id}/approve`).expect(200);
+
+    const [supplierPayment] = await dbQuery(
+      `SELECT cash_account_id
+       FROM supplier_payments
+       WHERE purchase_order_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [purchaseOrder.id]
+    );
+    expect(Number(supplierPayment.cash_account_id)).toBe(cashAccountResponse.body.data.cash_account.id);
+
     await authRequest(token)
       .post(`/api/purchase-orders/${purchaseOrder.id}/receipts`)
       .send({
-        received_date: '2026-05-26',
-        items: [
-          {
-            purchase_order_item_id: purchaseOrderItem.id,
-            received_quantity: 2,
-            unit_cost: 300
-          }
-        ]
+        received_date: '2026-07-22',
+        items: [{ purchase_order_item_id: orderItem.id, carton_count: 2, cost_per_carton: 24 }]
       })
       .expect(201);
 
-    const itemBalances = await dbQuery(
-      `SELECT quantity_on_hand
+    const [balance] = await dbQuery(
+      `SELECT quantity_on_hand, average_cost, stock_value
        FROM item_stock_balances
        WHERE warehouse_id = ? AND item_id = ?`,
-      [warehouseResponse.body.data.warehouse.id, itemResponse.body.data.item.id]
+      [fixture.warehouse.id, fixture.item.id]
     );
-    expect(Number(itemBalances[0]?.quantity_on_hand)).toBe(2000);
+    expect(Number(balance.quantity_on_hand)).toBe(24);
+    expect(Number(balance.average_cost)).toBe(2);
+    expect(Number(balance.stock_value)).toBe(48);
+
+    const [lot] = await dbQuery(
+      `SELECT received_cartons, remaining_cartons, kg_per_carton, unit_cost_per_kg
+       FROM carton_stock_lots
+       WHERE warehouse_id = ? AND item_id = ?`,
+      [fixture.warehouse.id, fixture.item.id]
+    );
+    expect(Number(lot.received_cartons)).toBe(2);
+    expect(Number(lot.remaining_cartons)).toBe(2);
+    expect(Number(lot.kg_per_carton)).toBe(12);
+    expect(Number(lot.unit_cost_per_kg)).toBe(2);
+  });
+
+  test('rejects a packaging item configured with a non-piece stock mode', async () => {
+    if (!dbReady) return;
+
+    const fixture = await createInventoryFixture(token, 'packaging_validation', { receive: false });
+    const response = await authRequest(token)
+      .post('/api/items')
+      .send({
+        category_id: fixture.category.id,
+        base_unit_id: 1,
+        name: `Invalid packaging ${Date.now()}`,
+        code: `INVALID_PACK_${Date.now()}`,
+        item_kind: 'packaging',
+        stock_mode: 'weight',
+        default_cost: 1,
+        reorder_level: 0
+      })
+      .expect(400);
+
+    expect(response.body.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'body.stock_mode' })
+    ]));
   });
 });

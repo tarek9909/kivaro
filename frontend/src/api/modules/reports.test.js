@@ -19,90 +19,67 @@ function buildClientStub() {
   };
 }
 
-const EXPECTED_KEYS = [
-  'commissions',
-  'currentStock',
-  'customerBalances',
-  'debts',
-  'dispatchSummary',
-  'profitLoss',
-  'purchases',
-  'packagingAssignments',
-  'packagingShortages',
-  'salesmanTargetProgress',
-  'sales',
-  'stockMovements'
-];
-
 const EXPECTED_PATHS = {
   commissions: '/reports/commissions',
   currentStock: '/reports/current-stock',
   customerBalances: '/reports/customer-balances',
   debts: '/reports/debts',
   dispatchSummary: '/reports/dispatch-summary',
+  gifts: '/reports/gifts',
+  invoices: '/reports/invoices',
+  normalStock: '/reports/normal-stock',
+  packagingOperations: '/reports/packaging-operations',
+  packagingShortages: '/reports/packaging-shortages',
+  packagingStock: '/reports/packaging-stock',
+  posOrders: '/reports/pos-orders',
   profitLoss: '/reports/profit-loss',
   purchases: '/reports/purchases',
-  packagingAssignments: '/reports/packaging-assignments',
-  packagingShortages: '/reports/packaging-shortages',
+  readyStock: '/reports/ready-stock',
+  salesmanPerformance: '/reports/salesman-performance',
   salesmanTargetProgress: '/reports/salesman-target-progress',
   sales: '/reports/sales',
   stockMovements: '/reports/stock-movements'
 };
 
 describe('reports API module', () => {
-  it('exposes get/csv for every backend report', () => {
-    const client = buildClientStub();
-    const api = createReportsApi(client);
-    const keys = Object.keys(api).sort();
-    expect(keys).toEqual(EXPECTED_KEYS.slice().sort());
-    for (const key of keys) {
-      expect(Object.keys(api[key]).sort()).toEqual(['csv', 'get']);
+  it('exposes get/csv for every canonical backend report', () => {
+    const api = createReportsApi(buildClientStub());
+
+    expect(Object.keys(api).sort()).toEqual(Object.keys(EXPECTED_PATHS).sort());
+    for (const report of Object.values(api)) {
+      expect(Object.keys(report).sort()).toEqual(['csv', 'get']);
     }
   });
 
-  it('routes get() to the correct path with the supplied params', async () => {
+  it('routes every report get() request with the supplied filters', async () => {
     const client = buildClientStub();
     const api = createReportsApi(client);
-    for (const key of EXPECTED_KEYS) {
-      await api[key].get({ page: 2, limit: 50, search: 'x' });
+    for (const key of Object.keys(EXPECTED_PATHS)) {
+      await api[key].get({ page: 2, limit: 50, date_from: '2026-01-01' });
     }
+
     expect(client.calls).toEqual(
-      EXPECTED_KEYS.map((key) => ({
+      Object.entries(EXPECTED_PATHS).map(([, path]) => ({
         method: 'get',
-        path: EXPECTED_PATHS[key],
-        rest: [{ params: { page: 2, limit: 50, search: 'x' } }]
+        path,
+        rest: [{ params: { page: 2, limit: 50, date_from: '2026-01-01' } }]
       }))
     );
   });
 
-  it('appends format=csv and responseType=text on csv()', async () => {
+  it('adds format=csv and responseType=text for an export', async () => {
     const client = buildClientStub();
     const api = createReportsApi(client);
-    await api.sales.csv({ status: 'completed', date_from: '2026-01-01' });
-    expect(client.calls[0]).toEqual({
-      method: 'get',
-      path: '/reports/sales',
-      rest: [
-        {
-          params: {
-            status: 'completed',
-            date_from: '2026-01-01',
-            format: 'csv'
-          },
-          responseType: 'text'
-        }
-      ]
-    });
-  });
 
-  it('handles csv() without params', async () => {
-    const client = buildClientStub();
-    const api = createReportsApi(client);
-    await api.profitLoss.csv();
+    await api.gifts.csv({ salesman_id: 4, date_from: '2026-01-01' });
+
     expect(client.calls[0]).toEqual({
       method: 'get',
-      path: '/reports/profit-loss',
-      rest: [{ params: { format: 'csv' }, responseType: 'text' }]
+      path: '/reports/gifts',
+      rest: [{
+        params: { salesman_id: 4, date_from: '2026-01-01', format: 'csv' },
+        responseType: 'text'
+      }]
     });
   });
 });

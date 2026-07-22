@@ -1,30 +1,34 @@
+const mockConnection = { execute: jest.fn() };
+
 jest.mock('../src/modules/packaging/packaging.model', () => ({
-  createComponent: jest.fn(),
-  createAssignment: jest.fn(),
-  findAssignmentById: jest.fn(),
+  createOperation: jest.fn(),
+  createOperationComponent: jest.fn(),
+  createReadyStockContainer: jest.fn(),
+  createReadyStockMovement: jest.fn(),
   findGroupById: jest.fn(),
-  findComponentById: jest.fn(),
+  findOperationById: jest.fn(),
   getGroupComponents: jest.fn(),
-  getVariantCost: jest.fn(),
-  getWarehouseVariantBalances: jest.fn(),
-  updateAssignment: jest.fn()
+  lockGroupById: jest.fn()
 }));
 
-jest.mock('../src/bootstrap/db', () => ({
-  query: jest.fn()
-}));
+jest.mock('../src/bootstrap/db', () => ({ query: jest.fn() }));
 
 jest.mock('../src/modules/inventory/inventory.model', () => ({
-  findVariantById: jest.fn(),
+  findItemById: jest.fn(),
   findWarehouseById: jest.fn()
 }));
 
 jest.mock('../src/modules/inventory/stock.service', () => ({
-  decreaseStock: jest.fn()
+  consumeCartonLooseUnits: jest.fn(),
+  decreaseItemStock: jest.fn()
+}));
+
+jest.mock('../src/services/storeConfig.service', () => ({
+  getStoreVatSettings: jest.fn()
 }));
 
 jest.mock('../src/utils/transaction', () => ({
-  withTransaction: jest.fn(async (callback) => callback({ execute: jest.fn() }))
+  withTransaction: jest.fn(async (callback) => callback(mockConnection))
 }));
 
 const model = require('../src/modules/packaging/packaging.model');
@@ -32,508 +36,255 @@ const db = require('../src/bootstrap/db');
 const inventoryModel = require('../src/modules/inventory/inventory.model');
 const stockService = require('../src/modules/inventory/stock.service');
 const service = require('../src/modules/packaging/packaging.service');
-const realModel = jest.requireActual('../src/modules/packaging/packaging.model');
 
-const actor = { store_id: 1 };
+const actor = { id: 9, store_id: 1 };
 
-function component(overrides) {
+function normalCartonInput(overrides = {}) {
   return {
-    id: overrides.id,
+    id: 11,
     store_id: 1,
-    packaging_group_id: 7,
-    parent_component_id: null,
-    level_key: 'category',
-    item_variant_id: overrides.id,
-    item_name: `Material ${overrides.id}`,
-    variant_name: `Variant ${overrides.id}`,
-    sku: `SKU-${overrides.id}`,
-    cost: 0,
-    unit_symbol: 'pc',
-    quantity_per_parent: null,
-    capacity_kg: null,
-    sort_order: 0,
+    name: 'Raw charcoal',
+    code: 'RAW-01',
+    status: 'active',
+    item_kind: 'normal',
+    stock_mode: 'carton_weight',
+    kg_per_carton: '12.0000',
+    loose_units_per_carton: 30,
+    max_content_weight_kg: '0.0000',
     ...overrides
   };
 }
 
-function requirementById(calculation, id) {
-  return calculation.requirements.find((requirement) => Number(requirement.component_id) === Number(id));
+function packagingItem(id, name, maxContentWeightKg = '0.0000', overrides = {}) {
+  return {
+    id,
+    store_id: 1,
+    name,
+    code: `PKG-${id}`,
+    status: 'active',
+    item_kind: 'packaging',
+    stock_mode: 'piece',
+    max_content_weight_kg: maxContentWeightKg,
+    ...overrides
+  };
 }
 
-describe('packaging service hierarchy calculations', () => {
+function group(overrides = {}) {
+  return {
+    id: 7,
+    store_id: 1,
+    name: 'Six kilogram retail carton',
+    code: 'SIX-KG',
+    input_item_id: 11,
+    default_warehouse_id: 2,
+    status: 'active',
+    ...overrides
+  };
+}
+
+function components(overrides = {}) {
+  return [
+    {
+      id: 1,
+      item_id: 21,
+      component_role: 'outer_sellable',
+      quantity_per_outer: '1.0000',
+      sort_order: 0,
+      ...overrides.outer
+    },
+    {
+      id: 2,
+      item_id: 22,
+      component_role: 'inner_sellable',
+      quantity_per_outer: '15.0000',
+      sort_order: 1,
+      ...overrides.inner
+    },
+    {
+      id: 3,
+      item_id: 23,
+      component_role: 'consumable',
+      quantity_per_outer: '1.0000',
+      sort_order: 2,
+      ...overrides.consumable
+    }
+  ];
+}
+
+function configureItems({ input = normalCartonInput(), outer, inner, consumable } = {}) {
+  const items = new Map([
+    [Number(input.id), input],
+    [21, outer || packagingItem(21, 'Outer carton')],
+    [22, inner || packagingItem(22, 'Inner bag', '0.4000')],
+    [23, consumable || packagingItem(23, 'Seal sticker')]
+  ]);
+  inventoryModel.findItemById.mockImplementation(async (id) => items.get(Number(id)) || null);
+  inventoryModel.findWarehouseById.mockResolvedValue({
+    id: 2,
+    store_id: 1,
+    name: 'Main warehouse',
+    status: 'active'
+  });
+  return items;
+}
+
+function configureBalances(costs = {}) {
+  const balances = {
+    11: { quantity_on_hand: '100.0000', quantity_reserved: '0.0000', average_cost: '2.0000' },
+    21: { quantity_on_hand: '10.0000', quantity_reserved: '0.0000', average_cost: '1.0000' },
+    22: { quantity_on_hand: '100.0000', quantity_reserved: '0.0000', average_cost: '0.1000' },
+    23: { quantity_on_hand: '10.0000', quantity_reserved: '0.0000', average_cost: '0.2000' },
+    ...costs
+  };
+  const findBalance = (params) => balances[Number(params[1])] || null;
+  db.query.mockImplementation(async (sql, params) => (
+    sql.includes('FROM item_stock_balances') && findBalance(params) ? [findBalance(params)] : []
+  ));
+  mockConnection.execute.mockImplementation(async (sql, params) => (
+    sql.includes('FROM item_stock_balances') && findBalance(params) ? [[findBalance(params)]] : [[]]
+  ));
+}
+
+function configureGroupConfiguration({ groupData = group(), componentRows = components() } = {}) {
+  model.findGroupById.mockResolvedValue(groupData);
+  model.lockGroupById.mockResolvedValue(groupData);
+  model.getGroupComponents.mockResolvedValue(componentRows);
+}
+
+describe('flat packaging groups', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    model.findGroupById.mockResolvedValue({
-      id: 7,
-      store_id: 1,
-      name: 'Retail carton group'
-    });
-    model.getGroupComponents.mockResolvedValue([]);
-    model.getVariantCost.mockResolvedValue(0);
-    model.getWarehouseVariantBalances.mockResolvedValue([]);
+    configureItems();
   });
 
-  test('uses category capacity as the top container capacity', async () => {
-    model.getGroupComponents.mockResolvedValue([
-      component({
-        id: 1,
-        level_key: 'category',
-        variant_attributes_json: JSON.stringify({ capacity_kg: 6 })
-      }),
-      component({
-        id: 2,
-        parent_component_id: 1,
-        level_key: 'sub_item',
-        quantity_per_parent: 15,
-        capacity_kg: 0.4,
-        sort_order: 1
-      }),
-      component({
-        id: 3,
-        parent_component_id: 2,
-        level_key: 'sub_sub_item',
-        quantity_per_parent: 1,
-        sort_order: 1
-      })
-    ]);
+  test('derives six kilograms from fifteen 0.4 kg inner bags', async () => {
+    const result = await service._private.validateFlatComponents(components(), 1);
 
-    const calculation = await service.calculateGroup(7, { charcoal_quantity_kg: 600 }, actor);
-
-    expect(calculation.primary_container_component_id).toBe(1);
-    expect(calculation.primary_container_capacity_kg).toBe('6.0000');
-    expect(calculation.primary_container_count).toBe(100);
-    expect(requirementById(calculation, 1).required_quantity).toBe('100.0000');
-    expect(requirementById(calculation, 2).required_quantity).toBe('1500.0000');
-    expect(requirementById(calculation, 3).required_quantity).toBe('1500.0000');
+    expect(result.outer.item.id).toBe(21);
+    expect(result.inner.item.id).toBe(22);
+    expect(result.group_capacity_kg.toFixed(4)).toBe('6.0000');
   });
 
-  test('normalizes assignment weight units to kg before calculating containers and cost', async () => {
-    model.getGroupComponents.mockResolvedValue([
-      component({
-        id: 1,
-        level_key: 'category',
-        cost: 2,
-        variant_attributes_json: JSON.stringify({ capacity_kg: 6 })
-      }),
-      component({
-        id: 2,
-        parent_component_id: 1,
-        level_key: 'sub_item',
-        quantity_per_parent: 15,
-        capacity_kg: 0.4,
-        cost: 0.1,
-        sort_order: 1
-      })
-    ]);
+  test('rejects an outer package whose positive capacity cannot hold its inner bags', async () => {
+    configureItems({ outer: packagingItem(21, 'Small outer carton', '5.0000') });
 
-    const fromGrams = await service.calculateGroup(7, {
-      charcoal_quantity_kg: 600000,
-      charcoal_quantity_unit: 'g'
-    }, actor);
-    const fromTons = await service.calculateGroup(7, {
-      charcoal_quantity_kg: 0.6,
-      charcoal_quantity_unit: 'ton'
-    }, actor);
-
-    expect(fromGrams.charcoal_quantity_kg).toBe('600.0000');
-    expect(fromGrams.primary_container_count).toBe(100);
-    expect(fromGrams.cost_per_primary_container).toBe('3.5000');
-    expect(fromGrams.cost_per_packaging_group).toBe('3.5000');
-    expect(fromTons.primary_container_count).toBe(fromGrams.primary_container_count);
-    expect(requirementById(fromTons, 2).required_quantity).toBe('1500.0000');
-  });
-
-  test('includes charcoal cost in total batch cost per container', async () => {
-    inventoryModel.findWarehouseById.mockResolvedValue({
-      id: 2,
-      store_id: 1,
-      status: 'active'
-    });
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 4,
-      item_id: 44,
-      store_id: 1,
-      status: 'active',
-      item_type: 'raw_charcoal',
-      tracking_type: 'stocked'
-    });
-    model.getVariantCost.mockResolvedValue(1.25);
-    model.getWarehouseVariantBalances.mockResolvedValue([
-      {
-        item_variant_id: 4,
-        quantity_on_hand: '800.0000',
-        quantity_reserved: '0.0000'
-      }
-    ]);
-    model.getGroupComponents.mockResolvedValue([
-      component({
-        id: 1,
-        level_key: 'category',
-        cost: 2,
-        variant_attributes_json: JSON.stringify({ capacity_kg: 6 })
-      })
-    ]);
-
-    const calculation = await service.calculateGroup(7, {
-      charcoal_variant_id: 4,
-      charcoal_quantity_kg: 600
-    }, actor, 2);
-
-    expect(calculation.charcoal_unit_cost).toBe('1.2500');
-    expect(calculation.total_charcoal_cost).toBe('750.0000');
-    expect(calculation.total_packaging_cost).toBe('200.0000');
-    expect(calculation.total_cost).toBe('950.0000');
-    expect(calculation.cost_per_primary_container).toBe('9.5000');
-  });
-
-  test('cascades cartons, bags, and stickers from charcoal kg', async () => {
-    model.getGroupComponents.mockResolvedValue([
-      component({ id: 1, level_key: 'category' }),
-      component({
-        id: 2,
-        parent_component_id: 1,
-        level_key: 'item',
-        quantity_per_parent: 1,
-        capacity_kg: 10,
-        sort_order: 1
-      }),
-      component({
-        id: 3,
-        parent_component_id: 2,
-        level_key: 'sub_item',
-        quantity_per_parent: 25,
-        capacity_kg: 0.4,
-        sort_order: 1
-      }),
-      component({
-        id: 4,
-        parent_component_id: 3,
-        level_key: 'sub_sub_item',
-        quantity_per_parent: 1,
-        sort_order: 1
-      })
-    ]);
-
-    const calculation = await service.calculateGroup(7, { charcoal_quantity_kg: 600 }, actor);
-
-    expect(calculation.primary_container_component_id).toBe(2);
-    expect(calculation.primary_container_count).toBe(60);
-    expect(requirementById(calculation, 1).required_quantity).toBe('60.0000');
-    expect(requirementById(calculation, 2).required_quantity).toBe('60.0000');
-    expect(requirementById(calculation, 3).required_quantity).toBe('1500.0000');
-    expect(requirementById(calculation, 4).required_quantity).toBe('1500.0000');
-  });
-
-  test('derives child quantity from parent and child capacity attributes', async () => {
-    model.findComponentById.mockResolvedValue(component({
-      id: 2,
-      level_key: 'item',
-      variant_attributes_json: JSON.stringify({ capacity_kg: 10 })
-    }));
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 3,
-      store_id: 1,
-      status: 'active',
-      item_type: 'packaging',
-      tracking_type: 'stocked',
-      attributes_json: JSON.stringify({ capacity_kg: 0.4 })
-    });
-    model.createComponent.mockImplementation(async (payload) => ({ id: 10, ...payload }));
-
-    const created = await service.addComponent(7, {
-      parent_component_id: 2,
-      level_key: 'sub_item',
-      item_variant_id: 3,
-      unit_symbol: 'pc'
-    }, actor);
-
-    expect(created.quantity_per_parent).toBe(25);
-    expect(model.createComponent).toHaveBeenCalledWith(expect.objectContaining({
-      quantity_per_parent: 25,
-      unit_symbol: 'pc'
-    }));
-  });
-
-  test('normalizes gram capacities to kg before deriving child quantity', async () => {
-    model.findComponentById.mockResolvedValue(component({
-      id: 2,
-      level_key: 'item',
-      capacity_kg: 10
-    }));
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 3,
-      store_id: 1,
-      status: 'active',
-      item_type: 'packaging',
-      tracking_type: 'stocked',
-      attributes_json: null
-    });
-    model.createComponent.mockImplementation(async (payload) => ({ id: 10, ...payload }));
-
-    const created = await service.addComponent(7, {
-      parent_component_id: 2,
-      level_key: 'sub_item',
-      item_variant_id: 3,
-      unit_symbol: 'g',
-      capacity_kg: 400
-    }, actor);
-
-    expect(created.quantity_per_parent).toBe(25);
-    expect(model.createComponent).toHaveBeenCalledWith(expect.objectContaining({
-      quantity_per_parent: 25,
-      unit_symbol: 'g',
-      capacity_kg: 0.4
-    }));
-  });
-
-  test('rejects child quantities above parent capacity', async () => {
-    model.findComponentById.mockResolvedValue(component({
-      id: 2,
-      level_key: 'item',
-      capacity_kg: 10
-    }));
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 3,
-      store_id: 1,
-      status: 'active',
-      item_type: 'packaging',
-      tracking_type: 'stocked',
-      attributes_json: JSON.stringify({ capacity_kg: 0.4 })
-    });
-
-    await expect(service.addComponent(7, {
-      parent_component_id: 2,
-      level_key: 'sub_item',
-      item_variant_id: 3,
-      unit_symbol: 'pc',
-      quantity_per_parent: 26
-    }, actor)).rejects.toMatchObject({
+    await expect(service._private.validateFlatComponents(components(), 1)).rejects.toMatchObject({
       statusCode: 400,
       errors: expect.arrayContaining([
-        expect.objectContaining({ field: 'quantity_per_parent' })
+        expect.objectContaining({ field: 'components' })
       ])
     });
   });
+
+  test('requires a carton input loose unit to exactly match the inner-bag capacity', () => {
+    const compatible = service._private.calculateInputRequirement(
+      normalCartonInput(),
+      '0.4000',
+      '15.0000',
+      2
+    );
+
+    expect(compatible.raw_quantity_kg.toFixed(4)).toBe('12.0000');
+    expect(compatible.loose_units_required.toFixed(4)).toBe('30.0000');
+    expect(() => service._private.calculateInputRequirement(
+      normalCartonInput({ loose_units_per_carton: 24 }),
+      '0.4000',
+      '15.0000',
+      2
+    )).toThrow('Carton input loose-unit weight must exactly match the group inner-bag capacity');
+  });
 });
 
-describe('packaging cost lookup', () => {
+describe('packaging preview and completion', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    configureItems();
+    configureGroupConfiguration();
+    configureBalances();
   });
 
-  test('falls back to variant cost when warehouse average cost is zero', async () => {
-    db.query.mockResolvedValue([{ cost: '0.5000' }]);
-
-    const cost = await realModel.getVariantCost(4, 2);
-
-    expect(cost).toBe(0.5);
-    expect(db.query.mock.calls[0][0]).toContain('NULLIF(sb.average_cost, 0)');
-  });
-});
-
-describe('packaging assignment output handling', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    model.findGroupById.mockResolvedValue({
-      id: 7,
-      store_id: 1,
-      name: 'Retail carton group',
-      charcoal_variant_id: null
-    });
-    model.getGroupComponents.mockResolvedValue([
-      component({
-        id: 1,
-        level_key: 'category',
-        variant_attributes_json: JSON.stringify({ capacity_kg: 6 })
-      })
-    ]);
-    model.getWarehouseVariantBalances.mockResolvedValue([]);
-    inventoryModel.findWarehouseById.mockResolvedValue({
-      id: 2,
-      store_id: 1,
-      status: 'active'
-    });
-    inventoryModel.findVariantById.mockResolvedValue({
-      id: 4,
-      item_id: 44,
-      store_id: 1,
-      status: 'active',
-      item_type: 'raw_charcoal',
-      tracking_type: 'stocked'
-    });
-    model.createAssignment.mockImplementation(async (payload) => ({ id: 11, ...payload }));
-  });
-
-  test('saves packaging assignments and consumes stock immediately', async () => {
-    const createdAssignment = {
-      id: 11,
-      store_id: 1,
-      packaging_group_id: 7,
+  test('previews input, component shortages, and WAC costs from canonical item balances', async () => {
+    const preview = await service.previewGroup(7, {
       warehouse_id: 2,
-      charcoal_variant_id: 4,
-      output_item_variant_id: null,
-      charcoal_quantity_kg: '600.0000',
-      primary_container_count: 100,
-      produced_quantity: '100.0000',
-      total_packaging_cost: '25.0000',
-      cost_per_kg: '0.0417',
-      status: 'batched',
-      calculation_json: {
-        primary_container_count: 100,
-        requirements: [
-          {
-            component_id: 1,
-            item_variant_id: 8,
-            required_quantity: '100.0000',
-            unit_cost: '0.2500',
-            parent_component_id: null,
-            capacity_kg: '6.0000'
-          }
-        ]
-      },
-      consumed_movements_json: null,
-      notes: null
-    };
-    model.getWarehouseVariantBalances.mockResolvedValue([
-      {
-        item_variant_id: 4,
-        quantity_on_hand: '700.0000',
-        quantity_reserved: '0.0000'
-      },
-      {
-        item_variant_id: 1,
-        quantity_on_hand: '150.0000',
-        quantity_reserved: '0.0000'
-      }
-    ]);
-    model.createAssignment.mockResolvedValue(createdAssignment);
-    model.findAssignmentById.mockResolvedValue({ ...createdAssignment, status: 'consumed' });
-    stockService.decreaseStock
-      .mockResolvedValueOnce({
-        stock_movement_id: 21,
-        average_cost: '0.5000',
-        quantity_after: '100.0000'
-      })
-      .mockResolvedValueOnce({
-        stock_movement_id: 22,
-        quantity_after: '50.0000'
-      });
+      output_carton_count: 2
+    }, actor);
 
-    const assignment = await service.createAssignment({
-      packaging_group_id: 7,
+    expect(preview.group_capacity_kg).toBe('6.0000');
+    expect(preview.input).toMatchObject({
+      raw_quantity_kg: '12.0000',
+      loose_units_required: '30.0000',
+      unit_cost: '2.0000',
+      total_cost: '24.0000'
+    });
+    expect(preview.output).toMatchObject({
+      full_outer_cartons: '2.0000',
+      total_inner_quantity: '30.0000'
+    });
+    expect(preview.costs).toMatchObject({
+      raw_cost: '24.0000',
+      packaging_cost: '5.4000',
+      total_cost: '29.4000',
+      cost_per_outer: '14.7000'
+    });
+    expect(preview.shortages.every((entry) => entry.available)).toBe(true);
+    expect(preview).not.toHaveProperty('_configuration');
+  });
+
+  test('atomically consumes inputs and creates one ready container per completed outer carton', async () => {
+    model.createOperation.mockResolvedValue(101);
+    model.createReadyStockContainer
+      .mockResolvedValueOnce(201)
+      .mockResolvedValueOnce(202);
+    model.findOperationById.mockResolvedValue({ id: 101, status: 'completed' });
+    stockService.consumeCartonLooseUnits.mockResolvedValue({ carton_allocations: [] });
+    stockService.decreaseItemStock.mockResolvedValue({});
+
+    const result = await service.completePackaging(7, {
       warehouse_id: 2,
-      charcoal_variant_id: 4,
-      charcoal_quantity_kg: 600,
-      notes: null
+      output_carton_count: 2,
+      notes: 'Morning packaging run'
     }, 9, actor);
 
-    expect(inventoryModel.findVariantById).toHaveBeenCalledTimes(2);
-    expect(model.createAssignment).toHaveBeenCalledWith(expect.objectContaining({
-      packaging_group_id: 7,
-      warehouse_id: 2,
-      charcoal_variant_id: 4,
-      output_item_variant_id: null,
-      primary_container_count: 100,
-      produced_quantity: '100.0000',
-      status: 'calculated'
-    }), expect.anything());
-    expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
-    expect(stockService.decreaseStock).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
-      itemVariantId: 4,
-      quantity: '600.0000',
-      quantityAlreadyNormalized: true
+    expect(stockService.consumeCartonLooseUnits).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      itemId: 11,
+      looseUnits: expect.anything(),
+      movementType: 'packaging_consume'
     }));
-    expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({
-      status: 'consumed',
-      produced_quantity: '100.0000'
+    expect(stockService.decreaseItemStock).toHaveBeenCalledTimes(3);
+    expect(stockService.decreaseItemStock).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      itemId: 22,
+      quantity: expect.anything(),
+      referenceType: 'packaging_operation',
+      referenceId: 101
     }));
-    expect(assignment.status).toBe('consumed');
-    expect(assignment.output_item_variant_id).toBeNull();
+    expect(model.createOperationComponent).toHaveBeenCalledTimes(4);
+    expect(model.createReadyStockContainer).toHaveBeenCalledTimes(2);
+    expect(model.createReadyStockContainer).toHaveBeenNthCalledWith(1, mockConnection, expect.objectContaining({
+      packaging_operation_id: 101,
+      initial_inner_quantity: '15.0000',
+      remaining_inner_quantity: '15.0000',
+      capacity_kg: '6.0000',
+      status: 'full'
+    }));
+    expect(model.createReadyStockMovement).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      packaging_operation: { id: 101, status: 'completed' },
+      ready_stock_container_ids: [201, 202]
+    });
   });
 
-  test('rejects packaging assignments when raw charcoal stock is short', async () => {
-    model.getWarehouseVariantBalances.mockResolvedValue([
-      {
-        item_variant_id: 4,
-        quantity_on_hand: '50.0000',
-        quantity_reserved: '0.0000'
-      },
-      {
-        item_variant_id: 1,
-        quantity_on_hand: '150.0000',
-        quantity_reserved: '0.0000'
-      }
-    ]);
-
-    await expect(service.createAssignment({
-      packaging_group_id: 7,
-      warehouse_id: 2,
-      charcoal_variant_id: 4,
-      charcoal_quantity_kg: 70,
-      notes: null
-    }, 9, actor)).rejects.toMatchObject({
-      statusCode: 409,
-      message: 'Packaging assignment cannot be saved while raw charcoal stock is short'
+  test('does not create a packaging operation when a canonical input is short', async () => {
+    configureBalances({
+      22: { quantity_on_hand: '10.0000', quantity_reserved: '0.0000', average_cost: '0.1000' }
     });
 
-    expect(model.createAssignment).not.toHaveBeenCalled();
-    expect(stockService.decreaseStock).not.toHaveBeenCalled();
-  });
-
-  test('consumes packaging assignments without producing finished output stock', async () => {
-    model.findAssignmentById.mockResolvedValue({
-      id: 11,
-      store_id: 1,
-      packaging_group_id: 7,
+    await expect(service.completePackaging(7, {
       warehouse_id: 2,
-      charcoal_variant_id: 4,
-      output_item_variant_id: null,
-      charcoal_quantity_kg: '600.0000',
-      primary_container_count: 100,
-      produced_quantity: '0.0000',
-      total_packaging_cost: '25.0000',
-      cost_per_kg: '0.0417',
-      status: 'calculated',
-      calculation_json: {
-        primary_container_count: 100,
-        requirements: [
-          {
-            component_id: 1,
-            item_variant_id: 8,
-            required_quantity: '100.0000',
-            unit_cost: '0.2500',
-            parent_component_id: null,
-            capacity_kg: '6.0000'
-          }
-        ]
-      },
-      consumed_movements_json: null,
-      notes: null
-    });
-    stockService.decreaseStock
-      .mockResolvedValueOnce({
-        stock_movement_id: 21,
-        average_cost: '0.5000',
-        quantity_after: '400.0000'
-      })
-      .mockResolvedValueOnce({
-        stock_movement_id: 22,
-        quantity_after: '50.0000'
-      });
-    model.updateAssignment.mockResolvedValue(undefined);
+      output_carton_count: 2
+    }, 9, actor)).rejects.toMatchObject({ statusCode: 409 });
 
-    await service.consumeAssignment(11, { notes: 'Consumed' }, 9, actor);
-
-    expect(stockService.decreaseStock).toHaveBeenCalledTimes(2);
-    expect(stockService.decreaseStock).toHaveBeenNthCalledWith(1, expect.anything(), expect.objectContaining({
-      quantityAlreadyNormalized: true
-    }));
-    expect(model.updateAssignment).toHaveBeenCalledWith(expect.anything(), 11, expect.objectContaining({
-      status: 'consumed',
-      produced_quantity: '100.0000',
-      consumed_movements_json: expect.not.arrayContaining([
-        expect.objectContaining({ role: 'finished_output' })
-      ])
-    }));
+    expect(model.createOperation).not.toHaveBeenCalled();
+    expect(stockService.consumeCartonLooseUnits).not.toHaveBeenCalled();
+    expect(stockService.decreaseItemStock).not.toHaveBeenCalled();
   });
 });

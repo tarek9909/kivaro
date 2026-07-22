@@ -6,7 +6,7 @@ import {
   DEBT_STATUS_OPTIONS,
   DISPATCH_STATUS_OPTIONS,
   MOVEMENT_TYPE_OPTIONS,
-  PO_STATUS_OPTIONS,
+  PURCHASE_STATUS_OPTIONS,
   REFERENCE_TYPE_OPTIONS
 } from './reports.config.js';
 import {
@@ -16,7 +16,6 @@ import {
   useReportSalesmen,
   useReportSublocations,
   useReportSuppliers,
-  useReportVariants,
   useReportWarehouses
 } from './useReportsOptions.js';
 
@@ -79,7 +78,6 @@ export function ReportFilters({ filters, values, onChange }) {
 
   const needsWarehouses = filters.includes('warehouse');
   const needsItems = filters.includes('item');
-  const needsVariants = filters.includes('item_variant');
   const needsCustomers = filters.includes('customer');
   const needsSalesmen = filters.includes('salesman');
   const needsLocations = filters.includes('location');
@@ -88,7 +86,6 @@ export function ReportFilters({ filters, values, onChange }) {
 
   const warehousesQuery = useReportWarehouses(canPickInventory && needsWarehouses);
   const itemsQuery = useReportItems(canPickInventory && needsItems);
-  const variantsQuery = useReportVariants(canPickInventory && needsVariants);
   const customersQuery = useReportCustomers(canPickCustomers && needsCustomers);
   const salesmenQuery = useReportSalesmen(canPickSalesmen && needsSalesmen);
   const locationsQuery = useReportLocations(canPickLocations && needsLocations);
@@ -145,24 +142,6 @@ export function ReportFilters({ filters, values, onChange }) {
                     placeholder="All items"
                     value={values.item_id || ''}
                     onChange={set('item_id')}
-                  />
-                );
-              case 'item_variant':
-                return (
-                  <PickerOrId
-                    key={key}
-                    enabled={canPickInventory}
-                    optionsQuery={variantsQuery}
-                    rowsKey="item_variants"
-                    labelField={(entry) =>
-                      `${entry.item_name || ''}${
-                        entry.variant_name ? ` - ${entry.variant_name}` : ''
-                      }`
-                    }
-                    label="Variant"
-                    placeholder="All variants"
-                    value={values.item_variant_id || ''}
-                    onChange={set('item_variant_id')}
                   />
                 );
               case 'customer':
@@ -296,7 +275,7 @@ export function ReportFilters({ filters, values, onChange }) {
                     ))}
                   </Select>
                 );
-              case 'po_status':
+              case 'purchase_status':
                 return (
                   <Select
                     key={key}
@@ -304,7 +283,7 @@ export function ReportFilters({ filters, values, onChange }) {
                     value={values.status || ''}
                     onChange={(event) => set('status')(event.target.value)}
                   >
-                    {PO_STATUS_OPTIONS.map((option) => (
+                    {PURCHASE_STATUS_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>

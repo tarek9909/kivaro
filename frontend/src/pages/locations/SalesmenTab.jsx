@@ -7,6 +7,12 @@ import { useAuthStore } from '@/app/stores/authStore.js';
 import { useDebouncedValue } from '@/lib/useDebouncedValue.js';
 import { getErrorMessage } from '@/lib/errors.js';
 import {
+  buildSalesmanExport,
+  downloadBlob,
+  SALESMAN_EXPORT_OPTIONS
+} from '@/lib/csvExport.js';
+import { CsvExportControl } from '@/components/CsvExportControl.jsx';
+import {
   Badge,
   Button,
   ConfirmDialog,
@@ -26,6 +32,7 @@ import { SalesmanAssignmentModal } from './SalesmanAssignmentModal.jsx';
 export default function SalesmenTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canManage = hasPermission(LOCATIONS_PERMISSIONS.salesmen);
+  const canExport = canManage && hasPermission('reports.export');
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -37,6 +44,8 @@ export default function SalesmenTab() {
   const [editing, setEditing] = useState(null);
   const [assigning, setAssigning] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [exportOption, setExportOption] = useState('performance');
+  const [isExporting, setIsExporting] = useState(false);
 
   const debouncedSearch = useDebouncedValue(search, 300);
   const queryParams = useMemo(() => {
@@ -62,6 +71,26 @@ export default function SalesmenTab() {
     onError: (error) =>
       toast.error(getErrorMessage(error, 'Could not deactivate salesman.'))
   });
+
+  async function exportCsv() {
+    const { option, params } = buildSalesmanExport({
+      optionValue: exportOption,
+      filters: queryParams
+    });
+    setIsExporting(true);
+    try {
+      const response = await api.locations.salesmen.exportCsv(params);
+      const blob = response instanceof Blob ? response : response?.data;
+      if (!downloadBlob(blob, option.filename)) {
+        throw new Error('The export response did not include a CSV file.');
+      }
+      toast.success('Salesman CSV downloaded');
+    } catch (error) {
+      toast.error(getErrorMessage(error, 'Could not export salesman CSV.'));
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   const rows = listQuery.data?.data?.salesmen || [];
   const meta = listQuery.data?.meta || {};
@@ -167,6 +196,16 @@ export default function SalesmenTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {canExport && (
+          <CsvExportControl
+            options={SALESMAN_EXPORT_OPTIONS}
+            value={exportOption}
+            onChange={setExportOption}
+            onExport={exportCsv}
+            isLoading={isExporting}
+            label="Salesman export dataset"
+          />
+        )}
         <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canManage}>
           New salesman
         </Button>

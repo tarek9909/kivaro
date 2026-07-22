@@ -11,6 +11,7 @@ const router = express.Router();
 router.use('/customers', authenticate);
 
 router.get('/customers', requirePermission('customers.view'), validate(schemas.listSchema), asyncHandler(controller.listCustomers));
+router.get('/customers/export', requirePermission('customers.view', 'reports.export'), validate(schemas.exportSchema), asyncHandler(controller.exportCustomers));
 router.post('/customers', requirePermission('customers.create'), validate(schemas.createCustomerSchema), asyncHandler(controller.createCustomer));
 router.get('/customers/:id', requirePermission('customers.view'), validate(schemas.idSchema), asyncHandler(controller.getCustomer));
 router.get('/customers/:id/receipts', requirePermission('customers.view'), validate(schemas.idSchema), asyncHandler(controller.listCustomerReceipts));

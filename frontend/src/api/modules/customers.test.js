@@ -20,12 +20,13 @@ function buildClientStub() {
 }
 
 describe('customers API module', () => {
-  it('exposes only backend-supported CRUD methods plus history endpoints', () => {
+  it('exposes CRUD, CSV export, and customer history endpoints', () => {
     const client = buildClientStub();
     const api = createCustomersApi(client);
     expect(Object.keys(api).sort()).toEqual([
       'create',
       'debts',
+      'exportCsv',
       'get',
       'list',
       'payments',
@@ -33,6 +34,24 @@ describe('customers API module', () => {
       'remove',
       'update'
     ]);
+  });
+
+  it('downloads CSV exports from the canonical customer export endpoint', async () => {
+    const client = buildClientStub();
+    const api = createCustomersApi(client);
+    await api.exportCsv({
+      dataset: 'invoices',
+      status: 'active',
+      salesman_id: 7
+    });
+    expect(client.calls[0]).toEqual({
+      method: 'get',
+      path: '/customers/export',
+      rest: [{
+        params: { dataset: 'invoices', status: 'active', salesman_id: 7 },
+        responseType: 'blob'
+      }]
+    });
   });
 
   it('routes history endpoints to /customers/:id subroutes', async () => {

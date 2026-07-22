@@ -70,7 +70,7 @@ export function ExpenseFormModal({ open, onClose, expense }) {
   }, [open, expense]);
 
   const categoriesQuery = useExpenseCategoriesList(open && canPickOptions);
-  const cashAccountsQuery = useCashAccountsList(open && canPickOptions);
+  const cashAccountsQuery = useCashAccountsList(open && canPickOptions, { cash_flow_direction: 'outgoing' });
 
   const categories = categoriesQuery.data?.data?.expense_categories || [];
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];

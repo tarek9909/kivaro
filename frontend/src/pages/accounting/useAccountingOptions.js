@@ -12,10 +12,10 @@ export function useExpenseCategoriesList(enabled = true) {
   });
 }
 
-export function useCashAccountsList(enabled = true) {
+export function useCashAccountsList(enabled = true, params = {}) {
   return useQuery({
-    queryKey: ['accounting', 'options', 'cash-accounts'],
-    queryFn: () => api.accounting.cashAccounts.list({ ...PAGE, status: 'active' }),
+    queryKey: ['accounting', 'options', 'cash-accounts', params],
+    queryFn: () => api.accounting.cashAccounts.list({ ...PAGE, status: 'active', ...params }),
     staleTime: 60_000,
     enabled
   });

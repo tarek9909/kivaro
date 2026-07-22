@@ -44,11 +44,13 @@ async function listExpenses(input) {
 
 async function listCashAccounts(input) {
   return listRecords({
-    select: 'SELECT id, store_id, account_name, account_type, opening_balance, current_balance, status, created_at',
+    select: 'SELECT id, store_id, account_name, account_type, cash_flow_permission, opening_balance, current_balance, status, created_at',
     from: 'cash_accounts',
     filters: [
       { key: 'status', column: 'status' },
       { key: 'store_id', column: 'store_id' },
+      { key: 'cash_flow_permission', column: 'cash_flow_permission' },
+      { key: 'cash_flow_direction', column: 'cash_flow_permission', type: 'cash_flow_capability' },
       { key: 'search', type: 'search', fields: ['account_name'] }
     ],
     orderBy: 'ORDER BY account_name ASC'
@@ -89,16 +91,20 @@ async function listSalesmanBalances(input) {
       JOIN salesmen s ON s.id = sb.salesman_id
       LEFT JOIN dispatch_requests dr ON dr.id = sb.dispatch_request_id
       LEFT JOIN (
-        SELECT dispatch_request_id, salesman_id, COALESCE(SUM(amount), 0) AS debt_adjustment_amount
-        FROM customer_debt_adjustments
-        GROUP BY dispatch_request_id, salesman_id
+        SELECT cda.dispatch_request_id, dr_adjustments.salesman_id,
+          COALESCE(SUM(cda.amount), 0) AS debt_adjustment_amount
+        FROM customer_debt_adjustments cda
+        LEFT JOIN dispatch_requests dr_adjustments ON dr_adjustments.id = cda.dispatch_request_id
+        GROUP BY cda.dispatch_request_id, dr_adjustments.salesman_id
       ) adjustments ON adjustments.dispatch_request_id = sb.dispatch_request_id
         AND adjustments.salesman_id = sb.salesman_id
       LEFT JOIN (
-        SELECT dispatch_request_id, salesman_id, COALESCE(SUM(remaining_amount), 0) AS outstanding_debt_amount
-        FROM customer_debts
-        WHERE status IN ('pending', 'partially_paid')
-        GROUP BY dispatch_request_id, salesman_id
+        SELECT cd.dispatch_request_id, dr_debts.salesman_id,
+          COALESCE(SUM(cd.remaining_amount), 0) AS outstanding_debt_amount
+        FROM customer_debts cd
+        LEFT JOIN dispatch_requests dr_debts ON dr_debts.id = cd.dispatch_request_id
+        WHERE cd.status IN ('pending', 'partially_paid')
+        GROUP BY cd.dispatch_request_id, dr_debts.salesman_id
       ) debts ON debts.dispatch_request_id = sb.dispatch_request_id
         AND debts.salesman_id = sb.salesman_id`,
     filters: [
@@ -128,16 +134,20 @@ async function findSalesmanBalanceById(id) {
        COALESCE(debts.outstanding_debt_amount, 0) AS outstanding_debt_amount
      FROM salesman_balances sb
      LEFT JOIN (
-       SELECT dispatch_request_id, salesman_id, COALESCE(SUM(amount), 0) AS debt_adjustment_amount
-       FROM customer_debt_adjustments
-       GROUP BY dispatch_request_id, salesman_id
+       SELECT cda.dispatch_request_id, dr_adjustments.salesman_id,
+         COALESCE(SUM(cda.amount), 0) AS debt_adjustment_amount
+       FROM customer_debt_adjustments cda
+       LEFT JOIN dispatch_requests dr_adjustments ON dr_adjustments.id = cda.dispatch_request_id
+       GROUP BY cda.dispatch_request_id, dr_adjustments.salesman_id
      ) adjustments ON adjustments.dispatch_request_id = sb.dispatch_request_id
        AND adjustments.salesman_id = sb.salesman_id
      LEFT JOIN (
-       SELECT dispatch_request_id, salesman_id, COALESCE(SUM(remaining_amount), 0) AS outstanding_debt_amount
-       FROM customer_debts
-       WHERE status IN ('pending', 'partially_paid')
-       GROUP BY dispatch_request_id, salesman_id
+       SELECT cd.dispatch_request_id, dr_debts.salesman_id,
+         COALESCE(SUM(cd.remaining_amount), 0) AS outstanding_debt_amount
+       FROM customer_debts cd
+       LEFT JOIN dispatch_requests dr_debts ON dr_debts.id = cd.dispatch_request_id
+       WHERE cd.status IN ('pending', 'partially_paid')
+       GROUP BY cd.dispatch_request_id, dr_debts.salesman_id
      ) debts ON debts.dispatch_request_id = sb.dispatch_request_id
        AND debts.salesman_id = sb.salesman_id
      WHERE sb.id = ?
@@ -299,9 +309,14 @@ async function deleteExpense(id) {
 }
 
 async function createFinancialTransaction(connection, data) {
+  if (!data.cash_account_id && Number(data.amount || 0) > 0) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'cash_account_id', message: 'A cash account is required for a non-zero financial transaction' }
+    ]);
+  }
   if (data.cash_account_id && data.store_id) {
     const [accounts] = await connection.execute(
-      `SELECT id, store_id, status
+      `SELECT id, store_id, status, cash_flow_permission
        FROM cash_accounts
        WHERE id = ?
        LIMIT 1`,
@@ -316,6 +331,18 @@ async function createFinancialTransaction(connection, data) {
     if (account.status !== 'active' && !data.allow_inactive_cash_account) {
       throw ApiError.badRequest('Validation failed', [
         { field: 'cash_account_id', message: 'Cash account must be active' }
+      ]);
+    }
+    const capability = account.cash_flow_permission || 'both';
+    const directionAllowed = capability === 'both'
+      || (capability === 'incoming' && data.direction === 'in')
+      || (capability === 'outgoing' && data.direction === 'out');
+    if (!directionAllowed) {
+      throw ApiError.badRequest('Validation failed', [
+        {
+          field: 'cash_account_id',
+          message: `Cash account only permits ${capability} cash flow`
+        }
       ]);
     }
   }

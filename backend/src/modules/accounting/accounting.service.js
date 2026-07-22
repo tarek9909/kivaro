@@ -26,6 +26,12 @@ async function createExpense(data, userId, actor = {}) {
       { field: 'cash_account_id', message: 'Cash account must be active' }
     ]);
   }
+  const capability = account.cash_flow_permission || 'both';
+  if (!['outgoing', 'both'].includes(capability)) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'cash_account_id', message: 'Cash account does not allow outgoing payments' }
+    ]);
+  }
 
   return withTransaction(async (connection) => {
     const expense = await model.createExpense({ ...scoped, created_by: userId }, connection);
@@ -58,6 +64,12 @@ async function validateExpenseCashAccount(cashAccountId, storeId, actor = {}) {
   if (account.status !== 'active') {
     throw ApiError.badRequest('Validation failed', [
       { field: 'cash_account_id', message: 'Cash account must be active' }
+    ]);
+  }
+  const capability = account.cash_flow_permission || 'both';
+  if (!['outgoing', 'both'].includes(capability)) {
+    throw ApiError.badRequest('Validation failed', [
+      { field: 'cash_account_id', message: 'Cash account does not allow outgoing payments' }
     ]);
   }
 

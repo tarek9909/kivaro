@@ -18,7 +18,7 @@ export default function InventoryLayout() {
       <PageHeader
         eyebrow="Operations"
         title="Catalog and stock"
-        description="Manage items, variants, categories, warehouses, balances, and stock activity from separate tabs."
+        description="Manage item-based stock, carton configurations, categories, warehouses, balances, and inventory activity."
       />
 
       <nav

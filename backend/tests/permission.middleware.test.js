@@ -24,11 +24,14 @@ function buildApp(user) {
   app.get('/dispatch-requests', requireAnyPermission('dispatch.view', 'dispatch.create', 'dispatch.approve', 'dispatch.settle', 'dispatch.print'), (req, res) => {
     successResponse(res, { message: 'Dispatch read allowed' });
   });
-  app.get('/production-batches', requireAnyPermission('production.view', 'production.create', 'production.complete'), (req, res) => {
-    successResponse(res, { message: 'Production batch read allowed' });
+  app.get('/packaging-operations', requireAnyPermission('inventory.view', 'inventory.create', 'stock.adjust'), (req, res) => {
+    successResponse(res, { message: 'Packaging workflow read allowed' });
   });
   app.get('/dashboard', requirePermission('dashboard.view'), (req, res) => {
     successResponse(res, { message: 'Dashboard allowed' });
+  });
+  app.get('/pos/workspace', requirePermission('salesman_workspace.view'), (req, res) => {
+    successResponse(res, { message: 'Salesman workspace allowed' });
   });
   app.use(errorHandler);
 
@@ -140,18 +143,18 @@ describe('permission middleware', () => {
     expect(response.body.message).toBe('Dispatch read allowed');
   });
 
-  test('allows production complete-only users to read batch records', async () => {
+  test('allows a stock-adjustment user to read the canonical packaging workflow', async () => {
     const response = await request(
       buildApp({
         id: 1,
-        permissions: ['production.complete'],
-        enabled_modules: ['production', 'production.batches']
+        permissions: ['stock.adjust'],
+        enabled_modules: ['inventory', 'inventory.packaging']
       })
     )
-      .get('/production-batches')
+      .get('/packaging-operations')
       .expect(200);
 
-    expect(response.body.message).toBe('Production batch read allowed');
+    expect(response.body.message).toBe('Packaging workflow read allowed');
   });
 
   test('blocks dashboard requests when the dashboard module is disabled', async () => {
@@ -166,5 +169,31 @@ describe('permission middleware', () => {
       .expect(403);
 
     expect(response.body.message).toBe('This workspace module is not enabled');
+  });
+
+  test('uses the standalone salesman workspace module for its server-backed POS workspace endpoint', async () => {
+    const permitted = await request(
+      buildApp({
+        id: 1,
+        permissions: ['salesman_workspace.view'],
+        enabled_modules: ['salesman_workspace']
+      })
+    )
+      .get('/pos/workspace')
+      .expect(200);
+
+    expect(permitted.body.message).toBe('Salesman workspace allowed');
+
+    const blocked = await request(
+      buildApp({
+        id: 1,
+        permissions: ['salesman_workspace.view'],
+        enabled_modules: ['pos']
+      })
+    )
+      .get('/pos/workspace')
+      .expect(403);
+
+    expect(blocked.body.message).toBe('This workspace module is not enabled');
   });
 });

@@ -8,8 +8,10 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./charcoal_erp (3).sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      # A distinct volume makes this item-based release start from the clean
+      # baseline without silently reusing a variant/batch-era database volume.
+      - mysql_item_based_data:/var/lib/mysql
+      - ./charcoal_erp_clean.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
       interval: 10s
@@ -43,4 +45,4 @@ services:
       - "3000:3000"
 
 volumes:
-  mysql_data:
+  mysql_item_based_data:

@@ -82,6 +82,7 @@ async function deleteCustomer(id, actor = {}) {
 module.exports = {
   createCustomer,
   deleteCustomer,
+  exportCustomers: (query, actor = {}) => model.exportCustomers(scopedQuery(query, actor)),
   getCustomer,
   listCustomers: (query, actor = {}) => model.listCustomers(scopedQuery(query, actor)),
   updateCustomer

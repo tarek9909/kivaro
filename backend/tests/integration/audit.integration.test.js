@@ -33,7 +33,7 @@ describe('audit integration', () => {
       .post('/api/stock-adjustments')
       .send({
         warehouse_id: fixture.warehouse.id,
-        item_variant_id: fixture.variant.id,
+        item_id: fixture.item.id,
         quantity_change: 3,
         unit_cost: 2,
         reason: 'Audit integration adjustment'
@@ -51,7 +51,7 @@ describe('audit integration', () => {
     expect(rows[0]).toMatchObject({
       module: 'inventory',
       action: 'stock_adjustment',
-      table_name: 'stock_balances'
+      table_name: 'item_stock_balances'
     });
     expect(JSON.stringify(rows[0].new_values)).toContain('stock_movement_id');
   });

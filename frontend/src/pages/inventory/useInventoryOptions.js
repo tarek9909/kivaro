@@ -35,11 +35,20 @@ export function useItemsOptions(enabled = true, params = {}) {
   });
 }
 
-export function useVariantsOptions(enabled = true, params = {}) {
+export function useCartonLotsOptions(enabled = true, params = {}) {
   return useQuery({
-    queryKey: ['inventory', 'options', 'variants', params],
-    queryFn: () => api.inventory.variants.list({ ...PAGE, status: 'active', ...params }),
-    staleTime: 60_000,
+    queryKey: ['inventory', 'carton-lots', params],
+    queryFn: () => api.inventory.cartonLots.list({ ...PAGE, ...params }),
+    staleTime: 15_000,
+    enabled
+  });
+}
+
+export function useOpenCartonShelvesOptions(enabled = true, params = {}) {
+  return useQuery({
+    queryKey: ['inventory', 'open-carton-shelves', params],
+    queryFn: () => api.inventory.openCartonShelves.list({ ...PAGE, ...params }),
+    staleTime: 15_000,
     enabled
   });
 }

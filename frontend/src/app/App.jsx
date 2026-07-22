@@ -19,7 +19,6 @@ import NotificationsPage from '@/pages/admin/NotificationsPage.jsx';
 import InventoryLayout from '@/pages/inventory/InventoryLayout.jsx';
 import ItemsTab from '@/pages/inventory/ItemsTab.jsx';
 import PackagingPage from '@/pages/packaging/PackagingPage.jsx';
-import VariantsTab from '@/pages/inventory/VariantsTab.jsx';
 import CategoriesTab from '@/pages/inventory/CategoriesTab.jsx';
 import UnitsTab from '@/pages/inventory/UnitsTab.jsx';
 import WarehousesTab from '@/pages/inventory/WarehousesTab.jsx';
@@ -53,14 +52,8 @@ import {
 import CustomersPage from '@/pages/customers/CustomersPage.jsx';
 import { CUSTOMERS_PARENT_PERMISSIONS } from '@/pages/customers/customers.config.js';
 import SalesPage from '@/pages/sales/SalesPage.jsx';
-import ProductionLayout from '@/pages/production/ProductionLayout.jsx';
-import ConfigurationsTab from '@/pages/production/ConfigurationsTab.jsx';
-import BatchesTab from '@/pages/production/BatchesTab.jsx';
-import {
-  PRODUCTION_PARENT_PERMISSIONS,
-  PRODUCTION_PERMISSIONS,
-  pickFirstAllowedProductionTab
-} from '@/pages/production/production.config.js';
+import PosPage from '@/pages/pos/PosPage.jsx';
+import SalesmanWorkspacePage from '@/pages/pos/SalesmanWorkspacePage.jsx';
 import DispatchLayout from '@/pages/dispatch/DispatchLayout.jsx';
 import DispatchRequestsPage from '@/pages/dispatch/DispatchRequestsPage.jsx';
 import {
@@ -140,16 +133,6 @@ function LocationsIndexRedirect() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const hasModule = useAuthStore((state) => state.hasModule);
   const target = pickFirstAllowedLocationsTab(hasPermission, hasModule);
-  if (!target) {
-    return <Navigate to="/" replace />;
-  }
-  return <Navigate to={target} replace />;
-}
-
-function ProductionIndexRedirect() {
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const hasModule = useAuthStore((state) => state.hasModule);
-  const target = pickFirstAllowedProductionTab(hasPermission, hasModule);
   if (!target) {
     return <Navigate to="/" replace />;
   }
@@ -340,11 +323,7 @@ export default function App() {
           />
           <Route
             path="variants"
-            element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.variants">
-                <VariantsTab />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/inventory/items" replace />}
           />
           <Route
             path="categories"
@@ -514,44 +493,33 @@ export default function App() {
         />
 
         <Route
-          path="production"
+          path="pos"
           element={
-            <ProtectedRoute anyOfPermissions={PRODUCTION_PARENT_PERMISSIONS} moduleKey="production">
-              <ProductionLayout />
+            <ProtectedRoute
+              anyOfPermissions={[
+                'pos.own_orders',
+                'pos.review',
+                'pos.accept',
+                'salesman_workspace.view'
+              ]}
+              moduleKey="pos"
+            >
+              <PosPage />
             </ProtectedRoute>
           }
-        >
-          <Route index element={<ProductionIndexRedirect />} />
-          <Route
-            path="configurations"
-            element={
-              <ProtectedRoute
-                anyOfPermissions={[
-                  PRODUCTION_PERMISSIONS.view,
-                  PRODUCTION_PERMISSIONS.create
-                ]}
-                moduleKey="production.configurations"
-              >
-                <ConfigurationsTab />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="batches"
-            element={
-              <ProtectedRoute
-                anyOfPermissions={[
-                  PRODUCTION_PERMISSIONS.view,
-                  PRODUCTION_PERMISSIONS.create,
-                  PRODUCTION_PERMISSIONS.complete
-                ]}
-                moduleKey="production.batches"
-              >
-                <BatchesTab />
-              </ProtectedRoute>
-            }
-          />
-        </Route>
+        />
+
+        <Route
+          path="salesman-workspace"
+          element={
+            <ProtectedRoute
+              anyOfPermissions={['salesman_workspace.view']}
+              moduleKey="salesman_workspace"
+            >
+              <SalesmanWorkspacePage />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="dispatch"

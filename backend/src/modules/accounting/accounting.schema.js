@@ -15,6 +15,8 @@ const listSchema = z.object({
     dispatch_request_id: z.coerce.number().int().positive().optional(),
     transaction_type: z.string().trim().optional(),
     direction: z.enum(['in', 'out']).optional(),
+    cash_flow_permission: z.enum(['incoming', 'outgoing', 'both']).optional(),
+    cash_flow_direction: z.enum(['incoming', 'outgoing']).optional(),
     reference_type: z.string().trim().optional(),
     date_from: z.string().trim().optional(),
     date_to: z.string().trim().optional(),
@@ -27,6 +29,7 @@ module.exports = {
     body: z.object({
       account_name: z.string().trim().min(1).max(150),
       account_type: z.enum(['cash', 'bank', 'wallet', 'other']).default('cash'),
+      cash_flow_permission: z.enum(['incoming', 'outgoing', 'both']).default('both'),
       opening_balance: z.coerce.number().min(0).default(0),
       status: z.enum(['active', 'inactive']).default('active')
       , store_id: z.coerce.number().int().positive().optional()
@@ -58,6 +61,7 @@ module.exports = {
     body: z.object({
       account_name: z.string().trim().min(1).max(150).optional(),
       account_type: z.enum(['cash', 'bank', 'wallet', 'other']).optional(),
+      cash_flow_permission: z.enum(['incoming', 'outgoing', 'both']).optional(),
       status: z.enum(['active', 'inactive']).optional()
     })
   }),

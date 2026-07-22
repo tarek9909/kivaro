@@ -48,7 +48,7 @@ export function CommissionPayModal({ open, onClose, commission }) {
     setErrors({});
   }, [open, commission?.id]);
 
-  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts);
+  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts, { cash_flow_direction: 'outgoing' });
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   const mutation = useMutation({

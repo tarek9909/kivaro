@@ -83,6 +83,47 @@ async function assignSalesmanSublocation(salesmanId, data, actor = {}) {
   });
 }
 
+async function replaceSalesmanSublocations(salesmanId, data, actor = {}) {
+  const uniqueSublocationIds = [...new Set(data.sublocation_ids.map(Number))];
+  const assignmentDate = data.assigned_at || new Date().toISOString().slice(0, 10);
+
+  return withTransaction(async (connection) => {
+    const salesman = await model.findSalesmanById(salesmanId, connection);
+    assertRowInScope(salesman, actor, 'Salesman not found');
+    if (salesman.status !== 'active') {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'salesman_id', message: 'Salesman must be active' }
+      ]);
+    }
+
+    const sublocations = await model.lockSublocationsByIds(connection, uniqueSublocationIds);
+    if (sublocations.length !== uniqueSublocationIds.length) {
+      throw ApiError.badRequest('Validation failed', [
+        { field: 'sublocation_ids', message: 'One or more sublocations were not found' }
+      ]);
+    }
+    for (const sublocation of sublocations) {
+      assertSameStore(sublocation, salesman.store_id, 'sublocation_ids', 'Sublocation does not belong to this store');
+      if (sublocation.status !== 'active') {
+        throw ApiError.badRequest('Validation failed', [
+          { field: 'sublocation_ids', message: 'Only active sublocations can be assigned' }
+        ]);
+      }
+    }
+
+    const changes = await model.replaceActiveSalesmanSublocations(
+      connection,
+      salesmanId,
+      uniqueSublocationIds,
+      assignmentDate
+    );
+    return {
+      ...changes,
+      assignments: await model.listSalesmanSublocations(salesmanId, { status: 'active' })
+    };
+  });
+}
+
 function addMonthsClamped(date, months) {
   const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate()));
   if (next.getUTCDate() !== date.getUTCDate()) {
@@ -258,6 +299,7 @@ module.exports = {
   deleteLocation: async (id, actor = {}) => { await mustFind(model.findLocationById, id, 'Location not found', actor); await model.deactivateLocation(id); },
   deleteSalesman: async (id, actor = {}) => { await mustFind(model.findSalesmanById, id, 'Salesman not found', actor); await model.deactivateSalesman(id); },
   deleteSublocation: async (id, actor = {}) => { await mustFind(model.findSublocationById, id, 'Sublocation not found', actor); await model.deactivateSublocation(id); },
+  exportSalesmen: (query, actor = {}) => model.exportSalesmen(scopedQuery(query, actor)),
   generateSalesmanTargets,
   getLocation: (id, actor = {}) => mustFind(model.findLocationById, id, 'Location not found', actor),
   getLocationTarget: async (id, actor = {}) => ({
@@ -274,6 +316,7 @@ module.exports = {
   listLocations: (query, actor = {}) => model.listLocations(scopedQuery(query, actor)),
   listSalesmen: (query, actor = {}) => model.listSalesmen(scopedQuery(query, actor)),
   listSublocations: (query, actor = {}) => model.listSublocations(scopedQuery(query, actor)),
+  replaceSalesmanSublocations,
   unassignSalesmanSublocation: async (salesmanId, sublocationId, actor = {}) => {
     const salesman = await mustFind(model.findSalesmanById, salesmanId, 'Salesman not found', actor);
     const sublocation = await mustFind(model.findSublocationById, sublocationId, 'Sublocation not found', actor);

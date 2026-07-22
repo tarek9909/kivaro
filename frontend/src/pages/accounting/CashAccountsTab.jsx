@@ -91,6 +91,19 @@ export default function CashAccountsTab() {
         )
       },
       {
+        id: 'cash_flow_permission',
+        header: 'Cash flow',
+        cell: (row) => (
+          <span className="text-xs text-ink-300">
+            {row.cash_flow_permission === 'incoming'
+              ? 'Incoming only'
+              : row.cash_flow_permission === 'outgoing'
+                ? 'Outgoing only'
+                : 'Both'}
+          </span>
+        )
+      },
+      {
         id: 'status',
         header: 'Status',
         cell: (row) => (

@@ -1,411 +1,551 @@
 const { query } = require('../../bootstrap/db');
-const { insertRecord, listRecords, nullable, updateRecord } = require('../../utils/crud');
+const { getPagination, getPaginationMeta } = require('../../utils/pagination');
+const { nullable } = require('../../utils/crud');
 
-const groupSelect = `SELECT
-  pg.id, pg.store_id, pg.name, pg.code, pg.charcoal_variant_id,
-  cv.variant_name AS charcoal_variant_name, cv.sku AS charcoal_sku,
-  pg.default_warehouse_id, w.name AS default_warehouse_name,
-  pg.description, pg.status, pg.created_by, pg.created_at, pg.updated_at`;
-
-const groupFrom = 'packaging_groups pg';
-
-const groupJoins = `
-  LEFT JOIN item_variants cv ON cv.id = pg.charcoal_variant_id
-  LEFT JOIN warehouses w ON w.id = pg.default_warehouse_id`;
-
-async function listGroups(input) {
-  return listRecords({
-    select: groupSelect,
-    from: groupFrom,
-    joins: groupJoins,
-    filters: [
-      { key: 'status', column: 'pg.status' },
-      { key: 'store_id', column: 'pg.store_id' },
-      { key: 'charcoal_variant_id', column: 'pg.charcoal_variant_id' },
-      { key: 'search', type: 'search', fields: ['pg.name', 'pg.code', 'cv.variant_name'] }
-    ],
-    orderBy: 'ORDER BY pg.name ASC'
-  }, input);
+async function execute(connection, sql, params = []) {
+  if (connection) {
+    const [rows] = await connection.execute(sql, params);
+    return rows;
+  }
+  return query(sql, params);
 }
 
-async function findGroupById(id) {
+function buildListFilters(input, definitions) {
+  const conditions = [];
+  const params = [];
+  for (const definition of definitions) {
+    const value = input[definition.key];
+    if (value === undefined || value === null || value === '') continue;
+    if (definition.search) {
+      const term = `%${value}%`;
+      conditions.push(`(${definition.search.map((field) => `${field} LIKE ?`).join(' OR ')})`);
+      params.push(...definition.search.map(() => term));
+    } else {
+      conditions.push(`${definition.column} = ?`);
+      params.push(value);
+    }
+  }
+  return { conditions, params };
+}
+
+async function listGroups(input = {}) {
+  const pagination = getPagination(input);
+  const { conditions, params } = buildListFilters(input, [
+    { key: 'store_id', column: 'pg.store_id' },
+    { key: 'status', column: 'pg.status' },
+    { key: 'input_item_id', column: 'pg.input_item_id' },
+    { key: 'search', search: ['pg.name', 'pg.code', 'input_item.name'] }
+  ]);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const joins = `
+    JOIN items input_item ON input_item.id = pg.input_item_id
+    LEFT JOIN warehouses w ON w.id = pg.default_warehouse_id`;
+  const count = await query(
+    `SELECT COUNT(*) AS total
+     FROM packaging_groups pg
+     ${joins}
+     ${where}`,
+    params
+  );
   const rows = await query(
-    `${groupSelect}
-     FROM ${groupFrom}
-     ${groupJoins}
+    `SELECT pg.*, input_item.name AS input_item_name, input_item.stock_mode AS input_stock_mode,
+        w.name AS default_warehouse_name,
+        COALESCE(component_summary.outer_count, 0) AS outer_component_count,
+        COALESCE(component_summary.inner_count, 0) AS inner_component_count,
+        COALESCE(component_summary.consumable_count, 0) AS consumable_component_count
+     FROM packaging_groups pg
+     ${joins}
+     LEFT JOIN (
+       SELECT packaging_group_id,
+         SUM(component_role = 'outer_sellable') AS outer_count,
+         SUM(component_role = 'inner_sellable') AS inner_count,
+         SUM(component_role = 'consumable') AS consumable_count
+       FROM packaging_group_components
+       GROUP BY packaging_group_id
+     ) component_summary ON component_summary.packaging_group_id = pg.id
+     ${where}
+     ORDER BY pg.name ASC, pg.id ASC
+     ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`,
+    input.allRows ? params : [...params, pagination.limit, pagination.offset]
+  );
+  return {
+    rows,
+    meta: getPaginationMeta({ ...pagination, total: Number(count[0]?.total || 0) })
+  };
+}
+
+async function findGroupById(id, connection = null) {
+  const rows = await execute(connection,
+    `SELECT pg.*, input_item.name AS input_item_name, input_item.item_kind AS input_item_kind,
+        input_item.stock_mode AS input_stock_mode, input_item.kg_per_carton AS input_kg_per_carton,
+        input_item.loose_units_per_carton AS input_loose_units_per_carton,
+        w.name AS default_warehouse_name
+     FROM packaging_groups pg
+     JOIN items input_item ON input_item.id = pg.input_item_id
+     LEFT JOIN warehouses w ON w.id = pg.default_warehouse_id
      WHERE pg.id = ?
      LIMIT 1`,
     [id]
   );
-
   return rows[0] || null;
 }
 
-async function createGroup(data) {
-  return insertRecord('packaging_groups', data);
-}
-
-async function updateGroup(id, data) {
-  return updateRecord('packaging_groups', id, data);
-}
-
-async function deactivateGroup(id) {
-  const result = await query('UPDATE packaging_groups SET status = ? WHERE id = ?', ['inactive', id]);
-  return result.affectedRows;
-}
-
-async function hardDeleteGroup(id) {
-  const result = await query('DELETE FROM packaging_groups WHERE id = ?', [id]);
-  return result.affectedRows;
-}
-
-async function getGroupComponents(groupId) {
-  return query(
-    `SELECT
-       pgc.id, pgc.store_id, pgc.packaging_group_id, pgc.parent_component_id,
-       parent.variant_name AS parent_variant_name,
-       pgc.level_key, pgc.item_variant_id, iv.variant_name, iv.sku, iv.attributes_json AS variant_attributes_json,
-       i.name AS item_name, iv.cost, pgc.unit_symbol, pgc.quantity_per_parent, pgc.capacity_kg,
-       pgc.sort_order, pgc.notes, pgc.created_at, pgc.updated_at
-     FROM packaging_group_components pgc
-     JOIN item_variants iv ON iv.id = pgc.item_variant_id
-     JOIN items i ON i.id = iv.item_id
-     LEFT JOIN packaging_group_components parent_component ON parent_component.id = pgc.parent_component_id
-     LEFT JOIN item_variants parent ON parent.id = parent_component.item_variant_id
-     WHERE pgc.packaging_group_id = ?
-     ORDER BY
-       FIELD(pgc.level_key, 'category', 'item', 'sub_item', 'sub_sub_item'),
-       pgc.sort_order ASC,
-       pgc.id ASC`,
-    [groupId]
-  );
-}
-
-async function findComponentById(id) {
-  const rows = await query(
-    `SELECT pgc.*, pg.status AS group_status, iv.attributes_json AS variant_attributes_json
-     FROM packaging_group_components pgc
-     JOIN packaging_groups pg ON pg.id = pgc.packaging_group_id
-     JOIN item_variants iv ON iv.id = pgc.item_variant_id
-     WHERE pgc.id = ?
-     LIMIT 1`,
-    [id]
-  );
-
-  return rows[0] || null;
-}
-
-async function createComponent(data) {
-  return insertRecord('packaging_group_components', data);
-}
-
-async function updateComponent(id, data) {
-  return updateRecord('packaging_group_components', id, data);
-}
-
-async function deleteComponent(id) {
-  const result = await query('DELETE FROM packaging_group_components WHERE id = ?', [id]);
-  return result.affectedRows;
-}
-
-async function countComponentChildren(id) {
-  const rows = await query(
-    'SELECT COUNT(*) AS total FROM packaging_group_components WHERE parent_component_id = ?',
-    [id]
-  );
-
-  return Number(rows[0].total);
-}
-
-async function listAssignments(input) {
-  return listRecords({
-    select: `SELECT
-      pga.id, pga.store_id, pga.packaging_group_id, pg.name AS packaging_group_name,
-      pga.warehouse_id, w.name AS warehouse_name, pga.charcoal_variant_id,
-      cv.variant_name AS charcoal_variant_name, cv.sku AS charcoal_sku,
-      pga.output_item_variant_id, ov.variant_name AS output_variant_name, ov.sku AS output_sku,
-      oi.name AS output_item_name,
-      pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
-      GREATEST(pga.produced_quantity - CASE
-        WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
-        ELSE COALESCE(allocated.allocated_quantity, 0)
-      END, 0) AS available_quantity,
-      pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
-      pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
-      pga.notes, pga.created_by, pga.created_at`,
-    from: 'packaging_group_assignments pga',
-    joins: `
-      JOIN packaging_groups pg ON pg.id = pga.packaging_group_id
-      JOIN warehouses w ON w.id = pga.warehouse_id
-      JOIN item_variants cv ON cv.id = pga.charcoal_variant_id
-      LEFT JOIN item_variants ov ON ov.id = pga.output_item_variant_id
-      LEFT JOIN items oi ON oi.id = ov.item_id
-      LEFT JOIN (
-        SELECT di.packaging_assignment_id,
-          SUM(di.quantity - di.returned_quantity) AS allocated_quantity
-        FROM dispatch_items di
-        JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
-        WHERE di.packaging_assignment_id IS NOT NULL
-          AND dr.status <> 'cancelled'
-        GROUP BY di.packaging_assignment_id
-      ) allocated ON allocated.packaging_assignment_id = pga.id
-      LEFT JOIN (
-        SELECT packaging_assignment_id,
-          COUNT(*) AS movement_count,
-          GREATEST(-SUM(quantity_change), 0) AS allocated_quantity
-        FROM packaging_batch_movements
-        GROUP BY packaging_assignment_id
-      ) batch_movements ON batch_movements.packaging_assignment_id = pga.id`,
-    filters: [
-      { key: 'store_id', column: 'pga.store_id' },
-      { key: 'status', column: 'pga.status' },
-      { key: 'packaging_group_id', column: 'pga.packaging_group_id' },
-      { key: 'warehouse_id', column: 'pga.warehouse_id' },
-      { key: 'charcoal_variant_id', column: 'pga.charcoal_variant_id' },
-      { key: 'output_item_variant_id', column: 'pga.output_item_variant_id' },
-      { key: 'production_batch_id', column: 'pga.production_batch_id' },
-      { key: 'search', type: 'search', fields: ['pg.name', 'w.name', 'cv.variant_name', 'cv.sku', 'ov.variant_name', 'ov.sku'] }
-    ],
-    orderBy: 'ORDER BY pga.created_at DESC, pga.id DESC'
-  }, input);
-}
-
-async function createAssignment(data, connection = null) {
-  const payload = {
-    ...data,
-    calculation_json: data.calculation_json ? JSON.stringify(data.calculation_json) : null
-  };
-
-  if (connection) {
-    const [result] = await connection.execute(
-      `INSERT INTO packaging_group_assignments (
-        store_id, packaging_group_id, warehouse_id, charcoal_variant_id, output_item_variant_id,
-        charcoal_quantity_kg, primary_container_count, produced_quantity, total_packaging_cost,
-        cost_per_kg, status, production_batch_id, calculation_json, notes, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        nullable(payload.store_id),
-        payload.packaging_group_id,
-        payload.warehouse_id,
-        payload.charcoal_variant_id,
-        nullable(payload.output_item_variant_id),
-        payload.charcoal_quantity_kg,
-        payload.primary_container_count,
-        payload.produced_quantity,
-        payload.total_packaging_cost,
-        payload.cost_per_kg,
-        payload.status,
-        nullable(payload.production_batch_id),
-        payload.calculation_json,
-        nullable(payload.notes),
-        nullable(payload.created_by)
-      ]
-    );
-
-    return { id: result.insertId, ...payload };
-  }
-
-  return insertRecord('packaging_group_assignments', payload);
-}
-
-async function deleteAssignment(id) {
-  const result = await query('DELETE FROM packaging_group_assignments WHERE id = ?', [id]);
-  return result.affectedRows;
-}
-
-async function findAssignmentById(id) {
-  const rows = await query(
-    `SELECT
-       pga.id, pga.store_id, pga.packaging_group_id, pga.warehouse_id,
-       pga.charcoal_variant_id, pga.output_item_variant_id,
-       pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
-       GREATEST(pga.produced_quantity - CASE
-         WHEN COALESCE(batch_movements.movement_count, 0) > 0 THEN COALESCE(batch_movements.allocated_quantity, 0)
-         ELSE COALESCE(allocated.allocated_quantity, 0)
-       END, 0) AS available_quantity,
-       pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
-       pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
-       pga.notes, pga.created_by, pga.created_at
-     FROM packaging_group_assignments pga
-     LEFT JOIN (
-       SELECT di.packaging_assignment_id,
-         SUM(di.quantity - di.returned_quantity) AS allocated_quantity
-       FROM dispatch_items di
-       JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
-       WHERE di.packaging_assignment_id IS NOT NULL
-         AND dr.status <> 'cancelled'
-       GROUP BY di.packaging_assignment_id
-     ) allocated ON allocated.packaging_assignment_id = pga.id
-     LEFT JOIN (
-       SELECT packaging_assignment_id,
-         COUNT(*) AS movement_count,
-         GREATEST(-SUM(quantity_change), 0) AS allocated_quantity
-       FROM packaging_batch_movements
-       GROUP BY packaging_assignment_id
-     ) batch_movements ON batch_movements.packaging_assignment_id = pga.id
-     WHERE pga.id = ?
-     LIMIT 1`,
-    [id]
-  );
-
-  return rows[0] || null;
-}
-
-async function lockAssignmentById(connection, id) {
+async function lockGroupById(connection, id) {
   const [rows] = await connection.execute(
-    `SELECT
-       pga.id, pga.store_id, pga.packaging_group_id, pga.warehouse_id,
-       pga.charcoal_variant_id, pga.output_item_variant_id,
-       pga.charcoal_quantity_kg, pga.primary_container_count, pga.produced_quantity,
-       pga.total_packaging_cost, pga.cost_per_kg, pga.status, pga.production_batch_id,
-       pga.calculation_json, pga.consumed_at, pga.consumed_by, pga.consumed_movements_json,
-       pga.notes, pga.created_by, pga.created_at
-     FROM packaging_group_assignments pga
-     WHERE pga.id = ?
+    `SELECT pg.*, input_item.name AS input_item_name, input_item.item_kind AS input_item_kind,
+        input_item.stock_mode AS input_stock_mode, input_item.kg_per_carton AS input_kg_per_carton,
+        input_item.loose_units_per_carton AS input_loose_units_per_carton,
+        input_item.status AS input_item_status
+     FROM packaging_groups pg
+     JOIN items input_item ON input_item.id = pg.input_item_id
+     WHERE pg.id = ?
      LIMIT 1
      FOR UPDATE`,
     [id]
   );
-
   return rows[0] || null;
 }
 
-async function updateAssignment(connection, id, data) {
-  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
-  if (!entries.length) return findAssignmentById(id);
-  const assignments = entries.map(([key]) => `${key} = ?`).join(', ');
-  const params = entries.map(([, value]) => {
-    if (value instanceof Date) {
-      return value;
-    }
-    if (value && (typeof value === 'object' || Array.isArray(value))) {
-      return JSON.stringify(value);
-    }
-    return value === undefined || value === '' ? null : value;
-  });
+async function getGroupComponents(groupId, connection = null, lock = false) {
+  const suffix = connection && lock ? ' FOR UPDATE' : '';
+  const rows = await execute(connection,
+    `SELECT pgc.*, i.name AS item_name, i.code AS item_code, i.item_kind, i.stock_mode,
+        i.max_content_weight_kg, i.status AS item_status
+     FROM packaging_group_components pgc
+     JOIN items i ON i.id = pgc.item_id
+     WHERE pgc.packaging_group_id = ?
+     ORDER BY FIELD(pgc.component_role, 'outer_sellable', 'inner_sellable', 'consumable'), pgc.sort_order ASC, pgc.id ASC${suffix}`,
+    [groupId]
+  );
+  return rows;
+}
 
-  if (connection) {
-    await connection.execute(
-      `UPDATE packaging_group_assignments SET ${assignments} WHERE id = ?`,
-      [...params, id]
-    );
-    return { id, ...data };
-  } else {
-    await query(
-      `UPDATE packaging_group_assignments SET ${assignments} WHERE id = ?`,
-      [...params, id]
+async function createGroup(data, connection = null) {
+  const result = await execute(connection,
+    `INSERT INTO packaging_groups (
+      store_id, name, code, input_item_id, default_warehouse_id, description, status, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.store_id,
+      data.name,
+      data.code,
+      data.input_item_id,
+      nullable(data.default_warehouse_id),
+      nullable(data.description),
+      data.status || 'active',
+      nullable(data.created_by)
+    ]
+  );
+  return findGroupById(result.insertId, connection);
+}
+
+async function updateGroup(id, data, connection = null) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  if (entries.length) {
+    await execute(connection,
+      `UPDATE packaging_groups SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
+      [...entries.map(([, value]) => nullable(value)), id]
     );
   }
-
-  return findAssignmentById(id);
+  return findGroupById(id, connection);
 }
 
-async function getWarehouseVariantBalances(warehouseId, variantIds) {
-  if (!variantIds.length) return [];
-  const placeholders = variantIds.map(() => '?').join(', ');
-
-  return query(
-    `SELECT item_variant_id, quantity_on_hand, quantity_reserved, average_cost
-     FROM stock_balances
-     WHERE warehouse_id = ? AND item_variant_id IN (${placeholders})`,
-    [warehouseId, ...variantIds]
+async function deactivateGroup(id) {
+  const result = await query(
+    `UPDATE packaging_groups SET status = 'inactive' WHERE id = ?`,
+    [id]
   );
+  return result.affectedRows;
 }
 
-async function getVariantCost(itemVariantId, warehouseId = null) {
+async function replaceGroupComponents(connection, groupId, storeId, components) {
+  await connection.execute(
+    'DELETE FROM packaging_group_components WHERE packaging_group_id = ?',
+    [groupId]
+  );
+  for (const [index, component] of components.entries()) {
+    await connection.execute(
+      `INSERT INTO packaging_group_components (
+        store_id, packaging_group_id, item_id, component_role, quantity_per_outer, sort_order, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        storeId,
+        groupId,
+        component.item_id,
+        component.component_role,
+        component.quantity_per_outer,
+        component.sort_order ?? index,
+        nullable(component.notes)
+      ]
+    );
+  }
+  return getGroupComponents(groupId, connection);
+}
+
+async function listOperations(input = {}) {
+  const pagination = getPagination(input);
+  const { conditions, params } = buildListFilters(input, [
+    { key: 'store_id', column: 'po.store_id' },
+    { key: 'packaging_group_id', column: 'po.packaging_group_id' },
+    { key: 'warehouse_id', column: 'po.warehouse_id' },
+    { key: 'status', column: 'po.status' },
+    { key: 'search', search: ['po.operation_number', 'pg.name', 'input_item.name'] }
+  ]);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const joins = `
+    JOIN packaging_groups pg ON pg.id = po.packaging_group_id
+    JOIN items input_item ON input_item.id = po.input_item_id
+    JOIN warehouses w ON w.id = po.warehouse_id`;
+  const count = await query(`SELECT COUNT(*) AS total FROM packaging_operations po ${joins} ${where}`, params);
   const rows = await query(
-    `SELECT COALESCE(NULLIF(sb.average_cost, 0), iv.cost, 0) AS cost
-     FROM item_variants iv
-     LEFT JOIN stock_balances sb
-       ON sb.item_variant_id = iv.id AND sb.warehouse_id = ?
-     WHERE iv.id = ?
-     LIMIT 1`,
-    [warehouseId, itemVariantId]
+    `SELECT po.*, pg.name AS packaging_group_name, input_item.name AS input_item_name, w.name AS warehouse_name,
+        COUNT(rsc.id) AS container_count,
+        SUM(rsc.status = 'full') AS full_container_count,
+        SUM(rsc.status = 'partial') AS partial_container_count,
+        SUM(rsc.status = 'depleted') AS depleted_container_count
+     FROM packaging_operations po
+     ${joins}
+     LEFT JOIN ready_stock_containers rsc ON rsc.packaging_operation_id = po.id
+     ${where}
+     GROUP BY po.id
+     ORDER BY po.completed_at DESC, po.id DESC
+     ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`,
+    input.allRows ? params : [...params, pagination.limit, pagination.offset]
   );
-
-  return rows[0] ? Number(rows[0].cost) : 0;
-}
-
-async function getAssignmentAllocatedQuantity(id, connection = null) {
-  const sql = `SELECT COALESCE(SUM(di.quantity - di.returned_quantity), 0) AS allocated_quantity
-     FROM dispatch_items di
-     JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
-     WHERE di.packaging_assignment_id = ?
-       AND dr.status <> 'cancelled'`;
-  const rows = connection
-    ? (await connection.execute(sql, [id]))[0]
-    : await query(sql, [id]);
-
-  return Number(rows[0]?.allocated_quantity || 0);
-}
-
-async function getAssignmentBatchMovementQuantity(id, connection = null) {
-  const sql = `SELECT
-      COUNT(*) AS movement_count,
-      COALESCE(SUM(quantity_change), 0) AS net_quantity_change
-     FROM packaging_batch_movements
-     WHERE packaging_assignment_id = ?`;
-  const rows = connection
-    ? (await connection.execute(sql, [id]))[0]
-    : await query(sql, [id]);
-
   return {
-    movement_count: Number(rows[0]?.movement_count || 0),
-    net_quantity_change: Number(rows[0]?.net_quantity_change || 0),
-    allocated_quantity: Math.max(0, -Number(rows[0]?.net_quantity_change || 0))
+    rows,
+    meta: getPaginationMeta({ ...pagination, total: Number(count[0]?.total || 0) })
   };
 }
 
-async function createBatchMovement(connection, data) {
+async function findOperationById(id, connection = null) {
+  const operationRows = await execute(connection,
+    `SELECT po.*, pg.name AS packaging_group_name, input_item.name AS input_item_name,
+        w.name AS warehouse_name
+     FROM packaging_operations po
+     JOIN packaging_groups pg ON pg.id = po.packaging_group_id
+     JOIN items input_item ON input_item.id = po.input_item_id
+     JOIN warehouses w ON w.id = po.warehouse_id
+     WHERE po.id = ?
+     LIMIT 1`,
+    [id]
+  );
+  const operation = operationRows[0];
+  if (!operation) return null;
+  const [components, containers] = await Promise.all([
+    execute(connection,
+      `SELECT poc.*, i.name AS item_name
+       FROM packaging_operation_components poc
+       JOIN items i ON i.id = poc.item_id
+       WHERE poc.packaging_operation_id = ?
+       ORDER BY poc.id ASC`,
+      [id]
+    ),
+    listReadyStockContainers({ packaging_operation_id: id, allRows: true }, connection)
+  ]);
+  return { ...operation, components, containers: containers.rows };
+}
+
+async function createOperation(connection, data) {
   const [result] = await connection.execute(
-    `INSERT INTO packaging_batch_movements (
-      store_id, packaging_assignment_id, warehouse_id, item_variant_id, movement_type,
-      quantity_change, quantity_before, quantity_after, unit_cost, reference_type,
-      reference_id, dispatch_item_id, notes, created_by
+    `INSERT INTO packaging_operations (
+      store_id, operation_number, packaging_group_id, input_item_id, warehouse_id, output_carton_count,
+      raw_quantity_kg, raw_unit_cost, packaging_cost, total_cost, cost_per_outer, cost_per_inner,
+      group_snapshot_json, input_snapshot_json, status, completed_by, completed_at, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+    [
+      data.store_id,
+      data.operation_number,
+      data.packaging_group_id,
+      data.input_item_id,
+      data.warehouse_id,
+      data.output_carton_count,
+      data.raw_quantity_kg,
+      data.raw_unit_cost,
+      data.packaging_cost,
+      data.total_cost,
+      data.cost_per_outer,
+      data.cost_per_inner,
+      JSON.stringify(data.group_snapshot_json || {}),
+      JSON.stringify(data.input_snapshot_json || {}),
+      data.status || 'completed',
+      data.completed_by,
+      nullable(data.notes)
+    ]
+  );
+  return result.insertId;
+}
+
+async function createOperationComponent(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO packaging_operation_components (
+      packaging_operation_id, item_id, component_role, quantity_per_outer, required_quantity,
+      consumed_quantity, unit_cost, total_cost, component_snapshot_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.packaging_operation_id,
+      data.item_id,
+      data.component_role,
+      data.quantity_per_outer,
+      data.required_quantity,
+      data.consumed_quantity,
+      data.unit_cost,
+      data.total_cost,
+      JSON.stringify(data.component_snapshot_json || {})
+    ]
+  );
+  return result.insertId;
+}
+
+async function createReadyStockContainer(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO ready_stock_containers (
+      store_id, packaging_operation_id, packaging_group_id, warehouse_id, outer_item_id, inner_item_id,
+      outer_name_snapshot, inner_name_snapshot, initial_inner_quantity, remaining_inner_quantity,
+      capacity_kg, total_cost, remaining_cost, status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      nullable(data.store_id),
-      data.packaging_assignment_id,
+      data.store_id,
+      data.packaging_operation_id,
+      data.packaging_group_id,
       data.warehouse_id,
-      nullable(data.item_variant_id),
-      data.movement_type || 'batch_movement',
-      data.quantity_change,
-      data.quantity_before,
-      data.quantity_after,
-      nullable(data.unit_cost),
+      data.outer_item_id,
+      data.inner_item_id,
+      data.outer_name_snapshot,
+      data.inner_name_snapshot,
+      data.initial_inner_quantity,
+      data.remaining_inner_quantity,
+      data.capacity_kg,
+      data.total_cost,
+      data.remaining_cost,
+      data.status || 'full'
+    ]
+  );
+  return result.insertId;
+}
+
+async function listReadyStockContainers(input = {}, connection = null) {
+  const pagination = getPagination(input);
+  const { conditions, params } = buildListFilters(input, [
+    { key: 'store_id', column: 'rsc.store_id' },
+    { key: 'warehouse_id', column: 'rsc.warehouse_id' },
+    { key: 'packaging_group_id', column: 'rsc.packaging_group_id' },
+    { key: 'packaging_operation_id', column: 'rsc.packaging_operation_id' },
+    { key: 'status', column: 'rsc.status' },
+    { key: 'search', search: ['rsc.outer_name_snapshot', 'rsc.inner_name_snapshot', 'po.operation_number', 'pg.name'] }
+  ]);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const joins = `
+    JOIN packaging_operations po ON po.id = rsc.packaging_operation_id
+    JOIN packaging_groups pg ON pg.id = rsc.packaging_group_id
+    JOIN warehouses w ON w.id = rsc.warehouse_id`;
+  const executor = connection ? (sql, values) => execute(connection, sql, values) : query;
+  const count = await executor(`SELECT COUNT(*) AS total FROM ready_stock_containers rsc ${joins} ${where}`, params);
+  const rows = await executor(
+    `SELECT rsc.*, po.operation_number, pg.name AS packaging_group_name, w.name AS warehouse_name,
+        (rsc.remaining_inner_quantity / NULLIF(rsc.initial_inner_quantity, 0)) AS remaining_ratio
+     FROM ready_stock_containers rsc
+     ${joins}
+     ${where}
+     ORDER BY FIELD(rsc.status, 'full', 'partial', 'depleted', 'cancelled'), rsc.created_at ASC, rsc.id ASC
+     ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`,
+    input.allRows ? params : [...params, pagination.limit, pagination.offset]
+  );
+  return {
+    rows,
+    meta: getPaginationMeta({ ...pagination, total: Number(count[0]?.total || 0) })
+  };
+}
+
+async function lockReadyStockContainer(connection, id) {
+  const [rows] = await connection.execute(
+    `SELECT * FROM ready_stock_containers WHERE id = ? LIMIT 1 FOR UPDATE`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function lockReadyContainersForAllocation(connection, warehouseId, packagingGroupId, status, limit = null) {
+  const params = [warehouseId, packagingGroupId, status];
+  const limitClause = limit ? 'LIMIT ?' : '';
+  if (limit) params.push(limit);
+  const [rows] = await connection.execute(
+    `SELECT *
+     FROM ready_stock_containers
+     WHERE warehouse_id = ? AND packaging_group_id = ? AND status = ?
+     ORDER BY created_at ASC, id ASC
+     ${limitClause}
+     FOR UPDATE`,
+    params
+  );
+  return rows;
+}
+
+async function updateReadyStockContainer(connection, id, data) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  if (!entries.length) return lockReadyStockContainer(connection, id);
+  await connection.execute(
+    `UPDATE ready_stock_containers SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
+    [...entries.map(([, value]) => nullable(value)), id]
+  );
+  return lockReadyStockContainer(connection, id);
+}
+
+async function createReadyStockMovement(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO ready_stock_movements (
+      store_id, warehouse_id, ready_stock_container_id, movement_type,
+      inner_quantity_change, inner_quantity_before, inner_quantity_after,
+      cost_change, cost_before, cost_after, reference_type, reference_id, notes, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.store_id,
+      data.warehouse_id,
+      data.ready_stock_container_id,
+      data.movement_type,
+      data.inner_quantity_change,
+      data.inner_quantity_before,
+      data.inner_quantity_after,
+      data.cost_change,
+      data.cost_before,
+      data.cost_after,
       nullable(data.reference_type),
       nullable(data.reference_id),
-      nullable(data.dispatch_item_id),
       nullable(data.notes),
       nullable(data.created_by)
     ]
   );
-
   return result.insertId;
 }
 
+async function listSaleCatalogEntries(input = {}) {
+  const pagination = getPagination(input);
+  const { conditions, params } = buildListFilters(input, [
+    { key: 'store_id', column: 'sce.store_id' },
+    { key: 'entry_type', column: 'sce.entry_type' },
+    { key: 'item_id', column: 'sce.item_id' },
+    { key: 'packaging_group_id', column: 'sce.packaging_group_id' },
+    { key: 'status', column: 'sce.status' },
+    { key: 'is_pos_active', column: 'sce.is_pos_active' },
+    { key: 'search', search: ['sce.display_name', 'item.name', 'pg.name'] }
+  ]);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const joins = `
+    LEFT JOIN items item ON item.id = sce.item_id
+    LEFT JOIN packaging_groups pg ON pg.id = sce.packaging_group_id`;
+  const count = await query(`SELECT COUNT(*) AS total FROM sale_catalog_entries sce ${joins} ${where}`, params);
+  const rows = await query(
+    `SELECT sce.*, item.name AS item_name, item.stock_mode AS item_stock_mode,
+        pg.name AS packaging_group_name
+     FROM sale_catalog_entries sce
+     ${joins}
+     ${where}
+     ORDER BY sce.display_name ASC, sce.id ASC
+     ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`,
+    input.allRows ? params : [...params, pagination.limit, pagination.offset]
+  );
+  return {
+    rows,
+    meta: getPaginationMeta({ ...pagination, total: Number(count[0]?.total || 0) })
+  };
+}
+
+async function findSaleCatalogEntryById(id, connection = null) {
+  const rows = await execute(connection,
+    `SELECT sce.*, item.name AS item_name, item.item_kind AS item_kind, item.stock_mode AS item_stock_mode,
+        item.kg_per_carton, item.loose_units_per_carton, item.status AS item_status,
+        pg.name AS packaging_group_name, pg.status AS packaging_group_status
+     FROM sale_catalog_entries sce
+     LEFT JOIN items item ON item.id = sce.item_id
+     LEFT JOIN packaging_groups pg ON pg.id = sce.packaging_group_id
+     WHERE sce.id = ?
+     LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function findActiveSaleCatalogDuplicate(connection, data, excludeId = null) {
+  const conditions = [
+    'store_id = ?',
+    'entry_type = ?',
+    "status = 'active'"
+  ];
+  const params = [data.store_id, data.entry_type];
+  if (data.item_id) {
+    conditions.push('item_id = ?');
+    params.push(data.item_id);
+  } else {
+    conditions.push('packaging_group_id = ?');
+    params.push(data.packaging_group_id);
+  }
+  if (excludeId) {
+    conditions.push('id <> ?');
+    params.push(excludeId);
+  }
+  const rows = await execute(connection,
+    `SELECT * FROM sale_catalog_entries WHERE ${conditions.join(' AND ')} LIMIT 1`,
+    params
+  );
+  return rows[0] || null;
+}
+
+async function createSaleCatalogEntry(data, connection = null) {
+  const result = await execute(connection,
+    `INSERT INTO sale_catalog_entries (
+      store_id, entry_type, item_id, packaging_group_id, display_name, unit_label,
+      default_price, vat_rate, is_pos_active, status, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.store_id,
+      data.entry_type,
+      nullable(data.item_id),
+      nullable(data.packaging_group_id),
+      data.display_name,
+      data.unit_label,
+      data.default_price,
+      data.vat_rate || 0,
+      data.is_pos_active ? 1 : 0,
+      data.status || 'active',
+      nullable(data.created_by)
+    ]
+  );
+  return findSaleCatalogEntryById(result.insertId, connection);
+}
+
+async function updateSaleCatalogEntry(id, data, connection = null) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  if (entries.length) {
+    await execute(connection,
+      `UPDATE sale_catalog_entries SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
+      [...entries.map(([, value]) => typeof value === 'boolean' ? Number(value) : nullable(value)), id]
+    );
+  }
+  return findSaleCatalogEntryById(id, connection);
+}
+
 module.exports = {
-  countComponentChildren,
-  createAssignment,
-  createBatchMovement,
-  createComponent,
   createGroup,
-  deleteAssignment,
+  createOperation,
+  createOperationComponent,
+  createReadyStockContainer,
+  createReadyStockMovement,
+  createSaleCatalogEntry,
   deactivateGroup,
-  deleteComponent,
-  findComponentById,
-  findAssignmentById,
   findGroupById,
+  findOperationById,
+  findActiveSaleCatalogDuplicate,
+  findSaleCatalogEntryById,
   getGroupComponents,
-  getAssignmentAllocatedQuantity,
-  getAssignmentBatchMovementQuantity,
-  getVariantCost,
-  getWarehouseVariantBalances,
-  hardDeleteGroup,
-  listAssignments,
   listGroups,
-  lockAssignmentById,
-  updateComponent,
-  updateAssignment,
-  updateGroup
+  listOperations,
+  listReadyStockContainers,
+  listSaleCatalogEntries,
+  lockGroupById,
+  lockReadyStockContainer,
+  lockReadyContainersForAllocation,
+  replaceGroupComponents,
+  updateGroup,
+  updateReadyStockContainer,
+  updateSaleCatalogEntry
 };

@@ -70,6 +70,15 @@ describe('navigation config', () => {
     expect(sales.anyOfPermissions).toEqual(['reports.view']);
   });
 
+  it('exposes the standalone salesman workspace to its dedicated module permission', () => {
+    const items = flattenNavItems();
+    const workspace = items.find((item) => item.id === 'salesman-workspace');
+    expect(workspace).toBeDefined();
+    expect(workspace.to).toBe('/salesman-workspace');
+    expect(workspace.moduleKey).toBe('salesman_workspace');
+    expect(workspace.anyOfPermissions).toEqual(['salesman_workspace.view']);
+  });
+
   it('exposes the locations nav item to locations.manage, salesmen.manage, or targets.manage users', () => {
     const items = flattenNavItems();
     const locations = items.find((item) => item.id === 'locations');
@@ -82,16 +91,10 @@ describe('navigation config', () => {
     ]);
   });
 
-  it('exposes the production nav item to production.view, production.create, or production.complete users', () => {
+  it('does not expose the retired production workspace', () => {
     const items = flattenNavItems();
     const production = items.find((item) => item.id === 'production');
-    expect(production).toBeDefined();
-    expect(production.to).toBe('/production');
-    expect(production.anyOfPermissions).toEqual([
-      'production.view',
-      'production.create',
-      'production.complete'
-    ]);
+    expect(production).toBeUndefined();
   });
 
   it('exposes the dispatch nav item to any of view/create/approve/settle/print users', () => {

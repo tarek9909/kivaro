@@ -20,7 +20,7 @@ export default function CustomerCreditsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canPickCustomers = hasPermission(CUSTOMERS_VIEW);
   const [customerId, setCustomerId] = useState('');
-  const [direction, setDirection] = useState('');
+  const [status, setStatus] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
@@ -28,9 +28,9 @@ export default function CustomerCreditsTab() {
   const queryParams = useMemo(() => {
     const params = { page, limit };
     if (customerId) params.customer_id = customerId;
-    if (direction) params.direction = direction;
+    if (status) params.status = status;
     return params;
-  }, [customerId, direction, page, limit]);
+  }, [customerId, status, page, limit]);
 
   const listQuery = useQuery({
     queryKey: ['payments', 'customer-credits', queryParams],
@@ -44,9 +44,9 @@ export default function CustomerCreditsTab() {
   const columns = useMemo(
     () => [
       {
-        id: 'created_at',
+        id: 'credit_date',
         header: 'Date',
-        cell: (row) => <span className="text-sm text-ink-200">{formatDate(row.created_at)}</span>
+        cell: (row) => <span className="text-sm text-ink-200">{formatDate(row.credit_date)}</span>
       },
       {
         id: 'customer_name',
@@ -54,19 +54,34 @@ export default function CustomerCreditsTab() {
         cell: (row) => <span className="text-sm text-ink-100">{row.customer_name || `Customer #${row.customer_id}`}</span>
       },
       {
-        id: 'direction',
-        header: 'Type',
+        id: 'credit_number',
+        header: 'Credit',
         cell: (row) => (
-          <Badge tone={row.direction === 'credit' ? 'success' : 'warn'}>
-            {row.direction === 'credit' ? 'Credit' : 'Applied'}
+          <span className="font-mono text-xs text-ink-300">
+            {row.credit_number || `Credit #${row.id}`}
+          </span>
+        )
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: (row) => (
+          <Badge tone={row.status === 'available' ? 'success' : row.status === 'partially_used' ? 'warn' : 'neutral'}>
+            {row.status === 'available' ? 'Available' : row.status === 'partially_used' ? 'Partially used' : row.status === 'used' ? 'Used' : 'Cancelled'}
           </Badge>
         )
       },
       {
-        id: 'amount',
-        header: 'Amount',
+        id: 'original_amount',
+        header: 'Original',
         align: 'right',
-        cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.amount, { maximumFractionDigits: 4 })}</span>
+        cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.original_amount, { maximumFractionDigits: 4 })}</span>
+      },
+      {
+        id: 'remaining_amount',
+        header: 'Remaining',
+        align: 'right',
+        cell: (row) => <span className="font-mono text-sm text-ink-100">{formatNumber(row.remaining_amount, { maximumFractionDigits: 4 })}</span>
       },
       {
         id: 'reference_type',
@@ -132,16 +147,18 @@ export default function CustomerCreditsTab() {
             />
           )}
           <Select
-            label="Type"
-            value={direction}
+            label="Status"
+            value={status}
             onChange={(event) => {
-              setDirection(event.target.value);
+              setStatus(event.target.value);
               setPage(1);
             }}
           >
-            <option value="">All types</option>
-            <option value="credit">Credit</option>
-            <option value="debit">Applied</option>
+            <option value="">All statuses</option>
+            <option value="available">Available</option>
+            <option value="partially_used">Partially used</option>
+            <option value="used">Used</option>
+            <option value="cancelled">Cancelled</option>
           </Select>
         </div>
       </div>
@@ -156,7 +173,7 @@ export default function CustomerCreditsTab() {
         onRetry={() => listQuery.refetch()}
         empty={{
           title: 'No customer credits match the filters',
-          description: 'Overpayments will appear here as customer credit ledger entries.'
+          description: 'Overpayments create credit balances that are consumed FIFO when applied to debts.'
         }}
         footer={
           meta?.totalPages ? (

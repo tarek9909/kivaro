@@ -14,7 +14,8 @@ import { createInventoryApi } from './modules/inventory.js';
 import { createLocationsApi } from './modules/locations.js';
 import { createNotificationsApi } from './modules/notifications.js';
 import { createPaymentsApi } from './modules/payments.js';
-import { createProductionApi } from './modules/production.js';
+import { createPackagingApi } from './modules/packaging.js';
+import { createPosApi } from './modules/pos.js';
 import { createPurchasesApi } from './modules/purchases.js';
 import { createReportsApi } from './modules/reports.js';
 import { createRolesApi } from './modules/roles.js';
@@ -35,7 +36,8 @@ export const api = {
   locations: createLocationsApi(httpClient),
   notifications: createNotificationsApi(httpClient),
   payments: createPaymentsApi(httpClient),
-  production: createProductionApi(httpClient),
+  packaging: createPackagingApi(httpClient),
+  pos: createPosApi(httpClient),
   purchases: createPurchasesApi(httpClient),
   reports: createReportsApi(httpClient),
   roles: createRolesApi(httpClient),

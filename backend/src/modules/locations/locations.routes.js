@@ -23,12 +23,14 @@ router.patch('/sublocations/:id', requirePermission('locations.manage'), validat
 router.delete('/sublocations/:id', requirePermission('locations.manage'), validate(schemas.idSchema), asyncHandler(controller.deleteSublocation));
 
 router.get('/salesmen', requirePermission('salesmen.manage'), validate(schemas.listSchema), asyncHandler(controller.listSalesmen));
+router.get('/salesmen/export', requirePermission('salesmen.manage', 'reports.export'), validate(schemas.salesmanExportSchema), asyncHandler(controller.exportSalesmen));
 router.post('/salesmen', requirePermission('salesmen.manage'), validate(schemas.createSalesmanSchema), asyncHandler(controller.createSalesman));
 router.get('/salesmen/:id/sublocations', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.listSalesmanSublocations));
 router.get('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.getSalesman));
 router.patch('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.updateSalesmanSchema), asyncHandler(controller.updateSalesman));
 router.delete('/salesmen/:id', requirePermission('salesmen.manage'), validate(schemas.idSchema), asyncHandler(controller.deleteSalesman));
 router.post('/salesmen/:id/sublocations', requirePermission('salesmen.manage'), validate(schemas.assignSchema), asyncHandler(controller.assignSalesmanSublocation));
+router.put('/salesmen/:id/sublocations', requirePermission('salesmen.manage'), validate(schemas.replaceAssignmentsSchema), asyncHandler(controller.replaceSalesmanSublocations));
 router.delete('/salesmen/:id/sublocations/:sublocationId', requirePermission('salesmen.manage'), validate(schemas.salesmanSublocationIdSchema), asyncHandler(controller.unassignSalesmanSublocation));
 
 router.get('/location-targets', requirePermission('targets.manage'), validate(schemas.listSchema), asyncHandler(controller.listLocationTargets));

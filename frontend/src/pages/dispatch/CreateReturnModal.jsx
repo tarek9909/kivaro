@@ -139,13 +139,11 @@ export function CreateReturnModal({ open, onClose, dispatchRequest }) {
               const customer = customersById.get(Number(item.dispatch_customer_id));
               const remainingForOption = getRemainingReturnable(item);
               const customerLabel = customer?.customer_name || `customer #${item.dispatch_customer_id}`;
-              const variantLabel =
-                item.item_name && item.variant_name
-                  ? `${item.item_name} - ${item.variant_name}`
-                  : item.sku || `variant #${item.item_variant_id}`;
+              const itemLabel = item.item_name_snapshot || item.catalog_display_name || 'Dispatch line';
+              const fulfillmentLabel = item.fulfillment_type?.replaceAll('_', ' ') || 'sale offer';
               return (
                 <option key={item.id} value={item.id}>
-                  {`${customerLabel} - ${variantLabel} (${formatNumber(remainingForOption, {
+                  {`${customerLabel} - ${itemLabel} (${fulfillmentLabel}; ${formatNumber(remainingForOption, {
                     maximumFractionDigits: 4
                   })} returnable)`}
                 </option>

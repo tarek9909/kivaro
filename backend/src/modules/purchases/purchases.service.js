@@ -6,6 +6,7 @@ const { withTransaction } = require('../../utils/transaction');
 const { writeAuditLog } = require('../../middleware/audit.middleware');
 const accountingModel = require('../accounting/accounting.model');
 const inventoryModel = require('../inventory/inventory.model');
+const stockService = require('../inventory/stock.service');
 const purchaseModel = require('./purchases.model');
 
 async function getSupplier(id, actor = {}) {
@@ -24,25 +25,63 @@ function assertActive(row, field, label) {
   return row;
 }
 
-function assertStockedItem(item, field = 'items.item_id') {
-  if (item?.tracking_type !== 'stocked') {
+function validationError(field, message) {
+  return ApiError.badRequest('Validation failed', [{ field, message }]);
+}
+
+function assertCanonicalInventoryItem(item, field = 'items.item_id') {
+  if (!item || !['normal', 'packaging'].includes(item.item_kind)) {
     throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Item must be stocked' }
+      { field, message: 'Item is not configured for canonical inventory' }
     ]);
+  }
+  if (!['carton_weight', 'weight', 'piece'].includes(item.stock_mode)) {
+    throw validationError(field, 'Item stock mode is invalid');
+  }
+  if (item.item_kind === 'packaging' && item.stock_mode !== 'piece') {
+    throw validationError(field, 'Packaging items must use piece stock mode');
   }
 
   return item;
 }
 
+function numericInput(value, field, { whole = false } = {}) {
+  if (value === undefined || value === null || value === '') {
+    throw validationError(field, 'Quantity is required');
+  }
+  const normalized = decimal(value);
+  if (normalized.lte(0)) {
+    throw validationError(field, 'Quantity must be greater than zero');
+  }
+  if (whole && !normalized.isInteger()) {
+    throw validationError(field, 'Quantity must be a whole number');
+  }
+  return normalized;
+}
+
+function valueFromAliases(input, primaryField, legacyField, field) {
+  const primary = input[primaryField];
+  const legacy = input[legacyField];
+  if (primary !== undefined && legacy !== undefined && !decimal(primary).eq(legacy)) {
+    throw validationError(field, `${primaryField} and ${legacyField} must match when both are supplied`);
+  }
+  return primary === undefined ? legacy : primary;
+}
+
+function costInput(value, field) {
+  if (value === undefined || value === null) return undefined;
+  const cost = decimal(value);
+  if (cost.lt(0)) throw validationError(field, 'Cost cannot be negative');
+  return cost;
+}
+
 function normalizeItemQuantity(item, quantity, field) {
-  const value = decimal(quantity);
-  if (item?.base_unit_type === 'quantity' && !value.isInteger()) {
-    throw ApiError.badRequest('Validation failed', [
-      { field, message: 'Piece-based quantities must be whole numbers' }
-    ]);
+  const value = numericInput(quantity, field, { whole: item?.stock_mode === 'piece' });
+  if (item?.stock_mode === 'carton_weight') {
+    throw validationError(field, 'Carton-weight items use carton count, not loose kg quantity');
   }
 
-  if (item?.base_unit_type === 'weight') {
+  if (item?.stock_mode === 'weight') {
     return value.mul(item.base_unit_conversion_to_base || 1);
   }
 
@@ -54,11 +93,88 @@ function normalizeItemUnitCost(item, unitCost) {
     return unitCost;
   }
 
-  if (item?.base_unit_type === 'weight') {
+  if (item?.stock_mode === 'weight') {
     return decimal(unitCost).div(item.base_unit_conversion_to_base || 1);
   }
 
   return decimal(unitCost);
+}
+
+function orderLineValues(item, line, index) {
+  if (item.stock_mode === 'carton_weight') {
+    const cartonCount = numericInput(
+      valueFromAliases(line, 'carton_count', 'ordered_quantity', `items.${index}.carton_count`),
+      `items.${index}.carton_count`,
+      { whole: true }
+    );
+    const costPerCarton = costInput(
+      valueFromAliases(line, 'cost_per_carton', 'unit_cost', `items.${index}.cost_per_carton`),
+      `items.${index}.cost_per_carton`
+    );
+    if (costPerCarton === undefined) {
+      throw validationError(`items.${index}.cost_per_carton`, 'Cost per carton is required');
+    }
+    return {
+      ordered_quantity: toMoney(cartonCount),
+      unit_cost: toMoney(costPerCarton),
+      carton_count: toMoney(cartonCount),
+      cost_per_carton: toMoney(costPerCarton)
+    };
+  }
+
+  if (line.carton_count !== undefined || line.cost_per_carton !== undefined) {
+    throw validationError(`items.${index}`, 'Carton fields are only valid for carton-weight items');
+  }
+  const quantity = numericInput(
+    valueFromAliases(line, 'quantity', 'ordered_quantity', `items.${index}.quantity`),
+    `items.${index}.quantity`,
+    { whole: item.stock_mode === 'piece' }
+  );
+  const unitCost = costInput(line.unit_cost, `items.${index}.unit_cost`);
+  if (unitCost === undefined) {
+    throw validationError(`items.${index}.unit_cost`, 'Unit cost is required');
+  }
+  return {
+    ordered_quantity: toMoney(quantity),
+    unit_cost: toMoney(unitCost),
+    quantity: toMoney(quantity)
+  };
+}
+
+function receiptLineValues(item, poItem, line, index) {
+  if (item.stock_mode === 'carton_weight') {
+    const cartonCount = numericInput(
+      valueFromAliases(line, 'carton_count', 'received_quantity', `items.${index}.carton_count`),
+      `items.${index}.carton_count`,
+      { whole: true }
+    );
+    const costPerCarton = costInput(
+      valueFromAliases(line, 'cost_per_carton', 'unit_cost', `items.${index}.cost_per_carton`),
+      `items.${index}.cost_per_carton`
+    ) ?? decimal(poItem.unit_cost);
+    return {
+      stored_quantity: toMoney(cartonCount),
+      stored_unit_cost: toMoney(costPerCarton),
+      carton_count: cartonCount,
+      cost_per_carton: costPerCarton
+    };
+  }
+
+  if (line.carton_count !== undefined || line.cost_per_carton !== undefined) {
+    throw validationError(`items.${index}`, 'Carton fields are only valid for carton-weight items');
+  }
+  const entryQuantity = numericInput(
+    valueFromAliases(line, 'quantity', 'received_quantity', `items.${index}.quantity`),
+    `items.${index}.quantity`,
+    { whole: item.stock_mode === 'piece' }
+  );
+  const unitCost = costInput(line.unit_cost, `items.${index}.unit_cost`) ?? decimal(poItem.unit_cost);
+  return {
+    stored_quantity: toMoney(entryQuantity),
+    stored_unit_cost: toMoney(unitCost),
+    quantity: normalizeItemQuantity(item, entryQuantity, `items.${index}.quantity`),
+    unit_cost: normalizeItemUnitCost(item, unitCost)
+  };
 }
 
 async function resolvePurchaseOrderItems(items, storeId) {
@@ -79,43 +195,16 @@ async function resolvePurchaseOrderItems(items, storeId) {
 
     assertSameStore(stockItem, storeId, field, `Item ${item.item_id} does not belong to this store`);
     assertActive(stockItem, field, `Item ${item.item_id}`);
-    assertStockedItem(stockItem, field);
-    normalizeItemQuantity(stockItem, item.ordered_quantity, `items.${index}.ordered_quantity`);
+    assertCanonicalInventoryItem(stockItem, field);
+    const values = orderLineValues(stockItem, item, index);
     resolvedItems.push({
       ...item,
       item_id: stockItem.id,
-      item_variant_id: null
+      ...values
     });
   }
 
   return resolvedItems;
-}
-
-async function increaseItemStock(connection, data) {
-  const normalizedQuantity = normalizeItemQuantity(data.item, data.quantity, data.field || 'items.received_quantity');
-  const normalizedUnitCost = normalizeItemUnitCost(data.item, data.unitCost);
-  const balance = await inventoryModel.getOrCreateItemStockBalanceForUpdate(connection, {
-    store_id: data.storeId,
-    warehouse_id: data.warehouseId,
-    item_id: data.itemId
-  });
-  const quantityBefore = decimal(balance.quantity_on_hand || 0);
-  const quantityAfter = quantityBefore.plus(normalizedQuantity);
-
-  await inventoryModel.updateItemStockBalance(connection, balance.id, {
-    quantity_on_hand: toMoney(quantityAfter)
-  });
-  await inventoryModel.createItemStockAdjustment(connection, {
-    store_id: data.storeId,
-    warehouse_id: data.warehouseId,
-    item_id: data.itemId,
-    quantity_change: toMoney(normalizedQuantity),
-    quantity_before: toMoney(quantityBefore),
-    quantity_after: toMoney(quantityAfter),
-    unit_cost: normalizedUnitCost === null || normalizedUnitCost === undefined ? normalizedUnitCost : toMoney(normalizedUnitCost),
-    notes: data.notes,
-    created_by: data.createdBy
-  });
 }
 
 async function createSupplier(data, userId, actor = {}) {
@@ -247,7 +336,6 @@ async function createPurchaseOrder(data, userId, audit = {}, actor = {}) {
       await purchaseModel.createPurchaseOrderItem(connection, {
         purchase_order_id: id,
         item_id: item.item_id,
-        item_variant_id: null,
         ordered_quantity: item.ordered_quantity,
         unit_cost: item.unit_cost,
         line_total: toMoney(decimal(item.ordered_quantity).mul(item.unit_cost)),
@@ -354,6 +442,7 @@ async function approvePurchaseOrder(id, userId, actor = {}) {
         amount: toMoney(amount),
         payment_method: lockedPurchaseOrder.payment_method || 'cash',
         reference_number: lockedPurchaseOrder.po_number,
+        cash_account_id: lockedPurchaseOrder.cash_account_id,
         notes: `Auto payment for approved purchase order ${lockedPurchaseOrder.po_number}`,
         created_by: userId
       });
@@ -399,14 +488,11 @@ async function cancelPurchaseOrder(id, actor = {}) {
 }
 
 function getNextStatus(items) {
-  const totalOrdered = items.reduce((sum, item) => sum.plus(item.ordered_quantity), decimal(0));
-  const totalReceived = items.reduce((sum, item) => sum.plus(item.received_quantity), decimal(0));
-
-  if (totalReceived.eq(0)) {
-    return 'approved';
-  }
-
-  return totalReceived.eq(totalOrdered) ? 'received' : 'partially_received';
+  const hasReceived = items.some((item) => decimal(item.received_quantity || 0).gt(0));
+  if (!hasReceived) return 'approved';
+  return items.every((item) => decimal(item.received_quantity || 0).eq(item.ordered_quantity))
+    ? 'received'
+    : 'partially_received';
 }
 
 async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
@@ -446,46 +532,61 @@ async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
         ]);
       }
 
-      const remainingQuantity = decimal(poItem.ordered_quantity).minus(poItem.received_quantity);
-
-      if (decimal(item.received_quantity).gt(remainingQuantity)) {
-        throw ApiError.conflict('Cannot receive more than ordered quantity');
-      }
-
-      const stockItem = assertStockedItem(
+      const stockItem = assertCanonicalInventoryItem(
         await inventoryModel.findItemById(poItem.item_id),
         'items.item_id'
       );
       assertSameStore(stockItem, scopedOrder.store_id, 'items.item_id', 'Item does not belong to this store');
       assertActive(stockItem, 'items.item_id', 'Item');
-      normalizeItemQuantity(stockItem, item.received_quantity, `items.${index}.received_quantity`);
+      const values = receiptLineValues(stockItem, poItem, item, index);
+      const remainingQuantity = decimal(poItem.ordered_quantity).minus(poItem.received_quantity);
+      if (decimal(values.stored_quantity).gt(remainingQuantity)) {
+        throw ApiError.conflict('Cannot receive more than ordered quantity');
+      }
 
       await purchaseModel.createReceiptItem(connection, {
         purchase_receipt_id: newReceiptId,
         purchase_order_item_id: poItem.id,
         item_id: poItem.item_id,
-        item_variant_id: null,
-        received_quantity: item.received_quantity,
-        unit_cost: item.unit_cost ?? poItem.unit_cost
+        received_quantity: values.stored_quantity,
+        unit_cost: values.stored_unit_cost
       });
       await purchaseModel.incrementReceivedQuantity(
         connection,
         poItem.id,
-        item.received_quantity
+        values.stored_quantity
       );
-      poItem.received_quantity = toMoney(decimal(poItem.received_quantity).plus(item.received_quantity));
+      poItem.received_quantity = toMoney(decimal(poItem.received_quantity).plus(values.stored_quantity));
 
-      await increaseItemStock(connection, {
-        storeId: scopedOrder.store_id,
-        warehouseId: purchaseOrder.warehouse_id,
-        itemId: poItem.item_id,
-        item: stockItem,
-        quantity: item.received_quantity,
-        unitCost: item.unit_cost ?? poItem.unit_cost,
-        field: `items.${index}.received_quantity`,
-        notes: data.notes,
-        createdBy: userId
-      });
+      if (stockItem.stock_mode === 'carton_weight') {
+        await stockService.receiveCartonStock(connection, {
+          storeId: scopedOrder.store_id,
+          warehouseId: purchaseOrder.warehouse_id,
+          itemId: poItem.item_id,
+          item: stockItem,
+          cartonCount: values.carton_count,
+          costPerCarton: values.cost_per_carton,
+          movementType: 'purchase_receive',
+          referenceType: 'purchase_receipt',
+          referenceId: newReceiptId,
+          notes: data.notes,
+          createdBy: userId
+        });
+      } else {
+        await stockService.increaseItemStock(connection, {
+          storeId: scopedOrder.store_id,
+          warehouseId: purchaseOrder.warehouse_id,
+          itemId: poItem.item_id,
+          item: stockItem,
+          quantity: values.quantity,
+          unitCost: values.unit_cost,
+          movementType: 'purchase_receive',
+          referenceType: 'purchase_receipt',
+          referenceId: newReceiptId,
+          notes: data.notes,
+          createdBy: userId
+        });
+      }
     }
 
     await purchaseModel.setPurchaseOrderStatus(connection, id, getNextStatus(poItems));
@@ -573,6 +674,7 @@ async function createSupplierPayment(data, userId, actor = {}) {
     paymentId = await purchaseModel.createSupplierPaymentRecord(connection, {
       ...data,
       store_id: scoped.store_id,
+      cash_account_id: scoped.cash_account_id,
       created_by: userId
     });
     await purchaseModel.incrementPurchaseOrderPaid(

@@ -94,7 +94,7 @@ function UnitFormModal({ open, onClose, unit, baseUnits }) {
       onClose={onClose}
       size="md"
       title={isEdit ? 'Edit unit' : 'New unit'}
-      description="Units of measure used by items and variants."
+      description="Units of measure used by item-based inventory."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -325,7 +325,7 @@ export default function UnitsTab() {
         onRetry={() => listQuery.refetch()}
         empty={{
           title: 'No units found',
-          description: 'Create units to express how items and variants are measured.'
+          description: 'Create units to express how items are measured.'
         }}
         footer={
           meta?.totalPages ? (

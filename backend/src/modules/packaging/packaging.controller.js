@@ -1,142 +1,83 @@
 const service = require('./packaging.service');
 const { successResponse } = require('../../utils/response');
 
-function listHandler(serviceMethod, resourceName, message) {
+function list(serviceMethod, key, message) {
   return async (req, res) => {
     const result = await serviceMethod(req.query, req.user);
-
-    successResponse(res, {
-      message,
-      data: {
-        [resourceName]: result[resourceName]
-      },
-      meta: result.meta
-    });
+    successResponse(res, { message, data: { [key]: result.rows }, meta: result.meta });
   };
 }
 
 async function createGroup(req, res) {
   const packaging_group = await service.createGroup(req.body, req.user.id, req.user);
-  successResponse(res, {
-    statusCode: 201,
-    message: 'Packaging group created',
-    data: { packaging_group }
-  });
+  successResponse(res, { statusCode: 201, message: 'Packaging group created', data: { packaging_group } });
 }
 
 async function getGroup(req, res) {
   const packaging_group = await service.getGroup(req.params.id, req.user);
-  successResponse(res, {
-    message: 'Packaging group fetched',
-    data: { packaging_group }
-  });
+  successResponse(res, { message: 'Packaging group fetched', data: { packaging_group } });
 }
 
 async function updateGroup(req, res) {
   const packaging_group = await service.updateGroup(req.params.id, req.body, req.user);
-  successResponse(res, {
-    message: 'Packaging group updated',
-    data: { packaging_group }
-  });
+  successResponse(res, { message: 'Packaging group updated', data: { packaging_group } });
 }
 
 async function deleteGroup(req, res) {
   await service.deleteGroup(req.params.id, req.user);
-  successResponse(res, {
-    message: 'Packaging group deactivated',
-    data: {}
-  });
+  successResponse(res, { message: 'Packaging group deactivated', data: {} });
 }
 
-async function hardDeleteGroup(req, res) {
-  await service.hardDeleteGroup(req.params.id, req.user);
-  successResponse(res, {
-    message: 'Packaging group hard-deleted',
-    data: {}
-  });
+async function replaceComponents(req, res) {
+  const packaging_group = await service.replaceComponents(req.params.id, req.body.components, req.user);
+  successResponse(res, { message: 'Packaging group components replaced', data: { packaging_group } });
 }
 
-async function addComponent(req, res) {
-  const packaging_component = await service.addComponent(req.params.id, req.body, req.user);
-  successResponse(res, {
-    statusCode: 201,
-    message: 'Packaging component added',
-    data: { packaging_component }
-  });
+async function preview(req, res) {
+  const preview = await service.previewGroup(req.params.id, req.body, req.user);
+  successResponse(res, { message: 'Packaging preview generated', data: { preview } });
 }
 
-async function updateComponent(req, res) {
-  const packaging_component = await service.updateComponent(req.params.id, req.body, req.user);
-  successResponse(res, {
-    message: 'Packaging component updated',
-    data: { packaging_component }
-  });
+async function complete(req, res) {
+  const result = await service.completePackaging(req.params.id, req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Packaging completed', data: result });
 }
 
-async function deleteComponent(req, res) {
-  await service.deleteComponent(req.params.id, req.user);
-  successResponse(res, {
-    message: 'Packaging component deleted',
-    data: {}
-  });
+async function getOperation(req, res) {
+  const packaging_operation = await service.getOperation(req.params.id, req.user);
+  successResponse(res, { message: 'Packaging operation fetched', data: { packaging_operation } });
 }
 
-async function calculateGroup(req, res) {
-  const calculation = await service.calculateGroup(
-    req.params.id,
-    req.body,
-    req.user,
-    req.body.warehouse_id || null
-  );
-  successResponse(res, {
-    message: 'Packaging group calculated',
-    data: { calculation }
-  });
+async function createCatalogEntry(req, res) {
+  const sale_catalog_entry = await service.createSaleCatalogEntry(req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Sale catalog entry created', data: { sale_catalog_entry } });
 }
 
-async function createAssignment(req, res) {
-  const packaging_assignment = await service.createAssignment(req.body, req.user.id, req.user);
-  successResponse(res, {
-    statusCode: 201,
-    message: 'Packaging assignment created',
-    data: { packaging_assignment }
-  });
+async function getCatalogEntry(req, res) {
+  const sale_catalog_entry = await service.getSaleCatalogEntry(req.params.id, req.user);
+  successResponse(res, { message: 'Sale catalog entry fetched', data: { sale_catalog_entry } });
 }
 
-async function consumeAssignment(req, res) {
-  const packaging_assignment = await service.consumeAssignment(
-    req.params.id,
-    req.body || {},
-    req.user.id,
-    req.user
-  );
-  successResponse(res, {
-    message: 'Packaging stock consumed',
-    data: { packaging_assignment }
-  });
-}
-
-async function hardDeleteAssignment(req, res) {
-  await service.hardDeleteAssignment(req.params.id, req.user);
-  successResponse(res, {
-    message: 'Packaging assignment hard-deleted',
-    data: {}
-  });
+async function updateCatalogEntry(req, res) {
+  const sale_catalog_entry = await service.updateSaleCatalogEntry(req.params.id, req.body, req.user);
+  successResponse(res, { message: 'Sale catalog entry updated', data: { sale_catalog_entry } });
 }
 
 module.exports = {
-  addComponent,
-  calculateGroup,
-  consumeAssignment,
-  createAssignment,
+  complete,
+  createCatalogEntry,
   createGroup,
-  deleteComponent,
   deleteGroup,
-  hardDeleteAssignment,
-  hardDeleteGroup,
+  getCatalogEntry,
   getGroup,
-  listAssignments: listHandler(service.listAssignments, 'packaging_assignments', 'Packaging assignments fetched'),
-  listGroups: listHandler(service.listGroups, 'packaging_groups', 'Packaging groups fetched'),
-  updateComponent,
+  getOperation,
+  listCatalogEntries: list(service.listSaleCatalogEntries, 'sale_catalog_entries', 'Sale catalog entries fetched'),
+  listGroups: list(service.listGroups, 'packaging_groups', 'Packaging groups fetched'),
+  listOperations: list(service.listOperations, 'packaging_operations', 'Packaging operations fetched'),
+  listPosCatalog: list(service.listPosCatalog, 'sale_catalog_entries', 'POS catalog fetched'),
+  listReadyStock: list(service.listReadyStock, 'ready_stock_containers', 'Ready stock fetched'),
+  preview,
+  replaceComponents,
+  updateCatalogEntry,
   updateGroup
 };

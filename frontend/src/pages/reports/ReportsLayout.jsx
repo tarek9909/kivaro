@@ -29,23 +29,31 @@ import { PageHeader } from '@/components/ui/PageHeader.jsx';
 import { Pagination } from '@/components/ui/Pagination.jsx';
 import { Select } from '@/components/ui/Select.jsx';
 import { LoadingState } from '@/components/ui/StateViews.jsx';
-import { useItemsOptions, useVariantsOptions, useWarehousesOptions } from '@/pages/inventory/useInventoryOptions.js';
+import { useItemsOptions, useWarehousesOptions } from '@/pages/inventory/useInventoryOptions.js';
 import { useLocationsList, useSalesmenList, useSublocationsList } from '@/pages/locations/useLocationsOptions.js';
 import { useSuppliersOptions } from '@/pages/purchases/usePurchasesOptions.js';
 import { cn } from '@/lib/cn.js';
 import { getErrorMessage } from '@/lib/errors.js';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/formatters.js';
 import {
+  COMPONENT_ROLE_OPTIONS,
   COMMISSION_STATUS_OPTIONS,
   DEBT_STATUS_OPTIONS,
   DISPATCH_STATUS_OPTIONS,
+  FULFILLMENT_TYPE_OPTIONS,
+  INVOICE_STATUS_OPTIONS,
   MOVEMENT_TYPE_OPTIONS,
-  PACKAGING_ASSIGNMENT_STATUS_OPTIONS,
-  PO_STATUS_OPTIONS,
+  OPERATION_STATUS_OPTIONS,
+  POS_STATUS_OPTIONS,
+  PURCHASE_STATUS_OPTIONS,
+  READY_STATUS_OPTIONS,
   REFERENCE_TYPE_OPTIONS,
   REPORTS_REGISTRY,
   REPORTS_PERMISSIONS,
   REPORTS_TABS,
+  SOURCE_OPTIONS,
+  STOCK_HEALTH_OPTIONS,
+  STOCK_MODE_OPTIONS,
   getReportBySlug,
   pickFirstAllowedReportTab
 } from './reports.config.js';
@@ -54,26 +62,31 @@ const PAGE_LIMIT = 25;
 const NUMERIC_FILTERS = new Set([
   'warehouse',
   'item',
-  'item_variant',
   'customer',
   'salesman',
   'location',
   'sublocation',
   'supplier',
-  'packaging_group',
-  'production_batch'
+  'packaging_group'
 ]);
 const HIDDEN_ROW_FIELDS = new Set(['tax_amount']);
 const SUMMARY_DISPLAY_METRICS = {
   commissions: ['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable'],
-  currentStock: ['quantity_on_hand', 'quantity_available', 'stock_value'],
+  currentStock: ['quantity_on_hand', 'quantity_reserved', 'quantity_available', 'stock_value'],
+  normalStock: ['quantity_on_hand', 'quantity_reserved', 'quantity_available', 'stock_value'],
+  packagingStock: ['quantity_on_hand', 'quantity_reserved', 'quantity_available', 'stock_value'],
+  readyStock: ['remaining_inner_quantity', 'available_inner_quantity', 'remaining_cost', 'capacity_kg'],
   customerBalances: ['total_remaining_debt', 'available_credit', 'net_customer_balance'],
   debts: ['original_amount', 'paid_amount', 'remaining_amount'],
-  dispatchSummary: ['net_total_amount', 'total_collected', 'total_debt'],
+  dispatchSummary: ['total_amount', 'total_collected', 'total_debt', 'dispatched_cogs', 'gift_cogs'],
+  gifts: ['net_quantity', 'dispatched_cogs', 'returned_cogs'],
+  invoices: ['total_amount', 'collected_amount', 'debt_amount', 'gift_cogs'],
+  packagingOperations: ['output_carton_count', 'raw_quantity_kg', 'total_cost', 'cost_per_outer', 'cost_per_inner'],
+  posOrders: ['sale_quantity', 'gift_quantity', 'sale_total', 'gift_line_count'],
+  salesmanPerformance: ['sales_revenue', 'sales_cogs', 'gift_cogs', 'gross_profit_after_gifts', 'total_collected'],
   profitLoss: ['total_income', 'total_expense', 'net_profit'],
   purchases: ['subtotal', 'amount_paid', 'total_amount'],
-  packagingAssignments: ['charcoal_quantity_kg', 'primary_container_count', 'total_packaging_cost'],
-  packagingShortages: ['shortage_quantity', 'required_quantity', 'total_cost'],
+  packagingShortages: ['shortage_quantity', 'required_quantity', 'available_quantity'],
   salesmanTargetProgress: ['base_salary', 'target_amount', 'achieved_sales_amount'],
   sales: ['net_subtotal_amount', 'net_vat_amount', 'net_total_amount'],
   stockMovements: ['quantity_change', 'reserved_quantity_change']
@@ -87,19 +100,25 @@ const FILTER_PARAM = {
   debt_status: 'status',
   dispatch_status: 'status',
   item: 'item_id',
-  item_variant: 'item_variant_id',
   location: 'location_id',
   movement_type: 'movement_type',
-  packaging_assignment_status: 'status',
   packaging_group: 'packaging_group_id',
-  po_status: 'status',
-  production_batch: 'production_batch_id',
+  operation_status: 'status',
+  purchase_status: 'status',
   reference_type: 'reference_type',
   salesman: 'salesman_id',
   search: 'search',
   sublocation: 'sublocation_id',
   supplier: 'supplier_id',
-  warehouse: 'warehouse_id'
+  warehouse: 'warehouse_id',
+  stock_health: 'stock_health',
+  stock_mode: 'stock_mode',
+  ready_status: 'ready_status',
+  component_role: 'component_role',
+  source: 'source',
+  fulfillment_type: 'fulfillment_type',
+  invoice_status: 'invoice_status',
+  pos_status: 'pos_status'
 };
 
 const SELECT_FILTERS = {
@@ -107,9 +126,17 @@ const SELECT_FILTERS = {
   debt_status: DEBT_STATUS_OPTIONS,
   dispatch_status: DISPATCH_STATUS_OPTIONS,
   movement_type: MOVEMENT_TYPE_OPTIONS,
-  packaging_assignment_status: PACKAGING_ASSIGNMENT_STATUS_OPTIONS,
-  po_status: PO_STATUS_OPTIONS,
-  reference_type: REFERENCE_TYPE_OPTIONS
+  operation_status: OPERATION_STATUS_OPTIONS,
+  purchase_status: PURCHASE_STATUS_OPTIONS,
+  reference_type: REFERENCE_TYPE_OPTIONS,
+  stock_health: STOCK_HEALTH_OPTIONS,
+  stock_mode: STOCK_MODE_OPTIONS,
+  ready_status: READY_STATUS_OPTIONS,
+  component_role: COMPONENT_ROLE_OPTIONS,
+  source: SOURCE_OPTIONS,
+  fulfillment_type: FULFILLMENT_TYPE_OPTIONS,
+  invoice_status: INVOICE_STATUS_OPTIONS,
+  pos_status: POS_STATUS_OPTIONS
 };
 
 const FILTER_LABELS = {
@@ -120,19 +147,25 @@ const FILTER_LABELS = {
   debt_status: 'Status',
   dispatch_status: 'Status',
   item: 'Item',
-  item_variant: 'Variant',
   location: 'Location',
   movement_type: 'Movement type',
-  packaging_assignment_status: 'Status',
   packaging_group: 'Packaging group',
-  po_status: 'Status',
-  production_batch: 'Production batch',
+  operation_status: 'Status',
+  purchase_status: 'Status',
   reference_type: 'Reference type',
   salesman: 'Salesman',
   search: 'Search',
   sublocation: 'Sublocation',
   supplier: 'Supplier',
-  warehouse: 'Warehouse'
+  warehouse: 'Warehouse',
+  stock_health: 'Stock health',
+  stock_mode: 'Stock mode',
+  ready_status: 'Ready state',
+  component_role: 'Component role',
+  source: 'Stock source',
+  fulfillment_type: 'Fulfillment type',
+  invoice_status: 'Invoice status',
+  pos_status: 'Mini POS status'
 };
 
 const FIELD_LABELS = {
@@ -296,7 +329,12 @@ function ReportWorkspace({ reportKey, report, hasPermission, hasModule, onSelect
   const needs = (name) => report.filters.includes(name);
   const warehousesQuery = useWarehousesOptions(canUseInventoryPickers && needs('warehouse'));
   const itemsQuery = useItemsOptions(canUseInventoryPickers && needs('item'));
-  const variantsQuery = useVariantsOptions(canUseInventoryPickers && needs('item_variant'));
+  const packagingGroupsQuery = useQuery({
+    queryKey: ['reports', 'options', 'packaging-groups'],
+    queryFn: () => api.packaging.groups.list({ page: 1, limit: 100, status: 'active' }),
+    staleTime: 60_000,
+    enabled: canUseInventoryPickers && needs('packaging_group')
+  });
   const customersQuery = useCustomersOptions(canUseCustomerPicker && needs('customer'));
   const salesmenQuery = useSalesmenList(canUseSalesmanPicker && needs('salesman'));
   const locationsQuery = useLocationsList(canUseLocationPicker && needs('location'));
@@ -306,7 +344,7 @@ function ReportWorkspace({ reportKey, report, hasPermission, hasModule, onSelect
   const pickerData = {
     customer: optionRows(customersQuery.data),
     item: optionRows(itemsQuery.data),
-    item_variant: optionRows(variantsQuery.data),
+    packaging_group: optionRows(packagingGroupsQuery.data),
     location: optionRows(locationsQuery.data),
     salesman: optionRows(salesmenQuery.data),
     sublocation: optionRows(sublocationsQuery.data),
@@ -317,7 +355,7 @@ function ReportWorkspace({ reportKey, report, hasPermission, hasModule, onSelect
   const canUsePicker = {
     customer: canUseCustomerPicker,
     item: canUseInventoryPickers,
-    item_variant: canUseInventoryPickers,
+    packaging_group: canUseInventoryPickers,
     location: canUseLocationPicker,
     salesman: canUseSalesmanPicker,
     sublocation: canUseLocationPicker,

@@ -1,10 +1,17 @@
 const service = require('./customers.service');
 const paymentService = require('../payments/payments.service');
 const { successResponse } = require('../../utils/response');
+const { sendCsv } = require('../../utils/csv');
 
 async function listCustomers(req, res) {
   const result = await service.listCustomers(req.query, req.user);
   successResponse(res, { message: 'Customers fetched', data: { customers: result.rows }, meta: result.meta });
+}
+
+async function exportCustomers(req, res) {
+  const rows = await service.exportCustomers(req.query, req.user);
+  const dataset = req.query.dataset || 'directory';
+  return sendCsv(res, `customers-${dataset}.csv`, rows);
 }
 
 async function createCustomer(req, res) {
@@ -74,5 +81,6 @@ module.exports = {
   listCustomerPayments,
   listCustomerReceipts,
   listCustomers,
+  exportCustomers,
   updateCustomer
 };

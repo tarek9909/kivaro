@@ -1,10 +1,15 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const bcrypt = require('bcryptjs');
 const mysql = require('mysql2/promise');
 const env = require('../../src/bootstrap/env');
 
+const TARGET_BASELINE_MIGRATION = '025_item_based_rebuild.sql';
+
 const REQUIRED_TABLES = [
+  'schema_migrations',
   'roles',
   'stores',
   'store_modules',
@@ -17,20 +22,48 @@ const REQUIRED_TABLES = [
   'locations',
   'sublocations',
   'salesmen',
+  'salesman_sublocations',
+  'location_targets',
+  'sublocation_targets',
+  'salesman_targets',
   'customers',
   'item_categories',
   'units',
   'items',
-  'item_variants',
   'warehouses',
-  'stock_balances',
-  'stock_movements',
+  'item_stock_balances',
+  'item_stock_movements',
+  'carton_stock_lots',
+  'open_carton_shelves',
+  'packaging_groups',
+  'packaging_group_components',
+  'packaging_operations',
+  'packaging_operation_components',
+  'ready_stock_containers',
+  'ready_stock_movements',
+  'sale_catalog_entries',
+  'suppliers',
   'purchase_orders',
   'purchase_order_items',
   'purchase_receipts',
-  'production_batches',
+  'purchase_receipt_items',
+  'expense_categories',
+  'expenses',
   'dispatch_requests',
+  'dispatch_customers',
+  'dispatch_items',
+  'dispatch_line_allocations',
+  'invoices',
+  'invoice_lines',
+  'dispatch_document_generations',
+  'dispatch_returns',
   'dispatch_settlements',
+  'dispatch_settlement_customers',
+  'salesman_balances',
+  'pos_orders',
+  'pos_order_lines',
+  'pos_order_events',
+  'pos_order_dispatch_links',
   'customer_debts',
   'customer_debt_adjustments',
   'customer_payments',
@@ -39,21 +72,59 @@ const REQUIRED_TABLES = [
   'customer_receipts',
   'cash_accounts',
   'financial_transactions',
+  'supplier_payments',
   'commission_rules',
   'commission_calculations',
+  'commission_payments',
   'audit_logs',
-  'notifications'
+  'notifications',
+  'v_current_stock',
+  'v_ready_stock',
+  'v_customer_balances',
+  'v_dispatch_summary',
+  'v_salesman_target_progress'
 ];
 
 const REQUIRED_PERMISSIONS = [
+  'dashboard.view',
   'users.view',
+  'users.create',
+  'users.update',
+  'users.delete',
   'roles.manage',
   'inventory.view',
+  'inventory.create',
+  'inventory.update',
+  'inventory.delete',
   'stock.adjust',
+  'stock.movements',
+  'purchase_orders.view',
+  'purchase_orders.create',
+  'purchase_orders.approve',
   'purchase_orders.receive',
-  'production.complete',
+  'purchase_orders.cancel',
+  'locations.manage',
+  'targets.manage',
+  'salesmen.manage',
+  'customers.view',
+  'customers.create',
+  'customers.update',
+  'customers.delete',
+  'dispatch.view',
+  'dispatch.create',
+  'dispatch.approve',
   'dispatch.settle',
   'dispatch.print',
+  'dispatch.gifts.approve',
+  'invoices.view',
+  'invoices.print',
+  'pos.own_orders',
+  'pos.review',
+  'pos.accept',
+  'pos.create_customers',
+  'pos.request_gifts',
+  'salesman_workspace.view',
+  'accounting.view',
   'accounting.manage',
   'debts.manage',
   'commissions.manage',
@@ -64,7 +135,7 @@ const REQUIRED_PERMISSIONS = [
   'superadmin.manage'
 ];
 
-const SCHEMA_DUMP_FILENAMES = ['charcoal_erp.sql', 'charcoal_erp', 'charcoal_erp (3).sql'];
+const SCHEMA_DUMP_FILENAMES = ['charcoal_erp_clean.sql'];
 
 function schemaDumpPath() {
   const backendRoot = path.resolve(__dirname, '..', '..');
@@ -73,6 +144,111 @@ function schemaDumpPath() {
     .find((candidatePath) => fs.existsSync(candidatePath));
 
   return existingPath || path.join(backendRoot, SCHEMA_DUMP_FILENAMES[0]);
+}
+
+function backupsDirectory() {
+  return path.resolve(__dirname, '..', '..', 'backups');
+}
+
+function archiveTimestamp(now = new Date()) {
+  return now.toISOString().replace(/[:.]/g, '-');
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      windowsHide: true,
+      stdio: options.stdio || 'pipe'
+    });
+
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`${command} exited with code ${code}`));
+    });
+  });
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const input = fs.createReadStream(filePath);
+    input.on('error', reject);
+    input.on('data', (chunk) => hash.update(chunk));
+    input.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+/**
+ * Create a timestamped SQL archive without exposing the database password in the
+ * process argument list.  The caller must only proceed with a destructive reset
+ * after this returns successfully.
+ */
+async function archiveDatabase(databaseName = env.db.database, options = {}) {
+  const outputDirectory = options.outputDirectory || backupsDirectory();
+  const timestamp = archiveTimestamp(options.now || new Date());
+  const archivePath = path.join(outputDirectory, `${databaseName}-${timestamp}.sql`);
+  const checksumPath = `${archivePath}.sha256`;
+  const dumpBinary = options.dumpBinary || process.env.MYSQLDUMP_BIN || 'mysqldump';
+
+  fs.mkdirSync(outputDirectory, { recursive: true });
+
+  const args = [
+    '--single-transaction',
+    '--routines',
+    '--events',
+    '--triggers',
+    '--no-tablespaces',
+    '--default-character-set=utf8mb4',
+    '--host', env.db.host,
+    '--port', String(env.db.port),
+    '--user', env.db.user,
+    '--result-file', archivePath,
+    databaseName
+  ];
+
+  try {
+    await runCommand(dumpBinary, args, {
+      env: {
+        ...process.env,
+        MYSQL_PWD: env.db.password
+      }
+    });
+
+    const stats = fs.statSync(archivePath);
+    if (stats.size === 0) {
+      throw new Error('mysqldump produced an empty archive');
+    }
+
+    const archiveText = fs.readFileSync(archivePath, 'utf8');
+    if (!/CREATE TABLE/i.test(archiveText)) {
+      throw new Error('archive verification failed: no CREATE TABLE statement found');
+    }
+
+    const checksum = await sha256File(archivePath);
+    fs.writeFileSync(checksumPath, `${checksum}  ${path.basename(archivePath)}\n`, 'utf8');
+
+    return {
+      database: databaseName,
+      archivePath,
+      checksumPath,
+      checksum,
+      bytes: stats.size
+    };
+  } catch (error) {
+    for (const candidate of [archivePath, checksumPath]) {
+      if (fs.existsSync(candidate)) {
+        fs.unlinkSync(candidate);
+      }
+    }
+    throw new Error(`Database archive failed: ${error.message}`);
+  }
 }
 
 function getArg(name, fallback = null) {
@@ -253,6 +429,12 @@ async function resetDatabase(databaseName = env.db.database) {
   }
 }
 
+async function archiveAndResetDatabase(databaseName = env.db.database, options = {}) {
+  const archive = await archiveDatabase(databaseName, options);
+  const reset = await resetDatabase(databaseName);
+  return { ...reset, archive };
+}
+
 async function checkDatabase() {
   const connection = await createDatabaseConnection();
 
@@ -267,6 +449,20 @@ async function checkDatabase() {
     const tableNames = new Set(tableRows.map((row) => row.TABLE_NAME || row.table_name));
     const missingTables = REQUIRED_TABLES.filter((tableName) => !tableNames.has(tableName));
 
+    let missingMigrations = [];
+    if (tableNames.has('schema_migrations')) {
+      const [migrationRows] = await connection.query(
+        'SELECT migration_name FROM schema_migrations WHERE migration_name = ?',
+        [TARGET_BASELINE_MIGRATION]
+      );
+      const applied = new Set(migrationRows.map((row) => row.migration_name));
+      missingMigrations = applied.has(TARGET_BASELINE_MIGRATION)
+        ? []
+        : [TARGET_BASELINE_MIGRATION];
+    } else {
+      missingMigrations = [TARGET_BASELINE_MIGRATION];
+    }
+
     const [permissionRows] = await connection.query(
       `SELECT permission_key
        FROM permissions
@@ -280,9 +476,10 @@ async function checkDatabase() {
       database: databaseRow.database_name,
       tableCount: tableRows.length,
       missingTables,
+      missingMigrations,
       permissionCount: permissionRows.length,
       missingPermissions,
-      ok: missingTables.length === 0 && missingPermissions.length === 0
+      ok: missingTables.length === 0 && missingMigrations.length === 0 && missingPermissions.length === 0
     };
   } finally {
     await connection.end();
@@ -377,6 +574,10 @@ async function seedOwner(options = {}) {
 module.exports = {
   REQUIRED_PERMISSIONS,
   REQUIRED_TABLES,
+  TARGET_BASELINE_MIGRATION,
+  archiveAndResetDatabase,
+  archiveDatabase,
+  backupsDirectory,
   checkDatabase,
   createAdminConnection,
   createDatabaseConnection,

@@ -18,7 +18,8 @@ describe('dispatch config', () => {
       create: 'dispatch.create',
       approve: 'dispatch.approve',
       settle: 'dispatch.settle',
-      print: 'dispatch.print'
+      print: 'dispatch.print',
+      salesmanWorkspace: 'salesman_workspace.view'
     });
   });
 
@@ -28,7 +29,8 @@ describe('dispatch config', () => {
       'dispatch.create',
       'dispatch.approve',
       'dispatch.settle',
-      'dispatch.print'
+      'dispatch.print',
+      'salesman_workspace.view'
     ]);
   });
 
@@ -66,7 +68,8 @@ describe('dispatch config', () => {
       'dispatch.create',
       'dispatch.approve',
       'dispatch.settle',
-      'dispatch.print'
+      'dispatch.print',
+      'salesman_workspace.view'
     ]);
   });
 });
@@ -96,21 +99,21 @@ describe('getAvailableDispatchActions', () => {
     );
   });
 
-  it('offers approve/cancel for a pending approval request', () => {
+  it('offers approve/rework/cancel for a pending approval request', () => {
     expect(getAvailableDispatchActions({ status: 'pending_approval' })).toEqual(
-      new Set(['approve', 'cancel'])
+      new Set(['approve', 'rework', 'cancel'])
     );
   });
 
-  it('offers dispatchStock/cancel for an approved request', () => {
+  it('offers rework/dispatchStock/cancel for an approved request', () => {
     expect(getAvailableDispatchActions({ status: 'approved' })).toEqual(
-      new Set(['dispatchStock', 'cancel'])
+      new Set(['rework', 'dispatchStock', 'cancel'])
     );
   });
 
-  it('offers createReturn/createSettlement for a dispatched request', () => {
+  it('offers createReturn/createCloseout for a dispatched request', () => {
     expect(getAvailableDispatchActions({ status: 'dispatched' })).toEqual(
-      new Set(['createReturn', 'createSettlement'])
+      new Set(['createReturn', 'createCloseout'])
     );
   });
 
@@ -118,9 +121,9 @@ describe('getAvailableDispatchActions', () => {
     expect(getAvailableDispatchActions({ status: 'completed' })).toEqual(new Set());
   });
 
-  it('offers createSettlement for a partially settled request', () => {
+  it('offers createCloseout for a partially settled request', () => {
     expect(getAvailableDispatchActions({ status: 'partially_settled' })).toEqual(
-      new Set(['createSettlement'])
+      new Set(['createCloseout'])
     );
   });
 
@@ -145,7 +148,8 @@ describe('pickFirstAllowedDispatchTab', () => {
       'dispatch.create',
       'dispatch.approve',
       'dispatch.settle',
-      'dispatch.print'
+      'dispatch.print',
+      'salesman_workspace.view'
     ];
     for (const capability of capabilities) {
       expect(pickFirstAllowedDispatchTab(makeHas([capability]))).toBe(
