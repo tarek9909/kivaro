@@ -1,18 +1,15 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   CheckCircle2,
   Download,
-  FileCheck2,
-  FileText,
   Pencil,
-  Plus,
   RefreshCcw,
   RotateCcw,
   Send,
-  Trash2,
   Truck,
   Wallet,
   X
@@ -37,14 +34,15 @@ import {
   DISPATCH_PERMISSIONS,
   DISPATCH_STATUSES,
   getAvailableDispatchActions,
+  getDispatchEntityLabel,
   getDispatchStatusTone
 } from './dispatch.config.js';
 import { DispatchRequestEditModal } from './DispatchRequestEditModal.jsx';
-import { AddDispatchCustomerModal } from './AddDispatchCustomerModal.jsx';
-import { AddDispatchItemModal } from './AddDispatchItemModal.jsx';
 import { CreateReturnModal } from './CreateReturnModal.jsx';
 import { CreateSettlementModal } from './CreateSettlementModal.jsx';
 import { SettlementWorkflowModal } from './SettlementWorkflowModal.jsx';
+
+import { cn } from '@/lib/cn.js';
 
 function downloadBlob(blob, filename) {
   if (!blob) return;
@@ -64,11 +62,16 @@ function StatusBadge({ status }) {
   return <Badge tone={getDispatchStatusTone(status)}>{label}</Badge>;
 }
 
-function Field({ label, value }) {
+function Field({ label, value, highlight = false }) {
   return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.025] p-3">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-400">{label}</p>
-      <p className="mt-1 break-words text-sm text-ink-100">{value ?? '—'}</p>
+    <div className={cn(
+      "min-w-0 rounded-2xl border p-3.5 transition",
+      highlight
+        ? "border-brand-400/30 bg-brand-400/[0.05]"
+        : "border-white/10 bg-white/[0.02] hover:border-white/15"
+    )}>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">{label}</p>
+      <p className={cn("mt-1 break-words text-sm font-medium", highlight ? "text-brand-300 font-mono" : "text-ink-100")}>{value ?? '—'}</p>
     </div>
   );
 }
@@ -81,62 +84,59 @@ function fulfillmentLabel(type) {
   return (type || 'offer').replaceAll('_', ' ');
 }
 
-function CustomerCard({ customer, items, canAddItem, canManageItems, onAddItem, onEditItem, onRemoveItem }) {
+function CustomerCard({ customer, items }) {
   const customerTotal = Number(customer.customer_total_amount || 0);
   return (
-    <article className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+    <article className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] transition hover:border-white/20">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-gradient-to-r from-white/[0.03] to-transparent px-4 py-3.5">
         <div className="min-w-0">
-          <p className="truncate font-medium text-ink-50">{customer.customer_name || `Customer #${customer.customer_id}`}</p>
+          <p className="truncate font-semibold text-ink-50">{customer.customer_name || `Customer #${customer.customer_id}`}</p>
           <p className="mt-0.5 truncate text-xs text-ink-400">
             {[customer.location_name, customer.sublocation_name].filter(Boolean).join(' · ') || 'Territory not recorded'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-ink-200">{formatNumber(customerTotal, { maximumFractionDigits: 4 })}</span>
-          {canAddItem && <Button variant="secondary" size="sm" leftIcon={Plus} onClick={() => onAddItem(customer)}>Add line</Button>}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {Number(customer.discount_amount || 0) > 0 && (
+            <span className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 font-mono text-[11px] font-semibold text-emerald-300">
+              Discount −{formatNumber(customer.discount_amount, { maximumFractionDigits: 4 })}
+            </span>
+          )}
+          <span className="rounded-xl border border-white/10 bg-black/20 px-3 py-1 font-mono text-xs font-semibold text-brand-300">
+            {formatNumber(customerTotal, { maximumFractionDigits: 4 })}
+          </span>
         </div>
       </header>
       {items.length === 0 ? (
-        <p className="px-4 py-3 text-sm text-ink-400">No lines yet. Each customer needs at least one line before submission.</p>
+        <p className="px-4 py-4 text-sm text-ink-400 italic">No lines yet. Each customer needs at least one line before submission.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-xs">
-            <thead className="border-b border-white/10 bg-white/[0.025] text-[10px] uppercase tracking-[0.13em] text-ink-400">
+            <thead className="border-b border-white/10 bg-white/[0.02] text-[10px] uppercase tracking-wider text-ink-400 font-semibold">
               <tr>
-                <th className="px-4 py-2 font-semibold">Offer</th>
-                <th className="px-3 py-2 font-semibold">Type</th>
-                <th className="px-3 py-2 text-right font-semibold">Qty</th>
-                <th className="px-3 py-2 text-right font-semibold">Price</th>
-                <th className="px-4 py-2 text-right font-semibold">Total</th>
-                {canManageItems && <th className="px-4 py-2 text-right font-semibold">Actions</th>}
+                <th className="px-4 py-2.5">Offer</th>
+                <th className="px-3 py-2.5">Type</th>
+                <th className="px-3 py-2.5 text-right">Qty</th>
+                <th className="px-3 py-2.5 text-right">Price</th>
+                <th className="px-4 py-2.5 text-right">Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
               {items.map((item) => (
-                <tr key={item.id}>
-                  <td className="px-4 py-2.5">
+                <tr key={item.id} className="transition hover:bg-white/[0.015]">
+                  <td className="px-4 py-3">
                     <p className="font-medium text-ink-100">{itemLabel(item)}</p>
                     <p className="mt-0.5 text-[10px] text-ink-400">{fulfillmentLabel(item.fulfillment_type)}</p>
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="px-3 py-3">
                     <Badge tone={item.line_type === 'free_gift' ? 'warn' : 'neutral'}>
                       {item.line_type === 'free_gift' ? 'Gift' : 'Sale'}
                     </Badge>
                   </td>
-                  <td className="px-3 py-2.5 text-right font-mono text-ink-100">
+                  <td className="px-3 py-3 text-right font-mono text-ink-100">
                     {formatNumber(item.quantity, { maximumFractionDigits: 4 })} {item.unit_label_snapshot || ''}
                   </td>
-                  <td className="px-3 py-2.5 text-right font-mono text-ink-200">{formatNumber(item.unit_price, { maximumFractionDigits: 4 })}</td>
-                  <td className="px-4 py-2.5 text-right font-mono text-ink-50">{formatNumber(item.line_total, { maximumFractionDigits: 4 })}</td>
-                  {canManageItems && (
-                    <td className="px-4 py-2.5">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="sm" leftIcon={Pencil} onClick={() => onEditItem(item)}>Edit</Button>
-                        <Button variant="ghost" size="sm" leftIcon={Trash2} onClick={() => onRemoveItem(item)}>Remove</Button>
-                      </div>
-                    </td>
-                  )}
+                  <td className="px-3 py-3 text-right font-mono text-ink-200">{formatNumber(item.unit_price, { maximumFractionDigits: 4 })}</td>
+                  <td className="px-4 py-3 text-right font-mono text-ink-50 font-medium">{formatNumber(item.line_total, { maximumFractionDigits: 4 })}</td>
                 </tr>
               ))}
             </tbody>
@@ -147,64 +147,81 @@ function CustomerCard({ customer, items, canAddItem, canManageItems, onAddItem, 
   );
 }
 
-function DocumentChecklist({ checklist, invoices, canPrint, isDownloading, onDownload }) {
-  const ready = Boolean(checklist?.ready_for_approval);
-  const pendingInvoiceCount = Math.max(0, Number(checklist?.required_invoice_count || 0) - Number(checklist?.generated_invoice_count || 0));
+function DocumentChecklist({ status, checklist, customers, canPrint, isDownloading, onDownloadCustomerList, onDownloadDeliveryDocument, onDownloadAllDeliveryDocuments }) {
+  const isReleaseStage = status === 'approved';
+  const ready = isReleaseStage
+    ? Boolean(checklist?.ready_for_dispatch)
+    : Boolean(checklist?.delivery_documents_generated);
+  const requiredReceiptCount = Number(checklist?.required_receipt_count || 0);
+  const generatedDeliveryDocumentCount = Math.min(
+    Number(checklist?.generated_delivery_receipt_count || 0),
+    Number(checklist?.generated_acceptance_consent_count || 0)
+  );
   return (
-    <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-display text-sm font-semibold text-ink-50">Approval document checklist</h3>
-          <p className="mt-1 text-xs text-ink-400">Every download is recorded against the current dispatch revision. Rework voids invoices and resets this checklist.</p>
+          <h3 className="font-display text-sm font-semibold text-ink-50">{isReleaseStage ? 'Delivery release document' : 'Delivery closeout documents'}</h3>
+          <p className="mt-0.5 text-xs text-ink-400">Recorded against current dispatch revision.</p>
         </div>
-        <Badge tone={ready ? 'success' : 'warn'}>{ready ? 'Ready for approval' : 'Downloads required'}</Badge>
+        <Badge tone={ready ? 'success' : 'warn'}>{ready ? (isReleaseStage ? 'Ready to issue delivery' : 'Ready for closeout') : 'Download required'}</Badge>
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-3">
-        <DocumentRequirement
-          label="Customer checklist"
-          complete={Boolean(checklist?.customer_table_generated)}
-          disabled={!canPrint || isDownloading}
-          onDownload={() => onDownload('customer')}
-        />
-        <DocumentRequirement
-          label="Quantity-only table"
-          complete={Boolean(checklist?.quantity_table_generated)}
-          disabled={!canPrint || isDownloading}
-          onDownload={() => onDownload('quantity')}
-        />
-        <DocumentRequirement
-          label="Customer invoices"
-          complete={Number(checklist?.required_invoice_count || 0) > 0 && pendingInvoiceCount === 0}
-          detail={`${Number(checklist?.generated_invoice_count || 0)} / ${Number(checklist?.required_invoice_count || 0)} downloaded`}
-          disabled={!canPrint || isDownloading}
-        />
+
+      <div className="pt-1">
+        {isReleaseStage ? (
+          <DocumentRequirement
+            label="Customer & quantity list"
+            complete={Boolean(checklist?.customer_table_generated)}
+            disabled={!canPrint || isDownloading}
+            onDownload={onDownloadCustomerList}
+          />
+        ) : (
+          <DocumentRequirement
+            label="Delivery receipt & consent"
+            complete={Boolean(checklist?.delivery_documents_generated)}
+            detail={`${generatedDeliveryDocumentCount} / ${requiredReceiptCount} downloaded · each PDF contains a receipt page and a consent page`}
+            disabled={!canPrint || isDownloading}
+            onDownload={customers.length > 1 ? onDownloadAllDeliveryDocuments : undefined}
+            downloadLabel="Download all customer PDFs"
+            actions={customers.map((customer) => ({
+              label: customers.length === 1 ? 'Combined receipt & consent' : `Combined: ${customer.customer_name || customer.name}`,
+              onClick: () => onDownloadDeliveryDocument(customer)
+            }))}
+          />
+        )}
       </div>
-      {!canPrint && <p className="mt-3 text-xs text-warn-300">A dispatch or invoice print permission is required to generate the documents.</p>}
-      {invoices.filter((invoice) => invoice.status === 'issued').length === 0 && (
-        <p className="mt-3 text-xs text-ink-400">Invoices appear here after the draft is submitted.</p>
-      )}
+      {!canPrint && <p className="text-xs text-warn-300">A dispatch or invoice print permission is required to generate documents.</p>}
     </section>
   );
 }
 
-function DocumentRequirement({ label, complete, detail, disabled, onDownload }) {
+function DocumentRequirement({ label, complete, detail, disabled, onDownload, downloadLabel = 'Download PDF', actions = [] }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-black/10 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-sm text-ink-100">{label}</span>
-        <Badge tone={complete ? 'success' : 'neutral'}>{complete ? 'Done' : 'Required'}</Badge>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.015] px-3.5 py-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-ink-100">{label}</span>
+          <Badge tone={complete ? 'success' : 'neutral'}>{complete ? 'Done' : 'Required'}</Badge>
+        </div>
+        {detail && <p className="mt-1 text-xs text-ink-400">{detail}</p>}
       </div>
-      {detail && <p className="mt-1 text-xs text-ink-400">{detail}</p>}
-      {onDownload && (
-        <Button className="mt-3" variant="secondary" size="sm" leftIcon={Download} disabled={disabled} onClick={onDownload}>
-          Download PDF
-        </Button>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {onDownload && (
+          <Button variant="secondary" size="sm" leftIcon={Download} disabled={disabled} onClick={onDownload}>
+            {downloadLabel}
+          </Button>
+        )}
+        {actions.map((action) => (
+          <Button key={action.label} variant="secondary" size="sm" leftIcon={Download} disabled={disabled} onClick={action.onClick}>
+            {action.label}
+          </Button>
+        ))}
+      </div>
     </div>
   );
 }
 
-function InvoicesPanel({ invoices, dispatchRevision, canPrint, downloading, onDownload }) {
+function InvoicesPanel({ invoices }) {
   return (
     <section>
       <div className="flex items-center justify-between gap-3">
@@ -215,9 +232,7 @@ function InvoicesPanel({ invoices, dispatchRevision, canPrint, downloading, onDo
         <p className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-ink-400">Invoices are issued automatically when this dispatch is submitted.</p>
       ) : (
         <div className="mt-2 space-y-2">
-          {invoices.map((invoice) => {
-            const current = Number(invoice.revision) === Number(dispatchRevision) && invoice.status === 'issued';
-            return (
+          {invoices.map((invoice) => (
               <div key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2.5">
                 <div className="min-w-0">
                   <p className="font-mono text-sm text-ink-100">{invoice.invoice_number}</p>
@@ -226,18 +241,16 @@ function InvoicesPanel({ invoices, dispatchRevision, canPrint, downloading, onDo
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs text-ink-200">{formatNumber(invoice.total_amount, { maximumFractionDigits: 4 })}</span>
                   <Badge tone={invoice.status === 'issued' ? 'success' : 'neutral'}>{invoice.status}</Badge>
-                  {current && <Button variant="secondary" size="sm" leftIcon={Download} disabled={!canPrint || downloading} onClick={() => onDownload(invoice)}>PDF</Button>}
                 </div>
               </div>
-            );
-          })}
+            ))}
         </div>
       )}
     </section>
   );
 }
 
-function SettlementsPanel({ settlements, canPost, onPost }) {
+function SettlementsPanel({ settlements, canPost, canReopen, onPost, onReopen }) {
   if (!settlements.length) return null;
   return (
     <section>
@@ -251,6 +264,7 @@ function SettlementsPanel({ settlements, canPost, onPost }) {
             </div>
             <div className="flex items-center gap-2">
               <Badge tone={settlement.status === 'posted' ? 'success' : 'warn'}>{settlement.status}</Badge>
+              {settlement.status === 'draft' && canReopen && <Button size="sm" variant="ghost" onClick={() => onReopen(settlement)}>Reopen</Button>}
               {settlement.status === 'draft' && canPost && <Button size="sm" variant="secondary" leftIcon={Wallet} onClick={() => onPost(settlement)}>Post</Button>}
             </div>
           </div>
@@ -261,20 +275,14 @@ function SettlementsPanel({ settlements, canPost, onPost }) {
 }
 
 export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
+  const navigate = useNavigate();
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canBrowse = DISPATCH_PARENT_PERMISSIONS.some((permission) => hasPermission(permission));
-  const canCreate = hasPermission(DISPATCH_PERMISSIONS.create);
-  const canApprove = hasPermission(DISPATCH_PERMISSIONS.approve);
-  const canSettle = hasPermission(DISPATCH_PERMISSIONS.settle);
+  const canSettle = hasPermission(DISPATCH_PERMISSIONS.settle) || hasPermission('finance.settle_deliveries');
   const canPrint = hasPermission(DISPATCH_PERMISSIONS.print) || hasPermission('invoices.print');
-  const canCloseout = canSettle || hasPermission(DISPATCH_PERMISSIONS.salesmanWorkspace);
   const queryClient = useQueryClient();
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [editing, setEditing] = useState(false);
-  const [addingCustomer, setAddingCustomer] = useState(false);
-  const [addingItemFor, setAddingItemFor] = useState(null);
-  const [editingItem, setEditingItem] = useState(null);
-  const [removingItem, setRemovingItem] = useState(null);
   const [returningStock, setReturningStock] = useState(false);
   const [openingCloseout, setOpeningCloseout] = useState(false);
   const [activeSettlement, setActiveSettlement] = useState(null);
@@ -293,7 +301,9 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
   const settlements = settlementsQuery.data?.data?.dispatch_settlements || [];
   const hasDraftCloseout = settlements.some((settlement) => settlement.status === 'draft');
   const availableActions = getAvailableDispatchActions(dispatchRequest);
+  const capabilities = dispatchRequest?.capabilities || {};
   const checklist = dispatchRequest?.document_checklist || {};
+  const entityLabel = getDispatchEntityLabel(dispatchRequest?.status);
 
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: ['dispatch', 'requests'] });
@@ -303,37 +313,33 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
 
   const submitMutation = useMutation({
     mutationFn: () => api.dispatch.requests.submit(dispatchRequestId),
-    onSuccess: () => { toast.success('Dispatch submitted and invoices issued'); setConfirmTarget(null); invalidate(); },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not submit dispatch.'))
+    onSuccess: () => { toast.success('Order submitted and invoices issued'); setConfirmTarget(null); invalidate(); },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not submit order.'))
   });
   const reworkMutation = useMutation({
     mutationFn: () => api.dispatch.requests.rework(dispatchRequestId, {}),
-    onSuccess: () => { toast.success('Current invoices voided; dispatch returned to draft'); setConfirmTarget(null); invalidate(); },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not return dispatch to draft.'))
+    onSuccess: () => { toast.success('Current invoices voided; order returned to draft'); setConfirmTarget(null); invalidate(); },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not return order to draft.'))
   });
   const approveMutation = useMutation({
     mutationFn: () => api.dispatch.requests.approve(dispatchRequestId),
-    onSuccess: () => { toast.success('Dispatch approved and inventory sources reserved'); setConfirmTarget(null); invalidate(); },
+    onSuccess: () => { toast.success('Order approved and delivery inventory reserved'); setConfirmTarget(null); invalidate(); },
     onError: (error) => toast.error(getErrorMessage(error, 'Approval is blocked.'))
   });
   const dispatchMutation = useMutation({
     mutationFn: () => api.dispatch.requests.dispatchStock(dispatchRequestId),
-    onSuccess: () => { toast.success('Reserved stock physically dispatched'); setConfirmTarget(null); invalidate(); },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not dispatch stock.'))
+    onSuccess: () => { toast.success('Delivery issued and stock dispatched'); setConfirmTarget(null); invalidate(); },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not issue the delivery.'))
   });
   const cancelMutation = useMutation({
     mutationFn: () => api.dispatch.requests.cancel(dispatchRequestId),
-    onSuccess: () => { toast.success('Dispatch cancelled'); setConfirmTarget(null); invalidate(); },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not cancel dispatch.'))
+    onSuccess: () => { toast.success('Order or delivery cancelled'); setConfirmTarget(null); invalidate(); },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not cancel this record.'))
   });
-  const removeLineMutation = useMutation({
-    mutationFn: (lineId) => api.dispatch.items.remove(lineId),
-    onSuccess: () => {
-      toast.success('Draft line removed');
-      setRemovingItem(null);
-      invalidate();
-    },
-    onError: (error) => toast.error(getErrorMessage(error, 'Could not remove the draft line.'))
+  const reopenMutation = useMutation({
+    mutationFn: (id) => api.dispatch.settlements.reopen(id),
+    onSuccess: () => { toast.success('Draft closeout reopened'); invalidate(); },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not reopen this closeout.'))
   });
   const downloadMutation = useMutation({
     mutationFn: ({ request }) => request(),
@@ -348,25 +354,58 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
     },
     onError: (error) => toast.error(getErrorMessage(error, 'Could not generate PDF.'))
   });
+  const bulkDownloadMutation = useMutation({
+    mutationFn: async (customerList) => {
+      const downloads = [];
+      for (const customer of customerList) {
+        const response = await api.dispatch.documents.deliveryDocumentPdf(dispatchRequest.id, customer.id);
+        downloads.push({ customer, response });
+      }
+      return downloads;
+    },
+    onSuccess: (downloads) => {
+      try {
+        downloads.forEach(({ customer, response }) => {
+          downloadBlob(response instanceof Blob ? response : response?.data, `delivery-document-${customer.id}.pdf`);
+        });
+        toast.success(`Downloaded ${downloads.length} customer PDF${downloads.length === 1 ? '' : 's'}`);
+        invalidate();
+      } catch (error) {
+        toast.error(getErrorMessage(error, 'Could not save the customer PDFs.'));
+      }
+    },
+    onError: (error) => toast.error(getErrorMessage(error, 'Could not generate all customer PDFs.'))
+  });
 
-  function downloadDocument(kind) {
+  function downloadCustomerList() {
     if (!dispatchRequest) return;
-    if (kind === 'customer') {
-      downloadMutation.mutate({ request: () => api.dispatch.documents.customerTablePdf(dispatchRequest.id), filename: `dispatch-${dispatchRequest.dispatch_number}-customers.pdf` });
-    } else {
-      downloadMutation.mutate({ request: () => api.dispatch.documents.quantityTablePdf(dispatchRequest.id), filename: `dispatch-${dispatchRequest.dispatch_number}-quantities.pdf` });
-    }
+    downloadMutation.mutate({ request: () => api.dispatch.documents.customerTablePdf(dispatchRequest.id), filename: `dispatch-${dispatchRequest.dispatch_number}-customers-quantities.pdf` });
   }
-  function downloadInvoice(invoice) {
-    downloadMutation.mutate({ request: () => api.dispatch.invoices.pdf(invoice.id), filename: `invoice-${invoice.invoice_number}.pdf` });
+  function downloadDeliveryDocument(customer) {
+    if (!dispatchRequest || !customer) return;
+    downloadMutation.mutate({
+      request: () => api.dispatch.documents.deliveryDocumentPdf(dispatchRequest.id, customer.id),
+      filename: `delivery-document-${customer.id}.pdf`
+    });
+  }
+  function downloadAllDeliveryDocuments() {
+    if (!customers.length) return;
+    bulkDownloadMutation.mutate(customers);
+  }
+  function downloadReturnCreditNote(creditNote) {
+    if (!creditNote) return;
+    downloadMutation.mutate({
+      request: () => api.dispatch.returnCreditNotes.pdf(creditNote.id),
+      filename: `return-credit-note-${creditNote.credit_note_number || creditNote.id}.pdf`
+    });
   }
 
   const actionConfigs = {
-    submit: { label: 'Submit for approval', description: 'Issue one invoice per customer and lock the draft until it is reworked.', mutation: submitMutation, confirmLabel: 'Submit' },
-    rework: { label: 'Return to draft', description: 'Void all current invoices and reset the document checklist. You can then correct the draft and submit a new revision.', mutation: reworkMutation, confirmLabel: 'Return to draft' },
-    approve: { label: 'Approve dispatch', description: 'This locks the current available inventory sources as reservations. Approval remains blocked until every required PDF is downloaded.', mutation: approveMutation, confirmLabel: 'Approve' },
-    dispatchStock: { label: 'Physically dispatch stock', description: 'Consume the reserved cartons, shelf units, or ready containers from inventory.', mutation: dispatchMutation, confirmLabel: 'Dispatch stock' },
-    cancel: { label: 'Cancel dispatch', description: 'Cancel this dispatch. Reserved inventory, if any, is released.', mutation: cancelMutation, confirmLabel: 'Cancel', tone: 'danger' }
+    submit: { label: 'Submit order for approval', description: 'Issue one invoice per customer and lock the order until it is reworked.', mutation: submitMutation, confirmLabel: 'Submit order' },
+    rework: { label: 'Return order to draft', description: 'Void all current invoices and reset the document checklist. You can then correct the order and submit a new revision.', mutation: reworkMutation, confirmLabel: 'Return to draft' },
+    approve: { label: 'Approve order', description: 'This reserves the available inventory for its delivery.', mutation: approveMutation, confirmLabel: 'Approve order' },
+    dispatchStock: { label: 'Issue delivery', description: 'Consume the reserved cartons, shelf units, or ready containers from inventory. The customer and quantity list must be downloaded first.', mutation: dispatchMutation, confirmLabel: 'Issue delivery' },
+    cancel: { label: `Cancel ${entityLabel.toLowerCase()}`, description: `Cancel this ${entityLabel.toLowerCase()}. Any reserved inventory is released.`, mutation: cancelMutation, confirmLabel: 'Cancel', tone: 'danger' }
   };
   const activeAction = confirmTarget ? actionConfigs[confirmTarget] : null;
   const customers = dispatchRequest?.customers || [];
@@ -385,73 +424,144 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
       open={open}
       onClose={onClose}
       width="xl"
-      title={dispatchRequest ? `Dispatch ${dispatchRequest.dispatch_number || `#${dispatchRequest.id}`}` : 'Dispatch request'}
+      title={dispatchRequest ? `${entityLabel} ${dispatchRequest.dispatch_number || `#${dispatchRequest.id}`}` : 'Order or delivery'}
       description={dispatchRequest ? `Revision ${dispatchRequest.revision || 1} · created ${formatDateTime(dispatchRequest.created_at)}` : undefined}
       footer={<Button variant="secondary" onClick={onClose}>Close</Button>}
     >
       {!canBrowse ? (
-        <GlassPanel><GlassPanelBody><EmptyState title="Detail view is restricted" description="Ask an administrator for a dispatch workflow permission." /></GlassPanelBody></GlassPanel>
+        <GlassPanel><GlassPanelBody><EmptyState title="Detail view is restricted" description="Ask an administrator for an order or delivery workflow permission." /></GlassPanelBody></GlassPanel>
       ) : detailQuery.isPending ? (
-        <LoadingState label="Loading dispatch workspace…" />
+        <LoadingState label="Loading order or delivery…" />
       ) : detailQuery.isError ? (
-        <ErrorState title="Could not load dispatch" description={getErrorMessage(detailQuery.error)} onRetry={() => detailQuery.refetch()} />
+        <ErrorState title="Could not load order or delivery" description={getErrorMessage(detailQuery.error)} onRetry={() => detailQuery.refetch()} />
       ) : !dispatchRequest ? (
-        <EmptyState title="Dispatch request not found" />
+        <EmptyState title="Order or delivery not found" />
       ) : (
         <div className="space-y-5">
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={dispatchRequest.status} />
-            {dispatchRequest.submitted_at && <Badge tone="info">Submitted {formatDate(dispatchRequest.submitted_at)}</Badge>}
-            {dispatchRequest.approved_at && <Badge tone="brand">Approved {formatDate(dispatchRequest.approved_at)}</Badge>}
-            {dispatchRequest.dispatched_at && <Badge tone="warn">Issued {formatDate(dispatchRequest.dispatched_at)}</Badge>}
+          {/* Header Action & Status Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={dispatchRequest.status} />
+              {dispatchRequest.submitted_at && <Badge tone="info">Submitted {formatDate(dispatchRequest.submitted_at)}</Badge>}
+              {dispatchRequest.approved_at && <Badge tone="brand">Approved {formatDate(dispatchRequest.approved_at)}</Badge>}
+              {dispatchRequest.dispatched_at && <Badge tone="warn">Issued {formatDate(dispatchRequest.dispatched_at)}</Badge>}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {availableActions.has('edit') && capabilities.can_edit && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={Pencil}
+                  onClick={() => {
+                    onClose?.();
+                    navigate(`/pos?edit_dispatch_id=${dispatchRequest.id}`);
+                  }}
+                >
+                  Edit order
+                </Button>
+              )}
+              {availableActions.has('submit') && capabilities.can_submit && <Button size="sm" leftIcon={Send} onClick={() => setConfirmTarget('submit')} isLoading={submitMutation.isPending}>Submit order</Button>}
+              {availableActions.has('rework') && capabilities.can_rework && <Button variant="secondary" size="sm" leftIcon={RefreshCcw} onClick={() => setConfirmTarget('rework')} isLoading={reworkMutation.isPending}>Rework order</Button>}
+              {availableActions.has('approve') && capabilities.can_release && <Button size="sm" leftIcon={CheckCircle2} onClick={() => setConfirmTarget('approve')} isLoading={approveMutation.isPending}>Approve order</Button>}
+              {availableActions.has('dispatchStock') && capabilities.can_dispatch && <Button size="sm" leftIcon={Truck} onClick={() => setConfirmTarget('dispatchStock')} isLoading={dispatchMutation.isPending} disabled={!checklist.ready_for_dispatch}>Issue delivery</Button>}
+              {availableActions.has('createReturn') && capabilities.can_record_returns && !hasDraftCloseout && <Button variant="secondary" size="sm" leftIcon={RotateCcw} onClick={() => setReturningStock(true)}>Record return</Button>}
+              {availableActions.has('createCloseout') && capabilities.can_closeout && !hasDraftCloseout && <Button variant="secondary" size="sm" leftIcon={Wallet} onClick={() => setOpeningCloseout(true)} disabled={!checklist.delivery_documents_generated}>Delivery closeout</Button>}
+              {availableActions.has('cancel') && capabilities.can_cancel && <Button variant="danger" size="sm" leftIcon={X} onClick={() => setConfirmTarget('cancel')} isLoading={cancelMutation.isPending}>Cancel {entityLabel.toLowerCase()}</Button>}
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {availableActions.has('edit') && canCreate && <Button variant="secondary" size="sm" leftIcon={Pencil} onClick={() => setEditing(true)}>Edit header</Button>}
-            {availableActions.has('addCustomer') && canCreate && <Button variant="secondary" size="sm" leftIcon={Plus} onClick={() => setAddingCustomer(true)}>Add customer</Button>}
-            {availableActions.has('submit') && canCreate && <Button size="sm" leftIcon={Send} onClick={() => setConfirmTarget('submit')} isLoading={submitMutation.isPending}>Submit</Button>}
-            {availableActions.has('rework') && canCreate && <Button variant="secondary" size="sm" leftIcon={RefreshCcw} onClick={() => setConfirmTarget('rework')} isLoading={reworkMutation.isPending}>Rework</Button>}
-            {availableActions.has('approve') && canApprove && <Button size="sm" leftIcon={CheckCircle2} onClick={() => setConfirmTarget('approve')} isLoading={approveMutation.isPending} disabled={!checklist.ready_for_approval}>Approve</Button>}
-            {availableActions.has('dispatchStock') && canApprove && <Button size="sm" leftIcon={Truck} onClick={() => setConfirmTarget('dispatchStock')} isLoading={dispatchMutation.isPending}>Dispatch stock</Button>}
-            {availableActions.has('createReturn') && canSettle && <Button variant="secondary" size="sm" leftIcon={RotateCcw} onClick={() => setReturningStock(true)}>Record return</Button>}
-            {availableActions.has('createCloseout') && canCloseout && !hasDraftCloseout && <Button variant="secondary" size="sm" leftIcon={Wallet} onClick={() => setOpeningCloseout(true)}>Delivery closeout</Button>}
-            {availableActions.has('cancel') && canCreate && <Button variant="danger" size="sm" leftIcon={X} onClick={() => setConfirmTarget('cancel')} isLoading={cancelMutation.isPending}>Cancel</Button>}
-          </div>
-
-          {dispatchRequest.status === 'pending_approval' && !checklist.ready_for_approval && (
-            <div className="flex gap-2 rounded-xl border border-warn-400/30 bg-warn-500/10 p-3 text-sm text-warn-100"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Download the three required document types below before approval can reserve inventory.</div>
+          {dispatchRequest.status === 'approved' && !checklist.ready_for_dispatch && (
+            <div className="flex gap-2 rounded-xl border border-warn-400/30 bg-warn-500/10 p-3 text-sm text-warn-100"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Download the customer and quantity list before issuing delivery.</div>
+          )}
+          {['delivery', 'partially_settled'].includes(dispatchRequest.status) && !checklist.delivery_documents_generated && (
+            <div className="flex gap-2 rounded-xl border border-warn-400/30 bg-warn-500/10 p-3 text-sm text-warn-100"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />Download the combined delivery receipt and consent PDF for every customer before closing the delivery.</div>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Salesman" value={dispatchRequest.salesman_name} />
-            <Field label="Warehouse" value={dispatchRequest.warehouse_name} />
-            <Field label="Request date" value={formatDate(dispatchRequest.request_date)} />
-            <Field label="Customers / lines" value={`${customers.length} / ${(dispatchRequest.items || []).length}`} />
-            <Field label="Sales total" value={formatNumber(dispatchRequest.total_amount, { maximumFractionDigits: 4 })} />
-            <Field label="Gift COGS" value={formatNumber(dispatchRequest.gift_cost || 0, { maximumFractionDigits: 4 })} />
-            <Field label="Allocated COGS" value={formatNumber(dispatchRequest.total_cost || 0, { maximumFractionDigits: 4 })} />
-            <Field label="Collected" value={formatNumber(dispatchRequest.total_collected || 0, { maximumFractionDigits: 4 })} />
+          {/* Unified Overview Panel (Replaces 8 isolated boxes) */}
+          <section className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+            {/* Top Half: Route & Logistics */}
+            <div className="grid gap-4 border-b border-white/5 p-4 sm:grid-cols-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Salesman</p>
+                <p className="mt-1 text-sm font-medium text-ink-100">{dispatchRequest.salesman_name || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Warehouse</p>
+                <p className="mt-1 text-sm font-medium text-ink-100">{dispatchRequest.warehouse_name || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">{entityLabel === 'Order' ? 'Order Date' : 'Delivery Date'}</p>
+                <p className="mt-1 text-sm font-medium text-ink-100">{formatDate(dispatchRequest.request_date) || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Customers / Lines</p>
+                <p className="mt-1 font-mono text-sm font-medium text-ink-100">{customers.length} / {(dispatchRequest.items || []).length}</p>
+              </div>
+            </div>
+
+            {/* Bottom Half: Financial Summary Bar */}
+            <div className="grid gap-4 bg-white/[0.015] p-4 sm:grid-cols-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Sales Total</p>
+                <p className="mt-1 font-mono text-base font-bold text-ink-50">{formatNumber(dispatchRequest.total_amount, { maximumFractionDigits: 4 })}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Gift COGS</p>
+                <p className="mt-1 font-mono text-sm font-medium text-ink-200">{formatNumber(dispatchRequest.gift_cost || 0, { maximumFractionDigits: 4 })}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Allocated COGS</p>
+                <p className="mt-1 font-mono text-sm font-medium text-ink-200">{formatNumber(dispatchRequest.total_cost || 0, { maximumFractionDigits: 4 })}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Collected Cash</p>
+                <p className="mt-1 font-mono text-sm font-semibold text-emerald-400">{formatNumber(dispatchRequest.total_collected || 0, { maximumFractionDigits: 4 })}</p>
+              </div>
+            </div>
           </section>
 
-          {dispatchRequest.notes && <section><h3 className="font-display text-sm font-semibold text-ink-50">Notes</h3><p className="mt-1 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-ink-200 whitespace-pre-wrap">{dispatchRequest.notes}</p></section>}
+          {dispatchRequest.notes && (
+            <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <h3 className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Notes</h3>
+              <p className="mt-1 text-sm text-ink-200 whitespace-pre-wrap">{dispatchRequest.notes}</p>
+            </section>
+          )}
 
-          {['pending_approval', 'approved', 'dispatched', 'partially_settled', 'completed'].includes(dispatchRequest.status) && (
-            <DocumentChecklist checklist={checklist} invoices={dispatchRequest.invoices || []} canPrint={canPrint} isDownloading={downloadMutation.isPending} onDownload={downloadDocument} />
+          {['approved', 'delivery', 'partially_settled', 'completed'].includes(dispatchRequest.status) && (
+            <DocumentChecklist status={dispatchRequest.status} checklist={checklist} customers={customers} canPrint={canPrint} isDownloading={downloadMutation.isPending || bulkDownloadMutation.isPending} onDownloadCustomerList={downloadCustomerList} onDownloadDeliveryDocument={downloadDeliveryDocument} onDownloadAllDeliveryDocuments={downloadAllDeliveryDocuments} />
+          )}
+
+          {(dispatchRequest.return_credit_notes || []).length > 0 && (
+            <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <h3 className="font-display text-sm font-semibold text-ink-50">Return credit notes</h3>
+              <p className="mt-1 text-xs text-ink-400">Immutable return adjustments are available for review and printing.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {dispatchRequest.return_credit_notes.map((creditNote) => (
+                  <Button key={creditNote.id} variant="secondary" size="sm" leftIcon={Download} disabled={!canPrint || downloadMutation.isPending} onClick={() => downloadReturnCreditNote(creditNote)}>
+                    {creditNote.credit_note_number} · {creditNote.customer_name}
+                  </Button>
+                ))}
+              </div>
+            </section>
           )}
 
           <section>
-            <div className="flex items-center justify-between gap-3"><h3 className="font-display text-sm font-semibold text-ink-50">Customers and sale lines</h3><span className="font-mono text-xs text-ink-400">{customers.length} customers</span></div>
+            <div className="flex items-center justify-between gap-3 px-1 mb-2.5">
+              <h3 className="font-display text-sm font-semibold text-ink-50">{entityLabel === 'Order' ? 'Customers and order lines' : 'Delivery customers and lines'}</h3>
+              <span className="font-mono text-xs text-ink-400">{customers.length} customers</span>
+            </div>
             {customers.length === 0 ? (
-              <p className="mt-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-3 text-sm text-ink-400">Add a customer, then add their catalog-backed sale or gift lines.</p>
+              <p className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-4 text-sm text-ink-400 italic">No customers or order lines yet. Use Edit order to build this draft in Mini POS.</p>
             ) : (
-              <div className="mt-3 space-y-3">
-                {customers.map((customer) => <CustomerCard key={customer.id} customer={customer} items={itemsByCustomer.get(Number(customer.id)) || []} canAddItem={canCreate && availableActions.has('addItem')} canManageItems={canCreate && availableActions.has('addItem')} onAddItem={setAddingItemFor} onEditItem={setEditingItem} onRemoveItem={setRemovingItem} />)}
+              <div className="space-y-3">
+                {customers.map((customer) => <CustomerCard key={customer.id} customer={customer} items={itemsByCustomer.get(Number(customer.id)) || []} />)}
               </div>
             )}
           </section>
 
-          <InvoicesPanel invoices={dispatchRequest.invoices || []} dispatchRevision={dispatchRequest.revision} canPrint={canPrint} downloading={downloadMutation.isPending} onDownload={downloadInvoice} />
-          <SettlementsPanel settlements={settlements} canPost={canSettle} onPost={setActiveSettlement} />
+          <InvoicesPanel invoices={dispatchRequest.invoices || []} />
+          <SettlementsPanel settlements={settlements} canPost={capabilities.can_settle} canReopen={capabilities.can_closeout} onPost={setActiveSettlement} onReopen={(settlement) => reopenMutation.mutate(settlement.id)} />
         </div>
       )}
 
@@ -465,19 +575,7 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
         tone={activeAction?.tone === 'danger' ? 'danger' : 'primary'}
         isLoading={Boolean(activeAction?.mutation.isPending)}
       />
-      <ConfirmDialog
-        open={Boolean(removingItem)}
-        onClose={() => setRemovingItem(null)}
-        onConfirm={() => removeLineMutation.mutate(removingItem?.id)}
-        title="Remove draft line"
-        description="Remove this line from the draft. The customer still needs at least one line when the dispatch is submitted."
-        confirmLabel="Remove line"
-        tone="danger"
-        isLoading={removeLineMutation.isPending}
-      />
       <DispatchRequestEditModal open={editing} onClose={() => setEditing(false)} dispatchRequest={dispatchRequest} />
-      <AddDispatchCustomerModal open={addingCustomer} onClose={() => setAddingCustomer(false)} dispatchRequest={dispatchRequest} />
-      <AddDispatchItemModal open={Boolean(addingItemFor || editingItem)} onClose={() => { setAddingItemFor(null); setEditingItem(null); }} dispatchCustomer={addingItemFor || customers.find((customer) => Number(customer.id) === Number(editingItem?.dispatch_customer_id))} dispatchRequestId={dispatchRequestId} dispatchRequest={dispatchRequest} dispatchItem={editingItem} />
       <CreateReturnModal open={returningStock} onClose={() => setReturningStock(false)} dispatchRequest={dispatchRequest} />
       <CreateSettlementModal open={openingCloseout} onClose={() => setOpeningCloseout(false)} dispatchRequest={dispatchRequest} onCreated={(settlement) => { if (settlement && canSettle) setActiveSettlement(settlement); }} />
       <SettlementWorkflowModal open={Boolean(activeSettlement)} onClose={() => setActiveSettlement(null)} settlement={activeSettlement} dispatchRequest={dispatchRequest} onPosted={() => setActiveSettlement(null)} />

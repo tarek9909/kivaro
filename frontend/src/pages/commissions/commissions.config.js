@@ -86,6 +86,13 @@ export const COMMISSIONS_TABS = [
     label: 'Calculations',
     to: '/commissions/calculations',
     anyOfPermissions: [COMMISSIONS_PERMISSIONS.manage]
+  },
+  {
+    id: 'payroll',
+    featureKey: 'commissions.payroll',
+    label: 'Monthly payroll',
+    to: '/commissions/payroll',
+    anyOfPermissions: [COMMISSIONS_PERMISSIONS.manage]
   }
 ];
 

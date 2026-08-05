@@ -7,21 +7,16 @@ describe('navigation config', () => {
     expect(flattenNavItems().length).toBeGreaterThan(0);
   });
 
-  it('gates the notifications nav item behind dashboard.view', () => {
-    const items = flattenNavItems();
-    const notifications = items.find((item) => item.id === 'notifications');
-    expect(notifications).toBeDefined();
-    expect(notifications.to).toBe('/notifications');
-    expect(notifications.anyOfPermissions).toEqual(['dashboard.view']);
-  });
-
-  it('exposes the inventory nav item to inventory.view, stock.movements, or stock.adjust users', () => {
+  it('exposes the inventory nav item to catalog and stock workflow users', () => {
     const items = flattenNavItems();
     const inventory = items.find((item) => item.id === 'inventory');
     expect(inventory).toBeDefined();
     expect(inventory.to).toBe('/inventory');
     expect(inventory.anyOfPermissions).toEqual([
       'inventory.view',
+      'inventory.create',
+      'inventory.update',
+      'inventory.delete',
       'stock.movements',
       'stock.adjust'
     ]);
@@ -33,7 +28,7 @@ describe('navigation config', () => {
     expect(packaging).toBeDefined();
     expect(packaging.to).toBe('/packaging');
     expect(packaging.moduleKey).toBe('inventory.packaging');
-    expect(packaging.anyOfPermissions).toEqual(['inventory.view']);
+    expect(packaging.anyOfPermissions).toEqual(['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete', 'stock.adjust']);
   });
 
   it('exposes the purchases nav item to purchase_orders.view, accounting.view, or accounting.manage users', () => {
@@ -70,25 +65,25 @@ describe('navigation config', () => {
     expect(sales.anyOfPermissions).toEqual(['reports.view']);
   });
 
-  it('exposes the standalone salesman workspace to its dedicated module permission', () => {
+  it('exposes the consolidated Salesmen hub to management and workspace permissions', () => {
     const items = flattenNavItems();
-    const workspace = items.find((item) => item.id === 'salesman-workspace');
-    expect(workspace).toBeDefined();
-    expect(workspace.to).toBe('/salesman-workspace');
-    expect(workspace.moduleKey).toBe('salesman_workspace');
-    expect(workspace.anyOfPermissions).toEqual(['salesman_workspace.view']);
+    const salesmen = items.find((item) => item.id === 'salesmen');
+    expect(salesmen).toBeDefined();
+    expect(salesmen.to).toBe('/salesmen');
+    expect(salesmen.anyOfPermissions).toEqual([
+      'salesmen.manage',
+      'targets.manage',
+      'salesman_workspace.view',
+      'pos.create_for_salesman'
+    ]);
   });
 
-  it('exposes the locations nav item to locations.manage, salesmen.manage, or targets.manage users', () => {
+  it('limits the locations nav item to territory management', () => {
     const items = flattenNavItems();
     const locations = items.find((item) => item.id === 'locations');
     expect(locations).toBeDefined();
     expect(locations.to).toBe('/locations');
-    expect(locations.anyOfPermissions).toEqual([
-      'locations.manage',
-      'salesmen.manage',
-      'targets.manage'
-    ]);
+    expect(locations.anyOfPermissions).toEqual(['locations.manage']);
   });
 
   it('does not expose the retired production workspace', () => {
@@ -107,7 +102,12 @@ describe('navigation config', () => {
       'dispatch.create',
       'dispatch.approve',
       'dispatch.settle',
-      'dispatch.print'
+      'dispatch.print',
+      'delivery.release',
+      'delivery.dispatch',
+      'delivery.record_returns',
+      'delivery.closeout',
+      'finance.settle_deliveries'
     ]);
   });
 
@@ -145,8 +145,6 @@ describe('navigation config', () => {
       expect(item.id).toBeTruthy();
       expect(item.label).toBeTruthy();
       expect(item.to).toMatch(/^\//);
-      // lucide-react icons can be functions or forwardRef objects; just
-      // make sure each item ships an icon component.
       expect(item.icon).toBeTruthy();
       expect(['function', 'object']).toContain(typeof item.icon);
     }

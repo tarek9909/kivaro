@@ -119,9 +119,27 @@ module.exports = {
   closeSalesmanBalance,
   createCashAccount: (data, userId, actor = {}) => {
     const scoped = scopedData(data, actor);
-    return model.createCashAccount({
-      ...scoped,
-      current_balance: scoped.opening_balance || 0
+    return withTransaction(async (connection) => {
+      const openingBalance = decimal(scoped.opening_balance || 0);
+      const account = await model.createCashAccount({
+        ...scoped,
+        current_balance: toMoney(openingBalance)
+      }, connection);
+      if (openingBalance.gt(0)) {
+        await model.createFinancialTransaction(connection, {
+          store_id: scoped.store_id,
+          cash_account_id: account.id,
+          transaction_type: 'opening_balance',
+          direction: 'in',
+          amount: toMoney(openingBalance),
+          reference_type: 'cash_account',
+          reference_id: account.id,
+          description: 'Opening balance',
+          created_by: userId,
+          skip_cash_account_balance_update: true
+        });
+      }
+      return account;
     });
   },
   createExpense,
@@ -147,6 +165,7 @@ module.exports = {
   getExpense: (id, actor = {}) => mustFind(model.findExpenseById, id, 'Expense not found', actor),
   getSalesmanBalance: (id, actor = {}) => mustFind(model.findSalesmanBalanceById, id, 'Salesman balance not found', actor),
   listCashAccounts: (query, actor = {}) => model.listCashAccounts(scopedQuery(query, actor)),
+  listPaymentOptions: (query, actor = {}) => model.listPaymentOptions(scopedQuery(query, actor)),
   listExpenseCategories: (query, actor = {}) => model.listExpenseCategories(scopedQuery(query, actor)),
   listExpenses: (query, actor = {}) => model.listExpenses(scopedQuery(query, actor)),
   listFinancialTransactions: (query, actor = {}) => model.listFinancialTransactions(scopedQuery(query, actor)),

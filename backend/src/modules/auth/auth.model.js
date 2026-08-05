@@ -140,6 +140,16 @@ async function revokeSession(connection, { userId, tokenHash }) {
   return result.affectedRows;
 }
 
+async function revokeAllUserSessions(connection, userId) {
+  const [result] = await connection.execute(
+    `UPDATE user_sessions
+     SET revoked_at = NOW()
+     WHERE user_id = ? AND revoked_at IS NULL`,
+    [userId]
+  );
+  return result.affectedRows;
+}
+
 async function updateLastLogin(connection, userId) {
   await connection.execute(
     `UPDATE users
@@ -192,6 +202,7 @@ module.exports = {
   getEnabledModulesByStoreId,
   getUserPermissionsByUserId,
   revokeSession,
+  revokeAllUserSessions,
   updateLastLogin,
   updatePasswordHash,
   updateUserProfile

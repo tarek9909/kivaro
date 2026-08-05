@@ -7,7 +7,7 @@ const idParam = z.object({
 const status = z.enum(['active', 'inactive']);
 const unitType = z.enum(['weight', 'quantity', 'volume', 'length', 'other']);
 const itemKind = z.enum(['normal', 'packaging']);
-const stockMode = z.enum(['carton_weight', 'weight', 'piece']);
+const stockMode = z.enum(['carton', 'weight', 'piece']);
 const nonNegativeNumber = z.coerce.number().min(0);
 const positiveNumber = z.coerce.number().positive();
 const optionalText = z.string().trim().optional().nullable();
@@ -16,7 +16,8 @@ const paginationQuery = {
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().optional(),
   search: z.string().trim().optional(),
-  store_id: z.coerce.number().int().positive().optional()
+  store_id: z.coerce.number().int().positive().optional(),
+  picker: z.coerce.boolean().optional()
 };
 
 const idSchema = z.object({
@@ -92,19 +93,12 @@ function itemConfigurationIssues(data, ctx, { partial = false } = {}) {
     });
   }
 
-  if (mode === 'carton_weight') {
+  if (mode === 'carton') {
     if (!data.kg_per_carton || Number(data.kg_per_carton) <= 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['kg_per_carton'],
-        message: 'Carton-weight items require kg per carton'
-      });
-    }
-    if (!data.loose_units_per_carton || !Number.isInteger(Number(data.loose_units_per_carton)) || Number(data.loose_units_per_carton) <= 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['loose_units_per_carton'],
-        message: 'Carton-weight items require a whole-number loose unit count per carton'
+        message: 'Carton items require kg per carton'
       });
     }
   }
@@ -126,13 +120,10 @@ const itemFields = z.object({
   item_kind: itemKind,
   stock_mode: stockMode,
   kg_per_carton: positiveNumber.optional().nullable(),
-  loose_units_per_carton: z.coerce.number().int().positive().optional().nullable(),
   max_content_weight_kg: nonNegativeNumber.optional().nullable(),
   description: optionalText,
   default_cost: nonNegativeNumber.default(0),
   default_selling_price: nonNegativeNumber.optional().nullable(),
-  carton_selling_price: nonNegativeNumber.optional().nullable(),
-  loose_unit_selling_price: nonNegativeNumber.optional().nullable(),
   reorder_level: nonNegativeNumber.default(0),
   status: status.default('active'),
   warehouse_id: z.coerce.number().int().positive().optional(),
@@ -267,12 +258,11 @@ const stockAdjustmentSchema = z.object({
     item_id: z.coerce.number().int().positive(),
     quantity_change: z.coerce.number().optional(),
     carton_count_change: z.coerce.number().int().optional(),
-    loose_units_change: z.coerce.number().int().optional(),
     unit_cost: nonNegativeNumber.optional().nullable(),
     cost_per_carton: nonNegativeNumber.optional().nullable(),
     reason: z.string().trim().min(1).max(500)
   }).superRefine((body, ctx) => {
-    const supplied = ['quantity_change', 'carton_count_change', 'loose_units_change']
+    const supplied = ['quantity_change', 'carton_count_change']
       .filter((field) => body[field] !== undefined);
     if (supplied.length !== 1) {
       ctx.addIssue({

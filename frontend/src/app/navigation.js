@@ -52,7 +52,7 @@ export const NAV_SECTIONS = [
         to: '/inventory',
         icon: Boxes,
         moduleKey: 'inventory',
-        anyOfPermissions: ['inventory.view', 'stock.movements', 'stock.adjust']
+        anyOfPermissions: ['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete', 'stock.movements', 'stock.adjust']
       },
       {
         id: 'packaging',
@@ -61,7 +61,7 @@ export const NAV_SECTIONS = [
         to: '/packaging',
         icon: Package,
         moduleKey: 'inventory.packaging',
-        anyOfPermissions: ['inventory.view']
+        anyOfPermissions: ['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete', 'stock.adjust']
       },
       {
         id: 'purchases',
@@ -74,7 +74,7 @@ export const NAV_SECTIONS = [
       },
       {
         id: 'dispatch',
-        label: 'Dispatch',
+        label: 'Orders & deliveries',
         labelKey: 'nav.dispatch',
         to: '/dispatch',
         icon: Truck,
@@ -84,7 +84,12 @@ export const NAV_SECTIONS = [
           'dispatch.create',
           'dispatch.approve',
           'dispatch.settle',
-          'dispatch.print'
+          'dispatch.print',
+          'delivery.release',
+          'delivery.dispatch',
+          'delivery.record_returns',
+          'delivery.closeout',
+          'finance.settle_deliveries'
         ]
       },
       {
@@ -94,9 +99,8 @@ export const NAV_SECTIONS = [
         icon: ShoppingBasket,
         moduleKey: 'pos',
         anyOfPermissions: [
-          'pos.own_orders',
-          'pos.review',
-          'pos.accept',
+          'pos.create_own',
+          'pos.create_for_salesman',
           'salesman_workspace.view'
         ]
       }
@@ -117,12 +121,16 @@ export const NAV_SECTIONS = [
         anyOfPermissions: ['reports.view']
       },
       {
-        id: 'salesman-workspace',
-        label: 'My Workspace',
-        to: '/salesman-workspace',
-        icon: LayoutDashboard,
-        moduleKey: 'salesman_workspace',
-        anyOfPermissions: ['salesman_workspace.view']
+        id: 'salesmen',
+        label: 'Salesmen',
+        to: '/salesmen',
+        icon: Users,
+        anyOfPermissions: [
+          'salesmen.manage',
+          'targets.manage',
+          'salesman_workspace.view',
+          'pos.create_for_salesman'
+        ]
       },
       {
         id: 'customers',
@@ -145,7 +153,7 @@ export const NAV_SECTIONS = [
         to: '/locations',
         icon: MapPinned,
         moduleKey: 'locations',
-        anyOfPermissions: ['locations.manage', 'salesmen.manage', 'targets.manage']
+        anyOfPermissions: ['locations.manage']
       },
       {
         id: 'commissions',
@@ -210,15 +218,6 @@ export const NAV_SECTIONS = [
         icon: ShieldCheck,
         moduleKey: 'audit_logs',
         anyOfPermissions: ['audit_logs.view']
-      },
-      {
-        id: 'notifications',
-        label: 'Notifications',
-        labelKey: 'nav.notifications',
-        to: '/notifications',
-        icon: Bell,
-        moduleKey: 'notifications',
-        anyOfPermissions: ['dashboard.view']
       }
     ]
   },

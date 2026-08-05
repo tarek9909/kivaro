@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus, ShieldAlert , SlidersHorizontal } from 'lucide-react';
+import { Plus, Printer, ShieldAlert , SlidersHorizontal } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import {
@@ -16,10 +16,8 @@ import {
 import { formatDate, formatNumber } from '@/lib/formatters.js';
 import { useCustomersList } from '@/pages/accounting/useAccountingOptions.js';
 import { ACCOUNTING_PERMISSIONS } from '@/pages/accounting/accounting.config.js';
-import {
-  PAYMENTS_PERMISSIONS,
-  PAYMENT_METHODS
-} from './payments.config.js';
+import { PAYMENT_METHODS } from './payments.config.js';
+import { CustomerPaymentPrintModal } from './CustomerPaymentPrintModal.jsx';
 import { CustomerPaymentFormModal } from './CustomerPaymentFormModal.jsx';
 
 const CUSTOMERS_VIEW = 'customers.view';
@@ -27,7 +25,8 @@ const CUSTOMERS_VIEW = 'customers.view';
 export default function CustomerPaymentsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(ACCOUNTING_PERMISSIONS.view);
-  const canCreate = hasPermission(PAYMENTS_PERMISSIONS.accountingManage);
+  const canManage = hasPermission(ACCOUNTING_PERMISSIONS.manage);
+  const canRead = canView || canManage;
   const canPickCustomers = hasPermission(CUSTOMERS_VIEW);
 
   const [customerId, setCustomerId] = useState('');
@@ -36,6 +35,7 @@ export default function CustomerPaymentsTab() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
+  const [openPayment, setOpenPayment] = useState(null);
   const [creating, setCreating] = useState(false);
 
   const queryParams = useMemo(() => {
@@ -46,15 +46,13 @@ export default function CustomerPaymentsTab() {
     return params;
   }, [customerId, dateFrom, dateTo, page, limit]);
 
-  // GET /customer-payments requires accounting.view; do not call it for
-  // accounting.manage-only operators.
   const listQuery = useQuery({
     queryKey: ['payments', 'customer-payments', queryParams],
     queryFn: () => api.payments.customerPayments.list(queryParams),
-    enabled: canView
+    enabled: canRead
   });
 
-  const customersQuery = useCustomersList(canView && canPickCustomers);
+  const customersQuery = useCustomersList(canRead && canPickCustomers);
   const customers = customersQuery.data?.data?.customers || [];
 
   const rows = listQuery.data?.data?.customer_payments || [];
@@ -116,6 +114,15 @@ export default function CustomerPaymentsTab() {
             {row.reference_number || '-'}
           </span>
         )
+      },
+      {
+        id: 'print',
+        header: '',
+        cell: (row) => (
+          <Button variant="secondary" size="sm" leftIcon={Printer} onClick={() => setOpenPayment(row)}>
+            Open
+          </Button>
+        )
       }
     ],
     []
@@ -123,29 +130,26 @@ export default function CustomerPaymentsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
-          New customer payment
-        </Button>
-      </div>
-
-      {!canView ? (
+      {!canRead ? (
         <GlassPanel>
           <GlassPanelBody>
             <EmptyState
               icon={ShieldAlert}
               title="Browsing is restricted"
               description={
-                canCreate
-                  ? 'Use New customer payment above to record a payment. Browsing existing payments requires the accounting view permission.'
-                  : 'Ask an administrator for the accounting view permission to browse customer payments.'
+                'Payments are recorded from the relevant customer debt. Ask an administrator for the accounting view permission to browse payment history.'
               }
             />
           </GlassPanelBody>
         </GlassPanel>
       ) : (
         <>
-          <div className="flex justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
+        {canManage && (
+          <Button leftIcon={Plus} onClick={() => setCreating(true)}>
+            Record customer payment
+          </Button>
+        )}
         <Button
           variant={showFilters ? 'primary' : 'secondary'}
           leftIcon={SlidersHorizontal}
@@ -223,9 +227,7 @@ export default function CustomerPaymentsTab() {
             onRetry={() => listQuery.refetch()}
             empty={{
               title: 'No customer payments match the filters',
-              description: canCreate
-                ? 'Adjust your filters or record a new customer payment.'
-                : 'Adjust your filters to find existing customer payments.'
+              description: 'Payments are recorded from the relevant customer debt.'
             }}
             footer={
               meta?.totalPages ? (
@@ -242,7 +244,15 @@ export default function CustomerPaymentsTab() {
         </>
       )}
 
-      <CustomerPaymentFormModal open={creating} onClose={() => setCreating(false)} />
+      <CustomerPaymentPrintModal
+        open={Boolean(openPayment)}
+        onClose={() => setOpenPayment(null)}
+        payment={openPayment}
+      />
+      <CustomerPaymentFormModal
+        open={creating}
+        onClose={() => setCreating(false)}
+      />
     </div>
   );
 }

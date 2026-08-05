@@ -91,16 +91,16 @@ export function CreateSettlementModal({ open, onClose, dispatchRequest, onCreate
       open={open}
       onClose={onClose}
       size="lg"
-      title="Submit delivery closeout"
-      description="Record what was delivered, collected, and left as debt. A manager posts this closeout later and selects the incoming cash account."
+      title="Submit Delivery Closeout"
+      description="Record what was delivered, collected, and left as debt for manager posting."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" form="dispatch-closeout-form" isLoading={mutation.isPending}>Submit closeout</Button>
+          <Button type="submit" form="dispatch-closeout-form" isLoading={mutation.isPending}>Submit Closeout</Button>
         </>
       }
     >
-      <form id="dispatch-closeout-form" onSubmit={submit} className="space-y-4" noValidate>
+      <form id="dispatch-closeout-form" onSubmit={submit} className="space-y-5" noValidate>
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="Closeout number"
@@ -118,14 +118,15 @@ export function CreateSettlementModal({ open, onClose, dispatchRequest, onCreate
           />
         </div>
 
-        <div className="overflow-hidden rounded-xl border border-white/10">
-          <div className="grid grid-cols-[minmax(0,1fr)_8rem_8rem] gap-2 border-b border-white/10 bg-white/[0.04] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-400">
-            <span>Customer</span><span className="text-right">Invoice total</span><span className="text-right">Collected</span>
+        {/* Customer Collections Table */}
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02]">
+          <div className="grid grid-cols-[minmax(0,1fr)_8rem_8rem] gap-2 border-b border-white/10 bg-white/[0.04] px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-ink-300">
+            <span>Customer</span><span className="text-right">Invoice Total</span><span className="text-right">Collected</span>
           </div>
           {rows.map((row) => (
-            <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_8rem_8rem] items-center gap-2 border-b border-white/5 px-3 py-2 last:border-b-0">
-              <span className="truncate text-sm text-ink-100">{row.customer_name || `Customer #${row.customer_id}`}</span>
-              <span className="text-right font-mono text-xs text-ink-300">{formatNumber(row.expected, { maximumFractionDigits: 4 })}</span>
+            <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_8rem_8rem] items-center gap-2 border-b border-white/5 px-4 py-3 last:border-b-0 transition hover:bg-white/[0.015]">
+              <span className="truncate text-sm font-medium text-ink-100">{row.customer_name || `Customer #${row.customer_id}`}</span>
+              <span className="text-right font-mono text-xs text-ink-300 font-medium">{formatNumber(row.expected, { maximumFractionDigits: 4 })}</span>
               <Input
                 aria-label={`Collected for ${row.customer_name || `customer ${row.customer_id}`}`}
                 type="number"
@@ -139,17 +140,26 @@ export function CreateSettlementModal({ open, onClose, dispatchRequest, onCreate
             </div>
           ))}
         </div>
-        {errors.customers && <p className="text-xs text-danger-300">{errors.customers}</p>}
+        {errors.customers && <p className="text-xs text-rose-400">{errors.customers}</p>}
 
-        <div className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm sm:grid-cols-2">
-          <span className="text-ink-300">Expected {formatNumber(totalExpected, { maximumFractionDigits: 4 })}</span>
-          <span className="text-right text-ink-100">Collected {formatNumber(totalCollected, { maximumFractionDigits: 4 })}</span>
+        {/* Totals Summary Hero Box */}
+        <div className="grid gap-3 rounded-2xl border border-white/10 bg-gradient-to-r from-white/[0.03] to-white/[0.01] p-4 text-sm sm:grid-cols-2">
+          <div>
+            <p className="text-xs text-ink-400">Total Expected Invoices</p>
+            <p className="mt-0.5 font-mono text-base font-semibold text-ink-100">{formatNumber(totalExpected, { maximumFractionDigits: 4 })}</p>
+          </div>
+          <div className="sm:text-right">
+            <p className="text-xs text-ink-400">Total Collected Cash</p>
+            <p className="mt-0.5 font-mono text-base font-bold text-emerald-400">{formatNumber(totalCollected, { maximumFractionDigits: 4 })}</p>
+          </div>
         </div>
+
         <Textarea
           label="Closeout notes"
           value={form.notes}
           onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
           rows={3}
+          placeholder="Record notes about collection or exceptions..."
         />
       </form>
     </Modal>

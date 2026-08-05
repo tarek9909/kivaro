@@ -56,6 +56,7 @@ export function lineTotal(line) {
 
 export function orderPayloadFromForm(form) {
   return {
+    ...(form.salesman_id ? { salesman_id: Number(form.salesman_id) } : {}),
     warehouse_id: Number(form.warehouse_id),
     customer_id: Number(form.customer_id),
     order_date: form.order_date,

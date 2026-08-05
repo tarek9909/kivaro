@@ -28,6 +28,7 @@ export default function ExpenseCategoriesTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(ACCOUNTING_PERMISSIONS.view);
   const canManage = hasPermission(ACCOUNTING_PERMISSIONS.manage);
+  const canRead = canView || canManage;
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -47,12 +48,10 @@ export default function ExpenseCategoriesTab() {
     return params;
   }, [debouncedSearch, status, page, limit]);
 
-  // GET /expense-categories requires accounting.view; do not call it for
-  // manage-only operators.
   const listQuery = useQuery({
     queryKey: ['accounting', 'expense-categories', queryParams],
     queryFn: () => api.accounting.expenseCategories.list(queryParams),
-    enabled: canView
+    enabled: canRead
   });
 
   const deleteMutation = useMutation({
@@ -135,7 +134,7 @@ export default function ExpenseCategoriesTab() {
         </Button>
       </div>
 
-      {!canView ? (
+      {!canRead ? (
         <GlassPanel>
           <GlassPanelBody>
             <EmptyState

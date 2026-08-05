@@ -109,6 +109,14 @@ export const useAuthStore = create((set, get) => ({
     } catch {
       // session is cleared in finally regardless
     } finally {
+      try {
+        for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+          const key = window.localStorage.key(index);
+          if (key?.startsWith('kivaro.pos.register-draft.v1')) window.localStorage.removeItem(key);
+        }
+      } catch {
+        // Keep logout reliable if storage is unavailable.
+      }
       tokenStorage.clearSession();
       set({
         user: null,

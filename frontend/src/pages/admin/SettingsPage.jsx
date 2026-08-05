@@ -14,9 +14,7 @@ export default function SettingsPage() {
         description="Manage the company profile details."
       />
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        {canEdit && <CompanyProfileCard canEdit={canEdit} />}
-      </div>
+      {canEdit && <CompanyProfileCard canEdit={canEdit} />}
     </div>
   );
 }

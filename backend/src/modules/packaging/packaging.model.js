@@ -78,7 +78,6 @@ async function findGroupById(id, connection = null) {
   const rows = await execute(connection,
     `SELECT pg.*, input_item.name AS input_item_name, input_item.item_kind AS input_item_kind,
         input_item.stock_mode AS input_stock_mode, input_item.kg_per_carton AS input_kg_per_carton,
-        input_item.loose_units_per_carton AS input_loose_units_per_carton,
         w.name AS default_warehouse_name
      FROM packaging_groups pg
      JOIN items input_item ON input_item.id = pg.input_item_id
@@ -94,7 +93,6 @@ async function lockGroupById(connection, id) {
   const [rows] = await connection.execute(
     `SELECT pg.*, input_item.name AS input_item_name, input_item.item_kind AS input_item_kind,
         input_item.stock_mode AS input_stock_mode, input_item.kg_per_carton AS input_kg_per_carton,
-        input_item.loose_units_per_carton AS input_loose_units_per_carton,
         input_item.status AS input_item_status
      FROM packaging_groups pg
      JOIN items input_item ON input_item.id = pg.input_item_id
@@ -453,7 +451,7 @@ async function listSaleCatalogEntries(input = {}) {
 async function findSaleCatalogEntryById(id, connection = null) {
   const rows = await execute(connection,
     `SELECT sce.*, item.name AS item_name, item.item_kind AS item_kind, item.stock_mode AS item_stock_mode,
-        item.kg_per_carton, item.loose_units_per_carton, item.status AS item_status,
+        item.kg_per_carton, item.status AS item_status,
         pg.name AS packaging_group_name, pg.status AS packaging_group_status
      FROM sale_catalog_entries sce
      LEFT JOIN items item ON item.id = sce.item_id
@@ -524,12 +522,103 @@ async function updateSaleCatalogEntry(id, data, connection = null) {
   return findSaleCatalogEntryById(id, connection);
 }
 
+async function createReadyShelfStock(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO ready_shelf_stocks (
+      store_id, packaging_operation_id, packaging_group_id, warehouse_id, input_item_id,
+      packaging_item_id, unit_weight_kg, quantity, total_cost, remaining_cost, state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [data.store_id, data.packaging_operation_id, data.packaging_group_id, data.warehouse_id,
+      data.input_item_id, data.packaging_item_id, data.unit_weight_kg, data.quantity,
+      data.total_cost, data.remaining_cost, data.state || 'reusable']
+  );
+  return result.insertId;
+}
+
+async function createReadyShelfStockMovement(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO ready_shelf_stock_movements (
+      store_id, warehouse_id, ready_shelf_stock_id, movement_type, quantity_change, quantity_before, quantity_after,
+      state_before, state_after, reference_type, reference_id, notes, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    [data.store_id, data.warehouse_id, data.ready_shelf_stock_id, data.movement_type, data.quantity_change, data.quantity_before,
+      data.quantity_after, nullable(data.state_before), nullable(data.state_after),
+      nullable(data.reference_type), nullable(data.reference_id), nullable(data.notes), nullable(data.created_by)]
+  );
+  return result.insertId;
+}
+
+async function createPackagingShelfRemainder(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO packaging_shelf_remainders (
+      store_id, source_packaging_operation_id, packaging_group_id, warehouse_id, input_item_id,
+      remaining_kg, remaining_cost
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [data.store_id, data.source_packaging_operation_id, data.packaging_group_id, data.warehouse_id,
+      data.input_item_id, data.remaining_kg, data.remaining_cost]
+  );
+  return result.insertId;
+}
+
+async function lockReusableShelfStocks(connection, input) {
+  const [rows] = await connection.execute(
+    `SELECT * FROM ready_shelf_stocks
+     WHERE warehouse_id = ? AND input_item_id = ? AND packaging_group_id = ?
+       AND packaging_item_id = ? AND state = 'reusable' AND quantity > 0
+     ORDER BY created_at ASC, id ASC FOR UPDATE`,
+    [input.warehouse_id, input.input_item_id, input.packaging_group_id, input.packaging_item_id]
+  );
+  return rows;
+}
+
+async function lockReusableShelfRemainders(connection, input) {
+  const [rows] = await connection.execute(
+    `SELECT * FROM packaging_shelf_remainders
+     WHERE warehouse_id = ? AND input_item_id = ? AND packaging_group_id = ? AND remaining_kg > 0
+     ORDER BY created_at ASC, id ASC FOR UPDATE`,
+    [input.warehouse_id, input.input_item_id, input.packaging_group_id]
+  );
+  return rows;
+}
+
+async function updateReadyShelfStock(connection, id, data) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  if (entries.length) await connection.execute(
+    `UPDATE ready_shelf_stocks SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
+    [...entries.map(([, value]) => value), id]
+  );
+}
+
+async function updatePackagingShelfRemainder(connection, id, data) {
+  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  if (entries.length) await connection.execute(
+    `UPDATE packaging_shelf_remainders SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
+    [...entries.map(([, value]) => value), id]
+  );
+}
+
+async function listReadyShelfStocks(input = {}) {
+  const pagination = getPagination(input);
+  const filters = []; const params = [];
+  for (const [column, key] of [['rss.store_id', 'store_id'], ['rss.warehouse_id', 'warehouse_id'], ['rss.packaging_group_id', 'packaging_group_id'], ['rss.packaging_item_id', 'packaging_item_id'], ['rss.state', 'state']]) {
+    if (input[key]) { filters.push(`${column} = ?`); params.push(input[key]); }
+  }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const joins = `JOIN items p ON p.id = rss.packaging_item_id JOIN items raw ON raw.id = rss.input_item_id JOIN warehouses w ON w.id = rss.warehouse_id`;
+  const count = await query(`SELECT COUNT(*) AS total FROM ready_shelf_stocks rss ${joins} ${where}`, params);
+  const rows = await query(`SELECT rss.*, p.name AS packaging_item_name, raw.name AS input_item_name, w.name AS warehouse_name FROM ready_shelf_stocks rss ${joins} ${where} ORDER BY rss.created_at ASC, rss.id ASC ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`, input.allRows ? params : [...params, pagination.limit, pagination.offset]);
+  return { rows, meta: getPaginationMeta({ ...pagination, total: Number(count[0]?.total || 0) }) };
+}
+
 module.exports = {
   createGroup,
   createOperation,
   createOperationComponent,
+  createPackagingShelfRemainder,
   createReadyStockContainer,
   createReadyStockMovement,
+  createReadyShelfStock,
+  createReadyShelfStockMovement,
   createSaleCatalogEntry,
   deactivateGroup,
   findGroupById,
@@ -540,12 +629,17 @@ module.exports = {
   listGroups,
   listOperations,
   listReadyStockContainers,
+  listReadyShelfStocks,
   listSaleCatalogEntries,
   lockGroupById,
+  lockReusableShelfRemainders,
+  lockReusableShelfStocks,
   lockReadyStockContainer,
   lockReadyContainersForAllocation,
   replaceGroupComponents,
   updateGroup,
   updateReadyStockContainer,
+  updateReadyShelfStock,
+  updatePackagingShelfRemainder,
   updateSaleCatalogEntry
 };

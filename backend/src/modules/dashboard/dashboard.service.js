@@ -1,6 +1,12 @@
 const { resolveStoreId } = require('../../utils/storeScope');
 const model = require('./dashboard.model');
 
+function hasPermission(actor = {}, permission) {
+  if (actor.is_superadmin) return true;
+  const permissions = new Set(actor.permissions || []);
+  return permissions.has('*') || permissions.has(permission);
+}
+
 function percentage(done, total) {
   const denominator = Number(total || 0);
   if (denominator <= 0) return 0;
@@ -60,6 +66,7 @@ function normalizeFinancials(row = {}) {
     gift_cogs: number(row.gift_cogs),
     operating_expenses: number(row.operating_expenses),
     commission_expenses: number(row.commission_expenses),
+    payroll_expenses: number(row.payroll_expenses),
     debt_write_offs: number(row.debt_write_offs),
     gross_profit_after_gifts: number(row.gross_profit_after_gifts),
     net_profit: number(row.net_profit)
@@ -73,17 +80,6 @@ function normalizeChart(rows = []) {
     sales_cogs: number(row.sales_cogs),
     gift_cogs: number(row.gift_cogs),
     gross_profit_after_gifts: number(row.gross_profit_after_gifts)
-  }));
-}
-
-function normalizePosWork(rows = []) {
-  return rows.map((row) => ({
-    ...row,
-    pending_order_count: number(row.pending_order_count),
-    pending_customer_count: number(row.pending_customer_count),
-    pending_sale_total: number(row.pending_sale_total),
-    requested_gift_quantity: number(row.requested_gift_quantity),
-    requested_gift_line_count: number(row.requested_gift_line_count)
   }));
 }
 
@@ -106,7 +102,6 @@ async function getDashboard(actor = {}, input = {}) {
       financial: {},
       benchmarks: [],
       activity: [],
-      pending_pos_work: [],
       packaging_shortages: [],
       sales_chart: [],
       notifications: [],
@@ -115,6 +110,21 @@ async function getDashboard(actor = {}, input = {}) {
   }
 
   const filters = normalizeDateRange(input);
+  const canSeeFinance = hasPermission(actor, 'accounting.view') || hasPermission(actor, 'reports.view');
+  const canSeeInventory = hasPermission(actor, 'inventory.view');
+  const canSeePackaging = canSeeInventory
+    || hasPermission(actor, 'inventory.create')
+    || hasPermission(actor, 'inventory.update')
+    || hasPermission(actor, 'inventory.delete')
+    || hasPermission(actor, 'stock.adjust');
+  const canSeeActivity = canSeeInventory
+    || hasPermission(actor, 'stock.movements')
+    || hasPermission(actor, 'stock.adjust');
+  const canSeeDispatch = [
+    'dispatch.view', 'dispatch.create', 'dispatch.approve', 'dispatch.settle', 'dispatch.print',
+    'delivery.release', 'delivery.dispatch', 'delivery.record_returns', 'delivery.closeout',
+    'finance.settle_deliveries'
+  ].some((permission) => hasPermission(actor, permission));
   const [
     summaryRow,
     financialRow,
@@ -122,7 +132,6 @@ async function getDashboard(actor = {}, input = {}) {
     activity,
     notifications,
     packagingShortages,
-    pendingPosWork,
     salesChart,
     packagingShortageCount
   ] = await Promise.all([
@@ -132,11 +141,10 @@ async function getDashboard(actor = {}, input = {}) {
     model.getActivity(storeId),
     model.getNotifications(storeId, actor.id),
     model.getPackagingShortages(storeId),
-    model.getPendingPosWork(storeId, filters),
     model.getSalesChart(storeId, filters),
     model.getPackagingShortageCount(storeId)
   ]);
-  const financial = normalizeFinancials(financialRow);
+  const financial = canSeeFinance ? normalizeFinancials(financialRow) : {};
   const lowStockBalances = number(summaryRow.low_stock_balances);
   const totalStockBalances = number(summaryRow.stock_balance_count);
   const healthyStockBalances = Math.max(totalStockBalances - lowStockBalances, 0);
@@ -144,56 +152,50 @@ async function getDashboard(actor = {}, input = {}) {
   return {
     date_range: filters,
     summary: {
-      collections: number(summaryRow.collections),
-      cash_balance: number(summaryRow.cash_balance),
-      open_receivables: number(summaryRow.open_receivables),
-      active_dispatches: number(summaryRow.active_dispatches),
-      pending_pos_orders: number(summaryRow.pending_pos_orders),
-      pending_pos_salesmen: number(summaryRow.pending_pos_salesmen),
-      packaging_shortage_count: number(packagingShortageCount),
-      raw_stock_value: number(summaryRow.raw_stock_value),
-      packaging_stock_value: number(summaryRow.packaging_stock_value),
-      ready_stock_value: number(summaryRow.ready_stock_value),
-      stock_balance_count: totalStockBalances,
-      low_stock_balances: lowStockBalances,
-      healthy_stock_balances: healthyStockBalances,
-      ...financial
+      ...(canSeeFinance ? {
+        collections: number(summaryRow.collections),
+        cash_balance: number(summaryRow.cash_balance),
+        open_receivables: number(summaryRow.open_receivables),
+        ...financial
+      } : {}),
+      ...(canSeeDispatch ? { active_dispatches: number(summaryRow.active_dispatches) } : {}),
+      ...(canSeePackaging ? { packaging_shortage_count: number(packagingShortageCount) } : {}),
+      ...(canSeeInventory ? {
+        raw_stock_value: number(summaryRow.raw_stock_value),
+        packaging_stock_value: number(summaryRow.packaging_stock_value),
+        ready_stock_value: number(summaryRow.ready_stock_value),
+        stock_balance_count: totalStockBalances,
+        low_stock_balances: lowStockBalances,
+        healthy_stock_balances: healthyStockBalances
+      } : {}),
     },
     financial,
     benchmarks: [
-      {
+      ...(canSeeDispatch ? [{
         key: 'dispatch_completion',
         label: 'Dispatch completion',
         value: percentage(benchmarkRow.dispatch_done, benchmarkRow.dispatch_total),
         done: number(benchmarkRow.dispatch_done),
         total: number(benchmarkRow.dispatch_total)
-      },
-      {
-        key: 'pos_conversion',
-        label: 'POS orders converted',
-        value: percentage(benchmarkRow.pos_converted, benchmarkRow.pos_total),
-        done: number(benchmarkRow.pos_converted),
-        total: number(benchmarkRow.pos_total)
-      },
-      {
+      }] : []),
+      ...(canSeeInventory ? [{
         key: 'stock_health',
         label: 'Stock balances above reorder level',
         value: percentage(healthyStockBalances, totalStockBalances),
         done: healthyStockBalances,
         total: totalStockBalances
-      },
-      {
+      }] : []),
+      ...(canSeeFinance ? [{
         key: 'collection_rate',
         label: 'Collections against dispatched value',
         value: percentage(benchmarkRow.collected_value, benchmarkRow.dispatched_value),
         done: number(benchmarkRow.collected_value),
         total: number(benchmarkRow.dispatched_value)
-      }
+      }] : [])
     ],
-    activity: activity.map(formatMovement),
-    pending_pos_work: normalizePosWork(pendingPosWork),
-    packaging_shortages: normalizeShortages(packagingShortages),
-    sales_chart: normalizeChart(salesChart),
+    activity: canSeeActivity ? activity.map(formatMovement) : [],
+    packaging_shortages: canSeePackaging ? normalizeShortages(packagingShortages) : [],
+    sales_chart: canSeeFinance ? normalizeChart(salesChart) : [],
     notifications
   };
 }
@@ -204,7 +206,6 @@ module.exports = {
     normalizeDateRange,
     normalizeFinancials,
     normalizeChart,
-    normalizePosWork,
     normalizeShortages
   }
 };

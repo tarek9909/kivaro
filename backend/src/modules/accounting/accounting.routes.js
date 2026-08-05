@@ -4,24 +4,25 @@ const schemas = require('./accounting.schema');
 const asyncHandler = require('../../utils/asyncHandler');
 const validate = require('../../middleware/validate.middleware');
 const { authenticate } = require('../../middleware/auth.middleware');
-const { requirePermission } = require('../../middleware/permission.middleware');
+const { requireAnyPermission, requirePermission } = require('../../middleware/permission.middleware');
 
 const router = express.Router();
 
 router.use(['/expense-categories', '/expenses', '/cash-accounts', '/financial-transactions', '/salesman-balances'], authenticate);
 
-router.get('/expense-categories', requirePermission('accounting.view'), validate(schemas.listSchema), asyncHandler(controller.listExpenseCategories));
+router.get('/expense-categories', requireAnyPermission('accounting.view', 'accounting.manage'), validate(schemas.listSchema), asyncHandler(controller.listExpenseCategories));
 router.post('/expense-categories', requirePermission('accounting.manage'), validate(schemas.expenseCategorySchema), asyncHandler(controller.createExpenseCategory));
 router.patch('/expense-categories/:id', requirePermission('accounting.manage'), validate(schemas.expenseCategoryUpdateSchema), asyncHandler(controller.updateExpenseCategory));
 router.delete('/expense-categories/:id', requirePermission('accounting.manage'), validate(schemas.idSchema), asyncHandler(controller.deleteExpenseCategory));
 
-router.get('/expenses', requirePermission('accounting.view'), validate(schemas.listSchema), asyncHandler(controller.listExpenses));
+router.get('/expenses', requireAnyPermission('accounting.view', 'accounting.manage'), validate(schemas.listSchema), asyncHandler(controller.listExpenses));
 router.post('/expenses', requirePermission('accounting.manage'), validate(schemas.expenseSchema), asyncHandler(controller.createExpense));
-router.get('/expenses/:id', requirePermission('accounting.view'), validate(schemas.idSchema), asyncHandler(controller.getExpense));
+router.get('/expenses/:id', requireAnyPermission('accounting.view', 'accounting.manage'), validate(schemas.idSchema), asyncHandler(controller.getExpense));
 router.patch('/expenses/:id', requirePermission('accounting.manage'), validate(schemas.expenseUpdateSchema), asyncHandler(controller.updateExpense));
 router.delete('/expenses/:id', requirePermission('accounting.manage'), validate(schemas.idSchema), asyncHandler(controller.deleteExpense));
 
 router.get('/cash-accounts', requirePermission('accounting.view'), validate(schemas.listSchema), asyncHandler(controller.listCashAccounts));
+router.get('/cash-accounts/payment-options', requireAnyPermission('accounting.view', 'accounting.manage', 'debts.manage', 'dispatch.settle', 'finance.settle_deliveries', 'commissions.manage'), validate(schemas.paymentOptionsSchema), asyncHandler(controller.listPaymentOptions));
 router.post('/cash-accounts', requirePermission('accounting.manage'), validate(schemas.cashAccountSchema), asyncHandler(controller.createCashAccount));
 router.patch('/cash-accounts/:id', requirePermission('accounting.manage'), validate(schemas.cashAccountUpdateSchema), asyncHandler(controller.updateCashAccount));
 

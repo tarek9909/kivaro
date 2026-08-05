@@ -14,6 +14,15 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   PRIMARY KEY (migration_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS schema_migration_runs (
+  migration_name VARCHAR(255) NOT NULL,
+  status ENUM('running','completed','failed') NOT NULL,
+  started_at DATETIME NOT NULL,
+  completed_at DATETIME NULL,
+  error_message TEXT NULL,
+  PRIMARY KEY (migration_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS stores (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name VARCHAR(150) NOT NULL,
@@ -272,19 +281,45 @@ CREATE TABLE IF NOT EXISTS salesmen (
   vehicle_number VARCHAR(100) NULL,
   national_id VARCHAR(100) NULL,
   base_salary DECIMAL(18,4) NOT NULL DEFAULT 0,
+  commission_rule_id BIGINT UNSIGNED NULL,
   status ENUM('active','inactive') NOT NULL DEFAULT 'active',
   joined_at DATE NULL,
+  employment_end_date DATE NULL,
+  employment_end_date_is_estimated TINYINT(1) NOT NULL DEFAULT 0,
+  deactivated_at DATETIME NULL,
+  deactivated_by BIGINT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_salesmen_user (user_id),
   KEY idx_salesmen_store_status (store_id, status),
+  KEY idx_salesmen_commission_rule (commission_rule_id),
   CONSTRAINT fk_salesmen_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_salesmen_user
     FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_salesmen_deactivated_by
+    FOREIGN KEY (deactivated_by) REFERENCES users(id)
     ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS salesman_salary_rates (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  salesman_id BIGINT UNSIGNED NOT NULL,
+  monthly_salary DECIMAL(18,4) NOT NULL DEFAULT 0,
+  effective_from DATE NOT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_salesman_salary_rate_effective (salesman_id, effective_from),
+  KEY idx_salesman_salary_rate_lookup (store_id, salesman_id, effective_from),
+  CONSTRAINT fk_salary_rate_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_salary_rate_salesman FOREIGN KEY (salesman_id) REFERENCES salesmen(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_salary_rate_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT chk_salary_rate_nonnegative CHECK (monthly_salary >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS salesman_sublocations (
@@ -454,15 +489,12 @@ CREATE TABLE IF NOT EXISTS items (
   name VARCHAR(150) NOT NULL,
   code VARCHAR(80) NOT NULL,
   item_kind ENUM('normal','packaging') NOT NULL,
-  stock_mode ENUM('carton_weight','weight','piece') NOT NULL,
+  stock_mode ENUM('carton','weight','piece') NOT NULL,
   kg_per_carton DECIMAL(18,4) NULL,
-  loose_units_per_carton INT UNSIGNED NULL,
   max_content_weight_kg DECIMAL(18,4) NULL,
   description TEXT NULL,
   default_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
   default_selling_price DECIMAL(18,4) NULL,
-  carton_selling_price DECIMAL(18,4) NULL,
-  loose_unit_selling_price DECIMAL(18,4) NULL,
   reorder_level DECIMAL(18,4) NOT NULL DEFAULT 0,
   status ENUM('active','inactive') NOT NULL DEFAULT 'active',
   created_by BIGINT UNSIGNED NULL,
@@ -494,14 +526,12 @@ CREATE TABLE IF NOT EXISTS items (
     (item_kind = 'packaging'
       AND stock_mode = 'piece'
       AND kg_per_carton IS NULL
-      AND loose_units_per_carton IS NULL)
-    OR (item_kind = 'normal' AND stock_mode = 'carton_weight'
+    )
+    OR (item_kind = 'normal' AND stock_mode = 'carton'
       AND kg_per_carton > 0
-      AND loose_units_per_carton > 0
       AND max_content_weight_kg IS NULL)
     OR (item_kind = 'normal' AND stock_mode IN ('weight','piece')
       AND kg_per_carton IS NULL
-      AND loose_units_per_carton IS NULL
       AND max_content_weight_kg IS NULL)
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -544,8 +574,7 @@ CREATE TABLE IF NOT EXISTS carton_stock_lots (
   received_cartons INT UNSIGNED NOT NULL,
   remaining_cartons INT UNSIGNED NOT NULL,
   kg_per_carton DECIMAL(18,4) NOT NULL,
-  loose_units_per_carton INT UNSIGNED NOT NULL,
-  unit_cost_per_kg DECIMAL(18,4) NOT NULL DEFAULT 0,
+  unit_cost_per_carton DECIMAL(18,4) NOT NULL DEFAULT 0,
   source_type VARCHAR(100) NULL,
   source_id BIGINT UNSIGNED NULL,
   received_at DATETIME NOT NULL,
@@ -571,51 +600,7 @@ CREATE TABLE IF NOT EXISTS carton_stock_lots (
     received_cartons > 0
     AND remaining_cartons <= received_cartons
     AND kg_per_carton > 0
-    AND loose_units_per_carton > 0
-    AND unit_cost_per_kg >= 0
-  )
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS open_carton_shelves (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  store_id BIGINT UNSIGNED NOT NULL,
-  warehouse_id BIGINT UNSIGNED NOT NULL,
-  item_id BIGINT UNSIGNED NOT NULL,
-  carton_lot_id BIGINT UNSIGNED NOT NULL,
-  initial_loose_units INT UNSIGNED NOT NULL,
-  remaining_loose_units INT UNSIGNED NOT NULL,
-  loose_unit_weight_kg DECIMAL(18,6) NOT NULL,
-  status ENUM('open','closed') NOT NULL DEFAULT 'open',
-  active_shelf_key TINYINT GENERATED ALWAYS AS (
-    CASE WHEN status = 'open' THEN 1 ELSE NULL END
-  ) STORED,
-  opened_at DATETIME NOT NULL,
-  opened_by BIGINT UNSIGNED NULL,
-  closed_at DATETIME NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_open_carton_shelves_active (warehouse_id, item_id, active_shelf_key),
-  KEY idx_open_carton_shelves_lot (carton_lot_id),
-  CONSTRAINT fk_open_carton_shelves_store
-    FOREIGN KEY (store_id) REFERENCES stores(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_open_carton_shelves_warehouse
-    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_open_carton_shelves_item
-    FOREIGN KEY (item_id) REFERENCES items(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_open_carton_shelves_lot
-    FOREIGN KEY (carton_lot_id) REFERENCES carton_stock_lots(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_open_carton_shelves_opened_by
-    FOREIGN KEY (opened_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT chk_open_carton_shelves_quantities CHECK (
-    initial_loose_units > 0
-    AND remaining_loose_units <= initial_loose_units
-    AND loose_unit_weight_kg > 0
+    AND unit_cost_per_carton >= 0
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -636,7 +621,6 @@ CREATE TABLE IF NOT EXISTS item_stock_movements (
   reference_type VARCHAR(100) NULL,
   reference_id BIGINT UNSIGNED NULL,
   carton_stock_lot_id BIGINT UNSIGNED NULL,
-  open_carton_shelf_id BIGINT UNSIGNED NULL,
   notes TEXT NULL,
   created_by BIGINT UNSIGNED NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -645,7 +629,6 @@ CREATE TABLE IF NOT EXISTS item_stock_movements (
   KEY idx_item_stock_movements_item_created (item_id, created_at),
   KEY idx_item_stock_movements_reference (reference_type, reference_id),
   KEY idx_item_stock_movements_lot (carton_stock_lot_id),
-  KEY idx_item_stock_movements_shelf (open_carton_shelf_id),
   CONSTRAINT fk_item_stock_movements_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
@@ -657,9 +640,6 @@ CREATE TABLE IF NOT EXISTS item_stock_movements (
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT fk_item_stock_movements_lot
     FOREIGN KEY (carton_stock_lot_id) REFERENCES carton_stock_lots(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_item_stock_movements_shelf
-    FOREIGN KEY (open_carton_shelf_id) REFERENCES open_carton_shelves(id)
     ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_item_stock_movements_created_by
     FOREIGN KEY (created_by) REFERENCES users(id)
@@ -876,10 +856,82 @@ CREATE TABLE IF NOT EXISTS ready_stock_movements (
     ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS ready_shelf_stocks (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  packaging_operation_id BIGINT UNSIGNED NOT NULL,
+  packaging_group_id BIGINT UNSIGNED NOT NULL,
+  warehouse_id BIGINT UNSIGNED NOT NULL,
+  input_item_id BIGINT UNSIGNED NOT NULL,
+  packaging_item_id BIGINT UNSIGNED NOT NULL,
+  unit_weight_kg DECIMAL(18,4) NOT NULL,
+  quantity INT UNSIGNED NOT NULL,
+  reserved_quantity INT UNSIGNED NOT NULL DEFAULT 0,
+  total_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
+  remaining_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
+  state ENUM('reusable','gift') NOT NULL DEFAULT 'reusable',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_ready_shelf_stocks_available (warehouse_id, packaging_group_id, input_item_id, packaging_item_id, state),
+  CONSTRAINT fk_ready_shelf_stocks_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stocks_operation FOREIGN KEY (packaging_operation_id) REFERENCES packaging_operations(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stocks_group FOREIGN KEY (packaging_group_id) REFERENCES packaging_groups(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stocks_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stocks_input FOREIGN KEY (input_item_id) REFERENCES items(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stocks_packaging FOREIGN KEY (packaging_item_id) REFERENCES items(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT chk_ready_shelf_stocks_quantity CHECK (quantity > 0 AND reserved_quantity <= quantity AND unit_weight_kg > 0 AND remaining_cost >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ready_shelf_stock_movements (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  warehouse_id BIGINT UNSIGNED NOT NULL,
+  ready_shelf_stock_id BIGINT UNSIGNED NOT NULL,
+  movement_type VARCHAR(50) NOT NULL,
+  quantity_change INT NOT NULL,
+  quantity_before INT NOT NULL,
+  quantity_after INT NOT NULL,
+  state_before ENUM('reusable','gift') NOT NULL,
+  state_after ENUM('reusable','gift') NOT NULL,
+  reference_type VARCHAR(100) NULL,
+  reference_id BIGINT UNSIGNED NULL,
+  notes TEXT NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_ready_shelf_stock_movements_stock_created (ready_shelf_stock_id, created_at),
+  CONSTRAINT fk_ready_shelf_stock_movements_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stock_movements_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stock_movements_stock FOREIGN KEY (ready_shelf_stock_id) REFERENCES ready_shelf_stocks(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_ready_shelf_stock_movements_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS packaging_shelf_remainders (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  packaging_operation_id BIGINT UNSIGNED NOT NULL,
+  packaging_group_id BIGINT UNSIGNED NOT NULL,
+  warehouse_id BIGINT UNSIGNED NOT NULL,
+  input_item_id BIGINT UNSIGNED NOT NULL,
+  remaining_kg DECIMAL(18,4) NOT NULL,
+  remaining_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_packaging_shelf_remainders_available (warehouse_id, packaging_group_id, input_item_id, created_at),
+  CONSTRAINT fk_packaging_shelf_remainders_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_packaging_shelf_remainders_operation FOREIGN KEY (packaging_operation_id) REFERENCES packaging_operations(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_packaging_shelf_remainders_group FOREIGN KEY (packaging_group_id) REFERENCES packaging_groups(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_packaging_shelf_remainders_warehouse FOREIGN KEY (warehouse_id) REFERENCES warehouses(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_packaging_shelf_remainders_input FOREIGN KEY (input_item_id) REFERENCES items(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT chk_packaging_shelf_remainders_quantity CHECK (remaining_kg > 0 AND remaining_cost >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS sale_catalog_entries (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
-  entry_type ENUM('normal_carton','normal_loose_unit','normal_weight','normal_piece','ready_outer_carton','ready_inner_unit') NOT NULL,
+  entry_type ENUM('normal_carton','normal_weight','normal_piece','ready_outer_carton','ready_inner_unit') NOT NULL,
   item_id BIGINT UNSIGNED NULL,
   packaging_group_id BIGINT UNSIGNED NULL,
   display_name VARCHAR(255) NOT NULL,
@@ -1160,11 +1212,13 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE TABLE IF NOT EXISTS dispatch_requests (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
+  origin ENUM('direct','pos_requests') NOT NULL DEFAULT 'direct',
   dispatch_number VARCHAR(100) NOT NULL,
   salesman_id BIGINT UNSIGNED NOT NULL,
   warehouse_id BIGINT UNSIGNED NOT NULL,
   request_date DATE NOT NULL,
-  status ENUM('draft','pending_approval','approved','dispatched','partially_settled','completed','cancelled') NOT NULL DEFAULT 'draft',
+  status ENUM('draft','pending_approval','approved','delivery','partially_settled','completed','cancelled') NOT NULL DEFAULT 'draft',
+  lifecycle_status ENUM('pending','released','out_for_delivery','closeout_pending','settled','cancelled') NOT NULL DEFAULT 'pending',
   revision INT UNSIGNED NOT NULL DEFAULT 1,
   total_quantity DECIMAL(18,4) NOT NULL DEFAULT 0,
   subtotal_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
@@ -1189,6 +1243,8 @@ CREATE TABLE IF NOT EXISTS dispatch_requests (
   PRIMARY KEY (id),
   UNIQUE KEY uq_dispatch_requests_store_number (store_id, dispatch_number),
   KEY idx_dispatch_requests_store_status_date (store_id, status, request_date),
+  KEY idx_dispatch_requests_origin (store_id, origin),
+  KEY idx_dispatch_requests_lifecycle (store_id, lifecycle_status),
   KEY idx_dispatch_requests_salesman (salesman_id),
   CONSTRAINT fk_dispatch_requests_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
@@ -1216,6 +1272,37 @@ CREATE TABLE IF NOT EXISTS dispatch_requests (
     ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS salesman_balances (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  salesman_id BIGINT UNSIGNED NOT NULL,
+  dispatch_request_id BIGINT UNSIGNED NULL,
+  balance_date DATE NOT NULL,
+  expected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  collected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  debt_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  returned_stock_value DECIMAL(18,4) NOT NULL DEFAULT 0,
+  status ENUM('open','closed','cancelled') NOT NULL DEFAULT 'open',
+  closed_by BIGINT UNSIGNED NULL,
+  closed_at DATETIME NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_salesman_balances_status (store_id, salesman_id, status),
+  CONSTRAINT fk_salesman_balances_store
+    FOREIGN KEY (store_id) REFERENCES stores(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_balances_salesman
+    FOREIGN KEY (salesman_id) REFERENCES salesmen(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_balances_dispatch
+    FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_balances_closed_by
+    FOREIGN KEY (closed_by) REFERENCES users(id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS dispatch_customers (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
@@ -1223,18 +1310,23 @@ CREATE TABLE IF NOT EXISTS dispatch_customers (
   customer_id BIGINT UNSIGNED NOT NULL,
   location_id BIGINT UNSIGNED NOT NULL,
   sublocation_id BIGINT UNSIGNED NOT NULL,
+  discount_type ENUM('percent','fixed') NULL,
+  discount_value DECIMAL(18,4) NOT NULL DEFAULT 0,
+  discount_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   subtotal_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   vat_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   customer_total_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   collected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   debt_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   payment_status ENUM('pending','paid','partial_debt','debt','cancelled') NOT NULL DEFAULT 'pending',
+  fulfillment_status ENUM('pending','released','out_for_delivery','delivered','partial','returned','failed') NOT NULL DEFAULT 'pending',
   receipt_number VARCHAR(100) NULL,
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_dispatch_customers_dispatch_customer (dispatch_request_id, customer_id),
   KEY idx_dispatch_customers_store_customer (store_id, customer_id),
+  KEY idx_dispatch_customers_fulfillment (store_id, fulfillment_status),
   CONSTRAINT fk_dispatch_customers_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1252,6 +1344,93 @@ CREATE TABLE IF NOT EXISTS dispatch_customers (
     ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS delivery_target_credits (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  dispatch_request_id BIGINT UNSIGNED NOT NULL,
+  dispatch_customer_id BIGINT UNSIGNED NULL,
+  salesman_id BIGINT UNSIGNED NOT NULL,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  eligible_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  reference_date DATE NULL,
+  delivery_date DATE NULL,
+  status ENUM('pending','earned','cancelled') NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_delivery_target_credits_salesman_date (store_id, salesman_id, status, reference_date),
+  KEY idx_delivery_target_credits_dispatch (dispatch_request_id),
+  CONSTRAINT fk_delivery_target_credits_store
+    FOREIGN KEY (store_id) REFERENCES stores(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_delivery_target_credits_dispatch
+    FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_delivery_target_credits_dispatch_customer
+    FOREIGN KEY (dispatch_customer_id) REFERENCES dispatch_customers(id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_delivery_target_credits_salesman
+    FOREIGN KEY (salesman_id) REFERENCES salesmen(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_delivery_target_credits_customer
+    FOREIGN KEY (customer_id) REFERENCES customers(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS target_collection_credits (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  salesman_target_id BIGINT UNSIGNED NULL,
+  salesman_id BIGINT UNSIGNED NOT NULL,
+  sublocation_id BIGINT UNSIGNED NOT NULL,
+  dispatch_customer_id BIGINT UNSIGNED NULL,
+  source_type ENUM('settlement_customer','payment_allocation','return_adjustment') NOT NULL,
+  source_id BIGINT UNSIGNED NOT NULL,
+  amount DECIMAL(18,4) NOT NULL,
+  collection_date DATE NOT NULL,
+  original_collection_date DATE NULL,
+  is_late_exception TINYINT(1) NOT NULL DEFAULT 0,
+  notes VARCHAR(255) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_target_collection_source (source_type, source_id),
+  KEY idx_target_collection_target_date (salesman_target_id, collection_date),
+  KEY idx_target_collection_salesman_date (store_id, salesman_id, sublocation_id, collection_date),
+  CONSTRAINT fk_target_collection_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_target_collection_target FOREIGN KEY (salesman_target_id) REFERENCES salesman_targets(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_target_collection_salesman FOREIGN KEY (salesman_id) REFERENCES salesmen(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_target_collection_sublocation FOREIGN KEY (sublocation_id) REFERENCES sublocations(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_target_collection_dispatch_customer FOREIGN KEY (dispatch_customer_id) REFERENCES dispatch_customers(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS target_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  location_target_id BIGINT UNSIGNED NOT NULL,
+  salesman_target_id BIGINT UNSIGNED NULL,
+  event_type VARCHAR(80) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  payload JSON NULL,
+  created_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_target_events_target_created (location_target_id, created_at),
+  CONSTRAINT fk_target_events_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_target_events_location_target FOREIGN KEY (location_target_id) REFERENCES location_targets(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_target_events_salesman_target FOREIGN KEY (salesman_target_id) REFERENCES salesman_targets(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_target_events_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS target_notification_events (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  salesman_target_id BIGINT UNSIGNED NOT NULL,
+  milestone ENUM('assigned','50','100','above') NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_target_notification_milestone (salesman_target_id, milestone),
+  CONSTRAINT fk_target_notification_target FOREIGN KEY (salesman_target_id) REFERENCES salesman_targets(id) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS dispatch_items (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
@@ -1261,7 +1440,7 @@ CREATE TABLE IF NOT EXISTS dispatch_items (
   item_id BIGINT UNSIGNED NULL,
   packaging_group_id BIGINT UNSIGNED NULL,
   line_type ENUM('sale','free_gift') NOT NULL DEFAULT 'sale',
-  fulfillment_type ENUM('normal_carton','normal_loose_unit','normal_weight','normal_piece','ready_outer_carton','ready_inner_unit') NOT NULL,
+  fulfillment_type ENUM('normal_carton','normal_weight','normal_piece','ready_outer_carton','ready_inner_unit') NOT NULL,
   quantity DECIMAL(18,4) NOT NULL,
   unit_price DECIMAL(18,4) NOT NULL DEFAULT 0,
   unit_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
@@ -1273,11 +1452,11 @@ CREATE TABLE IF NOT EXISTS dispatch_items (
   item_name_snapshot VARCHAR(255) NOT NULL,
   unit_label_snapshot VARCHAR(50) NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_dispatch_items_request (dispatch_request_id),
+  KEY idx_dispatch_items_customer (dispatch_customer_id),
   KEY idx_dispatch_items_catalog (sale_catalog_entry_id),
-  KEY idx_dispatch_items_item (item_id),
-  KEY idx_dispatch_items_group (packaging_group_id),
+  KEY idx_dispatch_items_request_line (dispatch_request_id, line_type),
   CONSTRAINT fk_dispatch_items_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1296,8 +1475,7 @@ CREATE TABLE IF NOT EXISTS dispatch_items (
   CONSTRAINT fk_dispatch_items_group
     FOREIGN KEY (packaging_group_id) REFERENCES packaging_groups(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT chk_dispatch_items_quantity CHECK (quantity > 0 AND returned_quantity >= 0 AND returned_quantity <= quantity),
-  CONSTRAINT chk_dispatch_items_gift_price CHECK ((line_type = 'free_gift' AND unit_price = 0) OR line_type = 'sale')
+  CONSTRAINT chk_dispatch_items_quantity CHECK (quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS dispatch_line_allocations (
@@ -1307,21 +1485,20 @@ CREATE TABLE IF NOT EXISTS dispatch_line_allocations (
   warehouse_id BIGINT UNSIGNED NOT NULL,
   item_id BIGINT UNSIGNED NULL,
   carton_stock_lot_id BIGINT UNSIGNED NULL,
-  open_carton_shelf_id BIGINT UNSIGNED NULL,
+  ready_shelf_stock_id BIGINT UNSIGNED NULL,
   ready_stock_container_id BIGINT UNSIGNED NULL,
-  allocation_type ENUM('item_balance','carton_lot','open_carton_shelf','ready_stock_container') NOT NULL,
+  allocation_type ENUM('item_balance','carton_lot','ready_stock_container','ready_shelf_stock','open_shelf') NOT NULL,
   allocated_quantity DECIMAL(18,4) NOT NULL,
   inventory_quantity DECIMAL(18,4) NOT NULL,
   unit_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
   total_cost DECIMAL(18,4) NOT NULL DEFAULT 0,
-  status ENUM('reserved','dispatched','returned','released') NOT NULL DEFAULT 'reserved',
+  status ENUM('reserved','dispatched','returned','cancelled') NOT NULL DEFAULT 'reserved',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_dispatch_line_allocations_line (dispatch_item_id, status),
+  KEY idx_dispatch_line_allocations_item (dispatch_item_id),
   KEY idx_dispatch_line_allocations_lot (carton_stock_lot_id),
-  KEY idx_dispatch_line_allocations_shelf (open_carton_shelf_id),
-  KEY idx_dispatch_line_allocations_container (ready_stock_container_id),
+  KEY idx_dispatch_line_allocations_ready (ready_stock_container_id),
   CONSTRAINT fk_dispatch_line_allocations_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1331,19 +1508,19 @@ CREATE TABLE IF NOT EXISTS dispatch_line_allocations (
   CONSTRAINT fk_dispatch_line_allocations_warehouse
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_dispatch_line_allocations_catalog_item
+  CONSTRAINT fk_dispatch_line_allocations_inventory_item
     FOREIGN KEY (item_id) REFERENCES items(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT fk_dispatch_line_allocations_lot
     FOREIGN KEY (carton_stock_lot_id) REFERENCES carton_stock_lots(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_dispatch_line_allocations_shelf
-    FOREIGN KEY (open_carton_shelf_id) REFERENCES open_carton_shelves(id)
+  CONSTRAINT fk_dispatch_line_allocations_ready_shelf
+    FOREIGN KEY (ready_shelf_stock_id) REFERENCES ready_shelf_stocks(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_dispatch_line_allocations_container
+  CONSTRAINT fk_dispatch_line_allocations_ready_container
     FOREIGN KEY (ready_stock_container_id) REFERENCES ready_stock_containers(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT chk_dispatch_line_allocations_quantities CHECK (allocated_quantity > 0 AND inventory_quantity > 0 AND total_cost >= 0)
+  CONSTRAINT chk_dispatch_line_allocations_qty CHECK (allocated_quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS invoices (
@@ -1352,44 +1529,43 @@ CREATE TABLE IF NOT EXISTS invoices (
   dispatch_request_id BIGINT UNSIGNED NOT NULL,
   dispatch_customer_id BIGINT UNSIGNED NOT NULL,
   invoice_number VARCHAR(100) NOT NULL,
-  revision INT UNSIGNED NOT NULL,
+  revision INT UNSIGNED NOT NULL DEFAULT 1,
   status ENUM('issued','voided','cancelled') NOT NULL DEFAULT 'issued',
   invoice_date DATE NOT NULL,
   subtotal_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   vat_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
   total_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NULL,
   voided_by BIGINT UNSIGNED NULL,
   voided_at DATETIME NULL,
-  void_reason TEXT NULL,
-  created_by BIGINT UNSIGNED NULL,
+  void_reason VARCHAR(255) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_invoices_store_number (store_id, invoice_number),
-  UNIQUE KEY uq_invoices_customer_revision (dispatch_customer_id, revision),
-  KEY idx_invoices_dispatch_status (dispatch_request_id, status),
+  KEY idx_invoices_dispatch_customer_revision (dispatch_customer_id, revision),
+  KEY idx_invoices_store_status_date (store_id, status, invoice_date),
   CONSTRAINT fk_invoices_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_invoices_dispatch
     FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
+    ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT fk_invoices_customer
     FOREIGN KEY (dispatch_customer_id) REFERENCES dispatch_customers(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_invoices_voided_by
-    FOREIGN KEY (voided_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_invoices_created_by
     FOREIGN KEY (created_by) REFERENCES users(id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_invoices_voided_by
+    FOREIGN KEY (voided_by) REFERENCES users(id)
     ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS invoice_lines (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   invoice_id BIGINT UNSIGNED NOT NULL,
-  dispatch_item_id BIGINT UNSIGNED NULL,
-  line_type ENUM('sale','free_gift') NOT NULL,
+  dispatch_item_id BIGINT UNSIGNED NOT NULL,
+  line_type ENUM('sale','free_gift') NOT NULL DEFAULT 'sale',
   description VARCHAR(255) NOT NULL,
   quantity DECIMAL(18,4) NOT NULL,
   unit_label VARCHAR(50) NOT NULL,
@@ -1401,14 +1577,14 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
   line_total DECIMAL(18,4) NOT NULL DEFAULT 0,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  KEY idx_invoice_lines_invoice (invoice_id),
   KEY idx_invoice_lines_dispatch_item (dispatch_item_id),
   CONSTRAINT fk_invoice_lines_invoice
     FOREIGN KEY (invoice_id) REFERENCES invoices(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_invoice_lines_dispatch_item
     FOREIGN KEY (dispatch_item_id) REFERENCES dispatch_items(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT chk_invoice_lines_quantity CHECK (quantity > 0)
+    ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS dispatch_document_generations (
@@ -1417,14 +1593,13 @@ CREATE TABLE IF NOT EXISTS dispatch_document_generations (
   dispatch_request_id BIGINT UNSIGNED NOT NULL,
   dispatch_customer_id BIGINT UNSIGNED NULL,
   invoice_id BIGINT UNSIGNED NULL,
-  document_type ENUM('customer_table','quantity_table','invoice') NOT NULL,
-  revision INT UNSIGNED NOT NULL,
+  document_type ENUM('customer_table','quantity_table','invoice','customer_receipt','customer_acceptance_consent') NOT NULL,
+  revision INT UNSIGNED NOT NULL DEFAULT 1,
   generated_by BIGINT UNSIGNED NULL,
-  generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  file_name VARCHAR(255) NULL,
+  generated_at DATETIME NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
   PRIMARY KEY (id),
-  KEY idx_dispatch_document_generations_gate (dispatch_request_id, revision, document_type),
-  KEY idx_dispatch_document_generations_invoice (invoice_id),
+  KEY idx_dispatch_document_generations_lookup (dispatch_request_id, revision, document_type),
   CONSTRAINT fk_dispatch_document_generations_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
@@ -1433,10 +1608,10 @@ CREATE TABLE IF NOT EXISTS dispatch_document_generations (
     ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_dispatch_document_generations_customer
     FOREIGN KEY (dispatch_customer_id) REFERENCES dispatch_customers(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
+    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_dispatch_document_generations_invoice
     FOREIGN KEY (invoice_id) REFERENCES invoices(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
+    ON DELETE SET NULL ON UPDATE CASCADE,
   CONSTRAINT fk_dispatch_document_generations_generated_by
     FOREIGN KEY (generated_by) REFERENCES users(id)
     ON DELETE SET NULL ON UPDATE CASCADE
@@ -1468,6 +1643,34 @@ CREATE TABLE IF NOT EXISTS dispatch_returns (
   CONSTRAINT chk_dispatch_returns_quantity CHECK (returned_quantity > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS dispatch_return_credit_notes (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  dispatch_return_id BIGINT UNSIGNED NOT NULL,
+  dispatch_request_id BIGINT UNSIGNED NOT NULL,
+  dispatch_customer_id BIGINT UNSIGNED NOT NULL,
+  invoice_id BIGINT UNSIGNED NULL,
+  customer_id BIGINT UNSIGNED NOT NULL,
+  credit_note_number VARCHAR(100) NOT NULL,
+  credit_note_date DATE NOT NULL,
+  subtotal_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  vat_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  created_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_return_credit_note_return (dispatch_return_id),
+  UNIQUE KEY uq_return_credit_note_number (store_id, credit_note_number),
+  KEY idx_return_credit_note_date (store_id, credit_note_date),
+  CONSTRAINT fk_return_credit_note_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_return FOREIGN KEY (dispatch_return_id) REFERENCES dispatch_returns(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_dispatch FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_customer_line FOREIGN KEY (dispatch_customer_id) REFERENCES dispatch_customers(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_invoice FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_return_credit_note_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS dispatch_settlements (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
@@ -1481,6 +1684,8 @@ CREATE TABLE IF NOT EXISTS dispatch_settlements (
   total_returned_value DECIMAL(18,4) NOT NULL DEFAULT 0,
   status ENUM('draft','posted','cancelled') NOT NULL DEFAULT 'draft',
   settled_by BIGINT UNSIGNED NULL,
+  posted_at DATETIME NULL,
+  posted_at_is_estimated TINYINT(1) NOT NULL DEFAULT 0,
   notes TEXT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -1524,37 +1729,6 @@ CREATE TABLE IF NOT EXISTS dispatch_settlement_customers (
   CONSTRAINT fk_dispatch_settlement_customers_customer
     FOREIGN KEY (customer_id) REFERENCES customers(id)
     ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS salesman_balances (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  store_id BIGINT UNSIGNED NOT NULL,
-  salesman_id BIGINT UNSIGNED NOT NULL,
-  dispatch_request_id BIGINT UNSIGNED NULL,
-  balance_date DATE NOT NULL,
-  expected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
-  collected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
-  debt_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
-  returned_stock_value DECIMAL(18,4) NOT NULL DEFAULT 0,
-  status ENUM('open','closed','cancelled') NOT NULL DEFAULT 'open',
-  closed_by BIGINT UNSIGNED NULL,
-  closed_at DATETIME NULL,
-  notes TEXT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_salesman_balances_status (store_id, salesman_id, status),
-  CONSTRAINT fk_salesman_balances_store
-    FOREIGN KEY (store_id) REFERENCES stores(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_salesman_balances_salesman
-    FOREIGN KEY (salesman_id) REFERENCES salesmen(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_salesman_balances_dispatch
-    FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_salesman_balances_closed_by
-    FOREIGN KEY (closed_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS customer_debts (
@@ -1837,6 +2011,32 @@ CREATE TABLE IF NOT EXISTS commission_rules (
     ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+ALTER TABLE salesmen
+  ADD CONSTRAINT fk_salesmen_commission_rule
+    FOREIGN KEY (commission_rule_id) REFERENCES commission_rules(id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
+
+CREATE TABLE IF NOT EXISTS salesman_target_commission_snapshots (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  salesman_target_id BIGINT UNSIGNED NOT NULL,
+  commission_rule_id BIGINT UNSIGNED NULL,
+  rule_name VARCHAR(150) NOT NULL,
+  below_target_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
+  at_target_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
+  above_target_extra_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
+  captured_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  historical_backfill TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_target_commission_snapshot (salesman_target_id),
+  KEY idx_target_commission_snapshot_rule (commission_rule_id),
+  CONSTRAINT fk_target_commission_snapshot_target
+    FOREIGN KEY (salesman_target_id) REFERENCES salesman_targets(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_target_commission_snapshot_rule
+    FOREIGN KEY (commission_rule_id) REFERENCES commission_rules(id)
+    ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS commission_calculations (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
@@ -1883,6 +2083,7 @@ CREATE TABLE IF NOT EXISTS commission_payments (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
   commission_calculation_id BIGINT UNSIGNED NOT NULL,
+  payroll_payment_id BIGINT UNSIGNED NULL,
   salesman_id BIGINT UNSIGNED NOT NULL,
   cash_account_id BIGINT UNSIGNED NULL,
   payment_date DATE NOT NULL,
@@ -1894,6 +2095,7 @@ CREATE TABLE IF NOT EXISTS commission_payments (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_commission_payments_calculation (commission_calculation_id),
+  KEY idx_commission_payments_payroll (payroll_payment_id),
   KEY idx_commission_payments_cash_account (cash_account_id),
   CONSTRAINT fk_commission_payments_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
@@ -1913,135 +2115,74 @@ CREATE TABLE IF NOT EXISTS commission_payments (
   CONSTRAINT chk_commission_payments_amount CHECK (amount > 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS pos_orders (
+CREATE TABLE IF NOT EXISTS salesman_payroll_payments (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   store_id BIGINT UNSIGNED NOT NULL,
-  order_number VARCHAR(100) NOT NULL,
   salesman_id BIGINT UNSIGNED NOT NULL,
-  warehouse_id BIGINT UNSIGNED NOT NULL,
-  customer_id BIGINT UNSIGNED NOT NULL,
-  location_id BIGINT UNSIGNED NOT NULL,
-  sublocation_id BIGINT UNSIGNED NOT NULL,
-  status ENUM('pending','accepted','cancelled','converted','rejected') NOT NULL DEFAULT 'pending',
-  dispatch_request_id BIGINT UNSIGNED NULL,
-  order_date DATE NOT NULL,
+  period_month DATE NOT NULL,
+  payout_sequence INT UNSIGNED NOT NULL DEFAULT 1,
+  payout_kind ENUM('regular','commission_top_up') NOT NULL DEFAULT 'regular',
+  base_salary_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  salary_proration_days INT UNSIGNED NOT NULL DEFAULT 0,
+  salary_proration_period_days INT UNSIGNED NOT NULL DEFAULT 0,
+  salary_proration_policy VARCHAR(40) NOT NULL DEFAULT 'calendar_days',
+  commission_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  total_amount DECIMAL(18,4) NOT NULL,
+  cash_account_id BIGINT UNSIGNED NOT NULL,
+  payment_date DATE NOT NULL,
+  payment_method ENUM('cash','bank_transfer','cheque','other') NOT NULL DEFAULT 'cash',
+  reference_number VARCHAR(150) NULL,
+  paid_by BIGINT UNSIGNED NULL,
   notes TEXT NULL,
-  created_by BIGINT UNSIGNED NULL,
-  updated_by BIGINT UNSIGNED NULL,
-  accepted_by BIGINT UNSIGNED NULL,
-  accepted_at DATETIME NULL,
-  cancelled_by BIGINT UNSIGNED NULL,
-  cancelled_at DATETIME NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_pos_orders_store_number (store_id, order_number),
-  KEY idx_pos_orders_salesman_status (salesman_id, status, created_at),
-  KEY idx_pos_orders_customer (customer_id),
-  KEY idx_pos_orders_dispatch (dispatch_request_id),
-  CONSTRAINT fk_pos_orders_store
+  UNIQUE KEY uq_salesman_payroll_payout (salesman_id, period_month, payout_sequence),
+  KEY idx_salesman_payroll_salesman (salesman_id),
+  KEY idx_salesman_payroll_store_month (store_id, period_month),
+  KEY idx_salesman_payroll_kind (store_id, period_month, payout_kind),
+  CONSTRAINT fk_salesman_payroll_store FOREIGN KEY (store_id) REFERENCES stores(id)
+    ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_payroll_salesman FOREIGN KEY (salesman_id) REFERENCES salesmen(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_payroll_cash_account FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
+    ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT fk_salesman_payroll_paid_by FOREIGN KEY (paid_by) REFERENCES users(id)
+    ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT chk_salesman_payroll_total CHECK (total_amount > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE commission_payments
+  ADD CONSTRAINT fk_commission_payments_payroll
+  FOREIGN KEY (payroll_payment_id) REFERENCES salesman_payroll_payments(id)
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+CREATE TABLE IF NOT EXISTS salesman_balances (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  store_id BIGINT UNSIGNED NOT NULL,
+  salesman_id BIGINT UNSIGNED NOT NULL,
+  dispatch_request_id BIGINT UNSIGNED NULL,
+  balance_date DATE NOT NULL,
+  expected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  collected_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  debt_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  returned_stock_value DECIMAL(18,4) NOT NULL DEFAULT 0,
+  status ENUM('open','closed','cancelled') NOT NULL DEFAULT 'open',
+  closed_by BIGINT UNSIGNED NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_salesman_balances_salesman_date (salesman_id, balance_date),
+  CONSTRAINT fk_salesman_balances_store
     FOREIGN KEY (store_id) REFERENCES stores(id)
     ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_salesman
+  CONSTRAINT fk_salesman_balances_salesman
     FOREIGN KEY (salesman_id) REFERENCES salesmen(id)
     ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_warehouse
-    FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_customer
-    FOREIGN KEY (customer_id) REFERENCES customers(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_location
-    FOREIGN KEY (location_id) REFERENCES locations(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_sublocation
-    FOREIGN KEY (sublocation_id) REFERENCES sublocations(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_dispatch
+  CONSTRAINT fk_salesman_balances_dispatch
     FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
     ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_created_by
-    FOREIGN KEY (created_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_updated_by
-    FOREIGN KEY (updated_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_accepted_by
-    FOREIGN KEY (accepted_by) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_orders_cancelled_by
-    FOREIGN KEY (cancelled_by) REFERENCES users(id)
+  CONSTRAINT fk_salesman_balances_closed_by
+    FOREIGN KEY (closed_by) REFERENCES users(id)
     ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS pos_order_lines (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  pos_order_id BIGINT UNSIGNED NOT NULL,
-  sale_catalog_entry_id BIGINT UNSIGNED NOT NULL,
-  item_id BIGINT UNSIGNED NULL,
-  packaging_group_id BIGINT UNSIGNED NULL,
-  line_type ENUM('sale','free_gift') NOT NULL DEFAULT 'sale',
-  fulfillment_type ENUM('normal_carton','normal_loose_unit','normal_weight','normal_piece','ready_outer_carton','ready_inner_unit') NOT NULL,
-  quantity DECIMAL(18,4) NOT NULL,
-  unit_price DECIMAL(18,4) NOT NULL DEFAULT 0,
-  vat_rate DECIMAL(9,4) NOT NULL DEFAULT 0,
-  notes TEXT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_pos_order_lines_catalog (sale_catalog_entry_id),
-  CONSTRAINT fk_pos_order_lines_order
-    FOREIGN KEY (pos_order_id) REFERENCES pos_orders(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_lines_catalog
-    FOREIGN KEY (sale_catalog_entry_id) REFERENCES sale_catalog_entries(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_lines_item
-    FOREIGN KEY (item_id) REFERENCES items(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_lines_group
-    FOREIGN KEY (packaging_group_id) REFERENCES packaging_groups(id)
-    ON DELETE RESTRICT ON UPDATE CASCADE,
-  CONSTRAINT chk_pos_order_lines_quantity CHECK (quantity > 0),
-  CONSTRAINT chk_pos_order_lines_gift_price CHECK ((line_type = 'free_gift' AND unit_price = 0) OR line_type = 'sale')
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS pos_order_events (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  store_id BIGINT UNSIGNED NOT NULL,
-  pos_order_id BIGINT UNSIGNED NOT NULL,
-  event_type VARCHAR(50) NOT NULL,
-  actor_user_id BIGINT UNSIGNED NULL,
-  old_values_json JSON NULL,
-  new_values_json JSON NULL,
-  notes TEXT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_pos_order_events_order_created (pos_order_id, created_at),
-  KEY idx_pos_order_events_store_created (store_id, created_at),
-  CONSTRAINT fk_pos_order_events_store
-    FOREIGN KEY (store_id) REFERENCES stores(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_events_order
-    FOREIGN KEY (pos_order_id) REFERENCES pos_orders(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_events_actor
-    FOREIGN KEY (actor_user_id) REFERENCES users(id)
-    ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS pos_order_dispatch_links (
-  pos_order_id BIGINT UNSIGNED NOT NULL,
-  dispatch_request_id BIGINT UNSIGNED NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (pos_order_id, dispatch_request_id),
-  KEY idx_pos_order_dispatch_links_dispatch (dispatch_request_id),
-  CONSTRAINT fk_pos_order_dispatch_links_order
-    FOREIGN KEY (pos_order_id) REFERENCES pos_orders(id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_pos_order_dispatch_links_dispatch
-    FOREIGN KEY (dispatch_request_id) REFERENCES dispatch_requests(id)
-    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Canonical item/ready stock views.  Reports and dashboards consume these instead
@@ -2180,28 +2321,16 @@ SELECT
   lt.period_start,
   lt.period_end,
   st.target_amount,
-  COALESCE(SUM(CASE
-    WHEN dr.status IN ('dispatched', 'partially_settled', 'completed')
-      AND DATE(COALESCE(dr.dispatched_at, dr.request_date)) BETWEEN lt.period_start AND lt.period_end
-      THEN di.line_total * GREATEST((di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0), 0)
-    ELSE 0
-  END), 0) AS achieved_sales_amount,
-  CASE WHEN st.target_amount = 0 THEN 0 ELSE ROUND((COALESCE(SUM(CASE
-    WHEN dr.status IN ('dispatched', 'partially_settled', 'completed')
-      AND DATE(COALESCE(dr.dispatched_at, dr.request_date)) BETWEEN lt.period_start AND lt.period_end
-      THEN di.line_total * GREATEST((di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0), 0)
-    ELSE 0
-  END), 0) / st.target_amount) * 100, 2) END AS achievement_percentage
+  COALESCE(SUM(tcc.amount), 0) AS achieved_sales_amount,
+  CASE WHEN st.target_amount = 0 THEN 0 ELSE ROUND((COALESCE(SUM(tcc.amount), 0) / st.target_amount) * 100, 2) END AS achievement_percentage
 FROM salesman_targets st
 JOIN salesmen s ON s.id = st.salesman_id
 JOIN sublocation_targets slt ON slt.id = st.sublocation_target_id
 JOIN location_targets lt ON lt.id = slt.location_target_id
 JOIN sublocations sl ON sl.id = slt.sublocation_id
 JOIN locations l ON l.id = sl.location_id
-LEFT JOIN dispatch_requests dr ON dr.salesman_id = st.salesman_id
-LEFT JOIN dispatch_customers dc ON dc.dispatch_request_id = dr.id AND dc.sublocation_id = sl.id
-LEFT JOIN dispatch_items di ON di.dispatch_customer_id = dc.id AND di.line_type = 'sale'
-WHERE st.status = 'active'
+LEFT JOIN target_collection_credits tcc ON tcc.salesman_target_id = st.id
+WHERE st.status IN ('active', 'closed')
 GROUP BY st.id, st.store_id, s.id, s.full_name, s.base_salary, l.id, l.name, sl.id, sl.name,
          lt.target_period, lt.period_start, lt.period_end, st.target_amount;
 
@@ -2254,12 +2383,16 @@ INSERT INTO permissions (id, module, action, permission_key, description) VALUES
   (43, 'audit_logs', 'view', 'audit_logs.view', 'View audit logs'),
   (44, 'settings', 'manage', 'settings.manage', 'Manage system settings'),
   (45, 'superadmin', 'manage', 'superadmin.manage', 'Manage stores and module availability'),
-  (46, 'pos', 'own_orders', 'pos.own_orders', 'Create and manage own pending POS orders'),
-  (47, 'pos', 'review', 'pos.review', 'Review POS orders'),
-  (48, 'pos', 'accept', 'pos.accept', 'Accept POS orders into dispatches'),
   (49, 'pos', 'create_customers', 'pos.create_customers', 'Create POS customers in assigned territories'),
   (50, 'pos', 'request_gifts', 'pos.request_gifts', 'Request free gifts in POS'),
-  (51, 'salesman_workspace', 'view', 'salesman_workspace.view', 'View own salesman workspace')
+  (51, 'salesman_workspace', 'view', 'salesman_workspace.view', 'View own salesman workspace'),
+  (53, 'pos', 'create_own', 'pos.create_own', 'Create and edit own direct Mini POS dispatch drafts'),
+  (54, 'pos', 'create_for_salesman', 'pos.create_for_salesman', 'Create and edit direct Mini POS dispatch drafts for selected salesmen'),
+  (56, 'dispatch', 'release', 'delivery.release', 'Release a pending delivery batch and lock edits'),
+  (57, 'dispatch', 'dispatch', 'delivery.dispatch', 'Execute stock-consuming delivery transition'),
+  (58, 'dispatch', 'record_returns', 'delivery.record_returns', 'Record customer and line delivery returns'),
+  (59, 'dispatch', 'settle_deliveries', 'finance.settle_deliveries', 'Perform delivery settlement, payment, refund, and debt closeout'),
+  (60, 'dispatch', 'closeout', 'delivery.closeout', 'Submit a delivery closeout for collection, debt, and review')
 ON DUPLICATE KEY UPDATE module = VALUES(module), action = VALUES(action), description = VALUES(description);
 
 INSERT INTO roles (id, store_id, name, display_name, description, is_system_role, status) VALUES
@@ -2282,6 +2415,7 @@ SELECT 2, id FROM permissions WHERE permission_key <> 'superadmin.manage';
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT 3, id FROM permissions WHERE permission_key IN (
   'dashboard.view','customers.view','dispatch.view','dispatch.approve','dispatch.settle','dispatch.print',
+  'delivery.release','delivery.dispatch','delivery.record_returns','finance.settle_deliveries',
   'invoices.view','invoices.print','accounting.view','accounting.manage','debts.manage','commissions.manage',
   'reports.view','reports.export','salesman_workspace.view'
 );
@@ -2297,7 +2431,7 @@ SELECT 4, id FROM permissions WHERE permission_key IN (
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT 5, id FROM permissions WHERE permission_key IN (
   'dashboard.view','customers.view','customers.create',
-  'pos.own_orders','pos.create_customers','pos.request_gifts','salesman_workspace.view'
+  'pos.create_own','pos.create_customers','pos.request_gifts','salesman_workspace.view'
 );
 
 INSERT IGNORE INTO role_permissions (role_id, permission_id)
@@ -2364,6 +2498,7 @@ INSERT INTO store_modules (store_id, module_key, enabled) VALUES
   (1, 'payments.receipts', 1),
   (1, 'commissions', 1),
   (1, 'commissions.calculations', 1),
+  (1, 'commissions.payroll', 1),
   (1, 'commissions.rules', 1),
   (1, 'reports', 1),
   (1, 'reports.current-stock', 1),
@@ -2392,11 +2527,37 @@ INSERT INTO store_modules (store_id, module_key, enabled) VALUES
   (1, 'roles', 1)
 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled);
 
+CREATE TABLE IF NOT EXISTS scheduler_heartbeats (
+  scheduler_name VARCHAR(100) NOT NULL,
+  last_started_at DATETIME NOT NULL,
+  last_succeeded_at DATETIME NULL,
+  last_error TEXT NULL,
+  details JSON NULL,
+  PRIMARY KEY (scheduler_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 INSERT INTO schema_migrations (migration_name)
-VALUES
+VALUES ('030_pos_delivery_batch_foundation.sql'),
   ('025_item_based_rebuild.sql'),
   ('026_restrict_owner_platform_permission.sql'),
-  ('027_restrict_owner_salesman_workspace.sql')
+  ('027_restrict_owner_salesman_workspace.sql'),
+  ('028_add_pos_view_permission.sql'),
+  ('029_whole_carton_shelf_stock.sql'),
+  ('031_delivery_target_credit_ledger.sql'),
+  ('032_add_customer_receipt_document_type.sql'),
+  ('033_add_customer_acceptance_consent_document_type.sql'),
+  ('034_add_delivery_closeout_permission.sql'),
+  ('035_rename_dispatched_status_to_delivery.sql'),
+  ('036_salesman_commission_rule.sql'),
+  ('037_add_dispatch_customer_discounts.sql'),
+  ('038_settlement_post_timestamp.sql'),
+  ('039_remove_legacy_pending_pos.sql'),
+      ('040_target_collection_workflow.sql')
+      ,('041_salesman_monthly_payroll.sql')
+      ,('042_payroll_integrity_and_salary_history.sql')
+      ,('043_finance_commission_resilience.sql')
+      ,('044_salesman_lifecycle_and_return_credit_notes.sql')
+      ,('045_payroll_proration_metadata.sql')
 ON DUPLICATE KEY UPDATE migration_name = VALUES(migration_name);
 
 SET FOREIGN_KEY_CHECKS = 1;

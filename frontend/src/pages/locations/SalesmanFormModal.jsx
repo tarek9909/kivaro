@@ -1,32 +1,29 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/index.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import {
   Button,
   Input,
   Modal,
-  Select,
-  Switch
+  Select
 } from '@/components/ui/index.js';
 import { STATUSES } from './locations.config.js';
 
 function emptyForm(salesman) {
   return {
     full_name: salesman?.full_name ?? '',
-    user_id:
-      salesman?.user_id !== null && salesman?.user_id !== undefined
-        ? String(salesman.user_id)
-        : '',
     phone: salesman?.phone ?? '',
     email: salesman?.email ?? '',
     vehicle_number: salesman?.vehicle_number ?? '',
     national_id: salesman?.national_id ?? '',
     base_salary: salesman?.base_salary ?? 0,
+    salary_effective_from: new Date().toISOString().slice(0, 10),
+    commission_rule_id: salesman?.commission_rule_id ? String(salesman.commission_rule_id) : '',
     joined_at: salesman?.joined_at ? String(salesman.joined_at).slice(0, 10) : '',
+    employment_end_date: salesman?.employment_end_date ? String(salesman.employment_end_date).slice(0, 10) : '',
     status: salesman?.status ?? 'active',
-    create_login_user: false,
     password: ''
   };
 }
@@ -36,6 +33,13 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyForm(salesman));
   const [errors, setErrors] = useState({});
+  const rulesQuery = useQuery({
+    queryKey: ['commissions', 'options', 'rules'],
+    queryFn: () => api.commissions.rules.list({ page: 1, limit: 100, status: 'active' }),
+    enabled: open,
+    staleTime: 60_000
+  });
+  const rules = rulesQuery.data?.data?.commission_rules || [];
 
   useEffect(() => {
     if (!open) return;
@@ -65,8 +69,6 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
     setForm((prev) => ({
       ...prev,
       [field]: value,
-      ...(field === 'create_login_user' && value ? { user_id: '' } : {}),
-      ...(field === 'create_login_user' && !value ? { password: '' } : {})
     }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
@@ -77,13 +79,11 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
     if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       next.email = 'Invalid email address.';
     }
-    if (form.user_id && Number.isNaN(Number(form.user_id))) {
-      next.user_id = 'User ID must be numeric.';
-    }
     if (form.base_salary === '' || Number.isNaN(Number(form.base_salary)) || Number(form.base_salary) < 0) {
       next.base_salary = 'Base salary cannot be negative.';
     }
-    if (!isEdit && form.create_login_user && (!form.password || form.password.length < 8)) {
+    if (!form.commission_rule_id) next.commission_rule_id = 'Select a commission rule.';
+    if (!isEdit && (!form.password || form.password.length < 8)) {
       next.password = 'Password must be at least 8 characters.';
     }
     setErrors(next);
@@ -94,18 +94,19 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
     event.preventDefault();
     if (!validate()) return;
     const payload = {
-      user_id: form.user_id ? Number(form.user_id) : null,
       full_name: form.full_name.trim(),
       phone: form.phone?.trim() || null,
       email: form.email?.trim() || null,
       vehicle_number: form.vehicle_number?.trim() || null,
       national_id: form.national_id?.trim() || null,
       base_salary: Number(form.base_salary) || 0,
+      salary_effective_from: form.salary_effective_from || undefined,
+      commission_rule_id: Number(form.commission_rule_id),
       joined_at: form.joined_at || null,
+      employment_end_date: form.employment_end_date || null,
       status: form.status
     };
-    if (!isEdit && form.create_login_user) {
-      payload.create_login_user = true;
+    if (!isEdit) {
       payload.password = form.password;
     }
     mutation.mutate(payload);
@@ -174,19 +175,34 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
           value={form.base_salary}
           onChange={(event) => handleChange('base_salary', event.target.value)}
           error={errors.base_salary}
-          description="Monthly base salary used in salesman reports."
+          description="Monthly base salary. Changes are effective from the selected date."
         />
-        <div className="grid gap-4 sm:grid-cols-2">
+        {isEdit && (
           <Input
-            label="User ID"
-            type="number"
-            min="1"
-            value={form.user_id}
-            onChange={(event) => handleChange('user_id', event.target.value)}
-            error={errors.user_id}
-            description="Optional. Link to a system user account."
-            disabled={!isEdit && form.create_login_user}
+            label="Salary effective from"
+            type="date"
+            value={form.salary_effective_from}
+            onChange={(event) => handleChange('salary_effective_from', event.target.value)}
+            error={errors.salary_effective_from}
           />
+        )}
+        <Select
+          label="Commission rule"
+          value={form.commission_rule_id}
+          onChange={(event) => handleChange('commission_rule_id', event.target.value)}
+          error={errors.commission_rule_id || (rulesQuery.isError ? 'Commission rules could not be loaded.' : undefined)}
+          description="Used automatically for every commission calculation for this salesman."
+          required
+          disabled={rulesQuery.isPending || rulesQuery.isError}
+        >
+          <option value="">{rulesQuery.isPending ? 'Loading commission rules...' : 'Select commission rule'}</option>
+          {rules.map((rule) => (
+            <option key={rule.id} value={rule.id}>
+              {rule.name} ({rule.target_period})
+            </option>
+          ))}
+        </Select>
+        <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="Joined date"
             type="date"
@@ -194,16 +210,18 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
             onChange={(event) => handleChange('joined_at', event.target.value)}
             error={errors.joined_at}
           />
+          {isEdit && (
+            <Input
+              label="Employment end date"
+              type="date"
+              value={form.employment_end_date || ''}
+              onChange={(event) => handleChange('employment_end_date', event.target.value)}
+              error={errors.employment_end_date}
+              description="Set when ending employment. Deactivation also revokes the linked login and route assignments."
+            />
+          )}
         </div>
         {!isEdit && (
-          <Switch
-            checked={form.create_login_user}
-            onChange={(checked) => handleChange('create_login_user', checked)}
-            label="Create login user"
-            description="Add this salesman to Users with the salesman role and link the records automatically."
-          />
-        )}
-        {!isEdit && form.create_login_user && (
           <Input
             label="Password"
             type="password"
@@ -211,7 +229,7 @@ export function SalesmanFormModal({ open, onClose, salesman }) {
             onChange={(event) => handleChange('password', event.target.value)}
             error={errors.password}
             autoComplete="new-password"
-            description="Minimum 8 characters."
+            description="A salesman login is created and linked automatically. Minimum 8 characters."
             required
           />
         )}

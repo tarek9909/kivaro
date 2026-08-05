@@ -15,7 +15,7 @@ export function useCustomersList(enabled = true) {
 export function useCashAccountsList(enabled = true) {
   return useQuery({
     queryKey: ['dispatch', 'options', 'cash-accounts', 'incoming'],
-    queryFn: () => api.accounting.cashAccounts.list({ ...PAGE, status: 'active', cash_flow_direction: 'incoming' }),
+    queryFn: () => api.accounting.paymentOptions.list({ direction: 'incoming' }),
     staleTime: 60_000,
     enabled
   });

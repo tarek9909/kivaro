@@ -58,7 +58,7 @@ const QUICK_LINKS = [
     icon: Boxes,
     to: '/inventory',
     moduleKey: 'inventory',
-    anyOfPermissions: ['inventory.view', 'stock.movements', 'stock.adjust']
+    anyOfPermissions: ['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete', 'stock.movements', 'stock.adjust']
   },
   {
     id: 'packaging',
@@ -67,16 +67,16 @@ const QUICK_LINKS = [
     icon: Package,
     to: '/packaging',
     moduleKey: 'inventory.packaging',
-    anyOfPermissions: ['inventory.view']
+    anyOfPermissions: ['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete', 'stock.adjust']
   },
   {
     id: 'mini-pos',
     label: 'Mini POS',
-    description: 'Salesman orders, gift requests, and manager review.',
+    description: 'Create direct order drafts and manage active salesman work.',
     icon: ShoppingBasket,
     to: '/pos',
     moduleKey: 'pos',
-    anyOfPermissions: ['pos.own_orders', 'pos.review', 'pos.accept', 'salesman_workspace.view']
+    anyOfPermissions: ['pos.create_own', 'pos.create_for_salesman', 'salesman_workspace.view']
   },
   {
     id: 'purchases',
@@ -94,7 +94,11 @@ const QUICK_LINKS = [
     icon: Truck,
     to: '/dispatch',
     moduleKey: 'dispatch',
-    anyOfPermissions: ['dispatch.view', 'dispatch.create', 'dispatch.approve', 'dispatch.settle', 'dispatch.print']
+    anyOfPermissions: [
+      'dispatch.view', 'dispatch.create', 'dispatch.approve', 'dispatch.settle', 'dispatch.print',
+      'delivery.release', 'delivery.dispatch', 'delivery.record_returns', 'delivery.closeout',
+      'finance.settle_deliveries'
+    ]
   },
   {
     id: 'customers',
@@ -126,7 +130,7 @@ const QUICK_LINKS = [
   {
     id: 'reports',
     label: 'Reports',
-    description: 'Inventory, ready stock, invoices, gifts, Mini POS, and P&L.',
+    description: 'Inventory, delivery, receivable, tax, and profitability analysis.',
     icon: PieChart,
     to: '/reports',
     moduleKey: 'reports',
@@ -145,6 +149,14 @@ export default function DashboardPage() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const hasAnyPermission = useAuthStore((state) => state.hasAnyPermission);
   const hasModule = useAuthStore((state) => state.hasModule);
+  const canSeeFinance = hasPermission('accounting.view') || hasPermission('reports.view');
+  const canSeeInventory = hasPermission('inventory.view');
+  const canSeePackaging = canSeeInventory
+    || hasPermission('inventory.create')
+    || hasPermission('inventory.update')
+    || hasPermission('inventory.delete')
+    || hasPermission('stock.adjust');
+  const canSeeActivity = canSeeInventory || hasPermission('stock.movements') || hasPermission('stock.adjust');
   const [dateRange, setDateRange] = useState({ date_from: '', date_to: '' });
   const params = useMemo(() => dashboardParams(dateRange), [dateRange]);
 
@@ -161,7 +173,6 @@ export default function DashboardPage() {
   const benchmarks = dashboard?.benchmarks || [];
   const activity = dashboard?.activity || [];
   const notifications = dashboard?.notifications || [];
-  const pendingPosWork = dashboard?.pending_pos_work || [];
   const packagingShortages = dashboard?.packaging_shortages || [];
   const salesChart = dashboard?.sales_chart || [];
 
@@ -182,33 +193,24 @@ export default function DashboardPage() {
       />
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Collections" value={summary.collections} money icon={TrendingUp} tone="success" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Open receivables" value={summary.open_receivables} money icon={Receipt} tone="warn" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Raw stock value" value={summary.raw_stock_value} money icon={Boxes} tone="brand" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Packaging stock value" value={summary.packaging_stock_value} money icon={Package} tone="neutral" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Ready stock value" value={summary.ready_stock_value} money icon={Layers} tone="brand" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Net profit" value={summary.net_profit} money icon={Number(summary.net_profit || 0) >= 0 ? TrendingUp : TrendingDown} tone={Number(summary.net_profit || 0) >= 0 ? 'success' : 'danger'} isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Low stock balances" value={summary.low_stock_balances} icon={CircleAlert} tone="danger" isLoading={dashboardQuery.isPending} />
-        <MetricCard label="Pending Mini POS" value={summary.pending_pos_orders} icon={ClipboardList} tone="warn" isLoading={dashboardQuery.isPending} />
+        {canSeeFinance && <MetricCard label="Collections" value={summary.collections} money icon={TrendingUp} tone="success" isLoading={dashboardQuery.isPending} />}
+        {canSeeFinance && <MetricCard label="Open receivables" value={summary.open_receivables} money icon={Receipt} tone="warn" isLoading={dashboardQuery.isPending} />}
+        {canSeeInventory && <MetricCard label="Raw stock value" value={summary.raw_stock_value} money icon={Boxes} tone="brand" isLoading={dashboardQuery.isPending} />}
+        {canSeeInventory && <MetricCard label="Packaging stock value" value={summary.packaging_stock_value} money icon={Package} tone="neutral" isLoading={dashboardQuery.isPending} />}
+        {canSeeInventory && <MetricCard label="Ready stock value" value={summary.ready_stock_value} money icon={Layers} tone="brand" isLoading={dashboardQuery.isPending} />}
+        {canSeeFinance && <MetricCard label="Net profit" value={summary.net_profit} money icon={Number(summary.net_profit || 0) >= 0 ? TrendingUp : TrendingDown} tone={Number(summary.net_profit || 0) >= 0 ? 'success' : 'danger'} isLoading={dashboardQuery.isPending} />}
+        {canSeeInventory && <MetricCard label="Low stock balances" value={summary.low_stock_balances} icon={CircleAlert} tone="danger" isLoading={dashboardQuery.isPending} />}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <FinancialPulse financial={financial} isLoading={dashboardQuery.isPending} />
-        <SalesAndProfitChart rows={salesChart} isLoading={dashboardQuery.isPending} />
-      </section>
+      {canSeeFinance && (
+        <section className="grid gap-4 xl:grid-cols-3">
+          <FinancialPulse financial={financial} isLoading={dashboardQuery.isPending} />
+          <SalesAndProfitChart rows={salesChart} isLoading={dashboardQuery.isPending} />
+        </section>
+      )}
 
-      <section className="grid gap-4 xl:grid-cols-3">
-        <GlassPanel>
-          <GlassPanelHeader
-            icon={ClipboardList}
-            title="Pending Mini POS work"
-            subtitle="Grouped by salesman; these orders do not reserve stock."
-          />
-          <GlassPanelBody>
-            <PendingPosWork rows={pendingPosWork} isLoading={dashboardQuery.isPending} />
-          </GlassPanelBody>
-        </GlassPanel>
-        <GlassPanel>
+      {(canSeePackaging || benchmarks.length > 0) && <section className="grid gap-4 xl:grid-cols-2">
+        {canSeePackaging && <GlassPanel>
           <GlassPanelHeader
             icon={CircleAlert}
             title="Packaging shortages"
@@ -217,12 +219,12 @@ export default function DashboardPage() {
           <GlassPanelBody>
             <PackagingShortages rows={packagingShortages} isLoading={dashboardQuery.isPending} />
           </GlassPanelBody>
-        </GlassPanel>
-        <GlassPanel>
+        </GlassPanel>}
+        {benchmarks.length > 0 && <GlassPanel>
           <GlassPanelHeader
             icon={Layers}
             title="Operational benchmarks"
-            subtitle="Dispatch, Mini POS, stock health, and collection progress."
+            subtitle="Dispatch, stock health, and collection progress."
           />
           <GlassPanelBody className="space-y-4">
             {dashboardQuery.isPending ? (
@@ -245,8 +247,8 @@ export default function DashboardPage() {
               ))
             )}
           </GlassPanelBody>
-        </GlassPanel>
-      </section>
+        </GlassPanel>}
+      </section>}
 
       <GlassPanel>
         <GlassPanelHeader
@@ -296,7 +298,7 @@ export default function DashboardPage() {
       </GlassPanel>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <GlassPanel>
+        {canSeeActivity && <GlassPanel>
           <GlassPanelHeader
             icon={ScrollText}
             title="Ledger activity"
@@ -305,7 +307,7 @@ export default function DashboardPage() {
           <GlassPanelBody>
             <ActivityLedger items={activity} isLoading={dashboardQuery.isPending} />
           </GlassPanelBody>
-        </GlassPanel>
+        </GlassPanel>}
         <GlassPanel>
           <GlassPanelHeader icon={Bell} title="Notifications" subtitle="Latest alerts from across the workspace." />
           <GlassPanelBody>
@@ -378,6 +380,7 @@ function FinancialPulse({ financial, isLoading }) {
     ['Sales COGS', financial.sales_cogs, 'neutral'],
     ['Gift COGS', financial.gift_cogs, 'warn'],
     ['Operating expenses', financial.operating_expenses, 'neutral'],
+    ['Salesman payroll', financial.payroll_expenses, 'neutral'],
     ['Gross profit after gifts', financial.gross_profit_after_gifts, 'success'],
     ['Net profit', financial.net_profit, Number(financial.net_profit || 0) >= 0 ? 'success' : 'danger']
   ];

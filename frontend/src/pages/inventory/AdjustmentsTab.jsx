@@ -21,14 +21,13 @@ import {
 } from '@/components/ui/index.js';
 import { formatDateTime, formatNumber } from '@/lib/formatters.js';
 import { INVENTORY_PERMISSIONS } from './inventory.config.js';
-import { formatStockQuantity, getEntryUnitLabel, getStockMode } from './stockUnits.js';
+import { formatCartonStockSummary, formatStockQuantity, getEntryUnitLabel, getStockMode } from './stockUnits.js';
 import { useItemsOptions, useWarehousesOptions } from './useInventoryOptions.js';
 
 function emptyForm() {
   return {
     warehouse_id: '',
     item_id: '',
-    adjustment_target: 'stock',
     direction: 'increase',
     quantity: '',
     unit_cost: '',
@@ -40,7 +39,10 @@ function emptyForm() {
 function itemOptionLabel(item) {
   const unit = getEntryUnitLabel(item);
   const mode = getStockMode(item);
-  return `${item.name} (${item.code}) · ${mode}${unit ? ` · ${unit}` : ''}`;
+  const stockDescription = mode === 'carton'
+    ? `${item.kg_per_carton} kg/carton`
+    : `${mode}${unit ? ` · ${unit}` : ''}`;
+  return `${item.name} (${item.code}) · ${stockDescription}`;
 }
 
 function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventoryOptions }) {
@@ -49,11 +51,10 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
   const queryClient = useQueryClient();
   const selectedItem = items.find((item) => String(item.id) === String(form.item_id));
   const stockMode = getStockMode(selectedItem || {});
-  const isCartonWeight = stockMode === 'carton_weight';
-  const isLooseUnitAdjustment = isCartonWeight && form.adjustment_target === 'loose_units';
+  const isCarton = stockMode === 'carton';
   const isPieceStock = stockMode === 'piece';
-  const quantityLabel = isCartonWeight
-    ? isLooseUnitAdjustment ? 'Loose units' : 'Carton count'
+  const quantityLabel = isCarton
+    ? 'Carton count'
     : `Quantity${getEntryUnitLabel(selectedItem || {}) ? ` (${getEntryUnitLabel(selectedItem)})` : ''}`;
 
   useEffect(() => {
@@ -66,7 +67,7 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
     mutationFn: (payload) => api.inventory.stockAdjustments.create(payload),
     onSuccess: () => {
       toast.success('Stock adjustment posted');
-      for (const key of ['movements', 'balances', 'adjustments', 'items', 'carton-lots', 'open-carton-shelves']) {
+      for (const key of ['movements', 'balances', 'adjustments', 'items', 'carton-lots']) {
         queryClient.invalidateQueries({ queryKey: ['inventory', key] });
       }
       queryClient.invalidateQueries({ queryKey: ['inventory', 'options', 'items'] });
@@ -82,14 +83,7 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
     setForm((previous) => {
       const next = { ...previous, [field]: value };
       if (field === 'item_id') {
-        next.adjustment_target = 'stock';
         next.direction = 'increase';
-        next.quantity = '';
-        next.unit_cost = '';
-        next.cost_per_carton = '';
-      }
-      if (field === 'adjustment_target') {
-        next.direction = value === 'loose_units' ? 'decrease' : 'increase';
         next.quantity = '';
         next.unit_cost = '';
         next.cost_per_carton = '';
@@ -107,14 +101,11 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
     if (!form.warehouse_id || Number.isNaN(warehouseId) || warehouseId <= 0) next.warehouse_id = 'Warehouse is required.';
     if (!form.item_id || Number.isNaN(itemId) || itemId <= 0) next.item_id = 'Item is required.';
     if (!form.quantity || Number.isNaN(quantity) || quantity <= 0) next.quantity = 'Enter a positive quantity. Use direction to add or remove.';
-    if ((isCartonWeight || isPieceStock) && form.quantity && !Number.isInteger(quantity)) {
+    if ((isCarton || isPieceStock) && form.quantity && !Number.isInteger(quantity)) {
       next.quantity = 'This stock mode requires a whole number.';
     }
-    if (isLooseUnitAdjustment && form.direction !== 'decrease') {
-      next.direction = 'Loose shelf units can only be removed by an adjustment.';
-    }
-    if (!isCartonWeight && form.unit_cost !== '' && Number(form.unit_cost) < 0) next.unit_cost = 'Unit cost cannot be negative.';
-    if (isCartonWeight && !isLooseUnitAdjustment && form.cost_per_carton !== '' && Number(form.cost_per_carton) < 0) {
+    if (!isCarton && form.unit_cost !== '' && Number(form.unit_cost) < 0) next.unit_cost = 'Unit cost cannot be negative.';
+    if (isCarton && form.cost_per_carton !== '' && Number(form.cost_per_carton) < 0) {
       next.cost_per_carton = 'Cost per carton cannot be negative.';
     }
     if (!form.reason?.trim()) next.reason = 'Reason is required.';
@@ -132,13 +123,9 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
       item_id: Number(form.item_id),
       reason: form.reason.trim()
     };
-    if (isCartonWeight) {
-      if (isLooseUnitAdjustment) {
-        payload.loose_units_change = signedQuantity;
-      } else {
-        payload.carton_count_change = signedQuantity;
-        if (form.cost_per_carton !== '') payload.cost_per_carton = Number(form.cost_per_carton);
-      }
+    if (isCarton) {
+      payload.carton_count_change = signedQuantity;
+      if (form.cost_per_carton !== '') payload.cost_per_carton = Number(form.cost_per_carton);
     } else {
       payload.quantity_change = signedQuantity;
       if (form.unit_cost !== '') payload.unit_cost = Number(form.unit_cost);
@@ -152,7 +139,7 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
       onClose={onClose}
       size="md"
       title="Post stock adjustment"
-      description="Adjust canonical item stock. Carton stock and open shelf units are controlled separately."
+      description="Adjust stock using its physical unit. Carton items are adjusted as whole sealed cartons."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
@@ -161,109 +148,116 @@ function AdjustmentFormModal({ open, onClose, warehouses, items, canLoadInventor
       }
     >
       <form id="adjustment-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        {!canLoadInventoryOptions && <Badge tone="warn">inventory.view is needed to select a warehouse and item.</Badge>}
-        <Select
-          label="Warehouse"
-          value={form.warehouse_id}
-          onChange={(event) => handleChange('warehouse_id', event.target.value)}
-          error={errors.warehouse_id}
-          disabled={!canLoadInventoryOptions}
-          required
-        >
-          <option value="">Select warehouse</option>
-          {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
-        </Select>
-        <Select
-          label="Item"
-          value={form.item_id}
-          onChange={(event) => handleChange('item_id', event.target.value)}
-          error={errors.item_id}
-          disabled={!canLoadInventoryOptions}
-          required
-        >
-          <option value="">Select item</option>
-          {items.map((item) => <option key={item.id} value={item.id}>{itemOptionLabel(item)}</option>)}
-        </Select>
+        {!canLoadInventoryOptions && <Badge tone="warn">Inventory view, stock adjustment, or stock movement permission is needed to select a warehouse and item.</Badge>}
 
-        {isCartonWeight && (
-          <Select
-            label="Adjust"
-            value={form.adjustment_target}
-            onChange={(event) => handleChange('adjustment_target', event.target.value)}
-            description="Carton stock is adjusted separately from already-open loose shelf units."
-          >
-            <option value="stock">Sealed cartons</option>
-            <option value="loose_units">Open loose units (remove only)</option>
-          </Select>
-        )}
+        {/* Target Warehouse & Item Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Target Inventory</h4>
+            {selectedItem && (
+              <span className="text-xs font-mono font-medium text-brand-300">
+                On Hand: {isCarton ? formatCartonStockSummary(selectedItem.quantity_on_hand, selectedItem) : (selectedItem.quantity_on_hand ?? 0)}
+              </span>
+            )}
+          </div>
 
-        <div className={`grid gap-4 ${isCartonWeight && !isLooseUnitAdjustment ? 'sm:grid-cols-3' : 'sm:grid-cols-3'}`}>
-          <Select
-            label="Direction"
-            value={form.direction}
-            onChange={(event) => handleChange('direction', event.target.value)}
-            disabled={isLooseUnitAdjustment}
-            error={errors.direction}
-          >
-            <option value="increase">Increase</option>
-            <option value="decrease">Decrease</option>
-          </Select>
-          <Input
-            label={quantityLabel}
-            type="number"
-            min="0"
-            step={isCartonWeight || isPieceStock ? '1' : '0.0001'}
-            value={form.quantity}
-            onChange={(event) => handleChange('quantity', event.target.value)}
-            error={errors.quantity}
-            required
-          />
-          {isCartonWeight && !isLooseUnitAdjustment ? (
-            <Input
-              label="Cost per carton"
-              type="number"
-              min="0"
-              step="0.0001"
-              value={form.cost_per_carton}
-              onChange={(event) => handleChange('cost_per_carton', event.target.value)}
-              error={errors.cost_per_carton}
-              description="Optional; used when increasing stock."
-            />
-          ) : (
-            <Input
-              label="Unit cost"
-              type="number"
-              min="0"
-              step="0.0001"
-              value={form.unit_cost}
-              onChange={(event) => handleChange('unit_cost', event.target.value)}
-              error={errors.unit_cost}
-              disabled={isLooseUnitAdjustment}
-              description="Optional; used when increasing stock to update WAC."
-            />
-          )}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              label="Warehouse"
+              value={form.warehouse_id}
+              onChange={(event) => handleChange('warehouse_id', event.target.value)}
+              error={errors.warehouse_id}
+              disabled={!canLoadInventoryOptions}
+              required
+            >
+              <option value="">Select warehouse</option>
+              {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
+            </Select>
+            <Select
+              label="Item"
+              value={form.item_id}
+              onChange={(event) => handleChange('item_id', event.target.value)}
+              error={errors.item_id}
+              disabled={!canLoadInventoryOptions}
+              required
+            >
+              <option value="">Select item</option>
+              {items.map((item) => <option key={item.id} value={item.id}>{itemOptionLabel(item)}</option>)}
+            </Select>
+          </div>
         </div>
-        <Textarea
-          label="Reason"
-          value={form.reason}
-          onChange={(event) => handleChange('reason', event.target.value)}
-          error={errors.reason}
-          rows={3}
-          required
-          description="Recorded in the inventory movement and audit trail."
-        />
+
+        {/* Adjustment Parameters Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Adjustment Parameters</h4>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Select
+              label="Direction"
+              value={form.direction}
+              onChange={(event) => handleChange('direction', event.target.value)}
+              error={errors.direction}
+            >
+              <option value="increase">Increase (+)</option>
+              <option value="decrease">Decrease (-)</option>
+            </Select>
+            <Input
+              label={quantityLabel}
+              type="number"
+              min="0"
+              step={isCarton || isPieceStock ? '1' : '0.0001'}
+              value={form.quantity}
+              onChange={(event) => handleChange('quantity', event.target.value)}
+              error={errors.quantity}
+              required
+            />
+            {isCarton ? (
+              <Input
+                label="Cost per carton"
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.cost_per_carton}
+                onChange={(event) => handleChange('cost_per_carton', event.target.value)}
+                error={errors.cost_per_carton}
+                description="Optional; used when increasing stock."
+              />
+            ) : (
+              <Input
+                label="Unit cost"
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.unit_cost}
+                onChange={(event) => handleChange('unit_cost', event.target.value)}
+                error={errors.unit_cost}
+                description="Optional; used when increasing stock."
+              />
+            )}
+          </div>
+
+          <Textarea
+            label="Reason"
+            value={form.reason}
+            onChange={(event) => handleChange('reason', event.target.value)}
+            error={errors.reason}
+            rows={3}
+            required
+            description="Recorded in the inventory movement and audit trail."
+            placeholder="Audit discrepancy, spoiled goods, stock count correction..."
+          />
+        </div>
       </form>
     </Modal>
   );
 }
 
 function formatAdjustmentChange(row) {
-  if (getStockMode(row) === 'carton_weight') {
+  if (getStockMode(row) === 'carton') {
     if (row.carton_count_change !== null && row.carton_count_change !== undefined) {
       return `${formatNumber(row.carton_count_change, { maximumFractionDigits: 0 })} cartons`;
-    }
-    if (row.loose_units_change !== null && row.loose_units_change !== undefined) {
-      return `${formatNumber(row.loose_units_change, { maximumFractionDigits: 0 })} loose units`;
     }
   }
   return formatStockQuantity(Math.abs(Number(row.quantity_change || 0)), row);
@@ -273,7 +267,9 @@ export default function AdjustmentsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canAdjust = hasPermission(INVENTORY_PERMISSIONS.adjust);
   const canViewMovements = hasPermission(INVENTORY_PERMISSIONS.movements);
-  const canLoadInventoryOptions = hasPermission(INVENTORY_PERMISSIONS.view);
+  const canLoadInventoryOptions = hasPermission(INVENTORY_PERMISSIONS.view)
+    || hasPermission(INVENTORY_PERMISSIONS.adjust)
+    || hasPermission(INVENTORY_PERMISSIONS.movements);
   const [creating, setCreating] = useState(false);
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
@@ -317,7 +313,7 @@ export default function AdjustmentsTab() {
         header: 'Change',
         align: 'right',
         cell: (row) => {
-          const value = Number(row.quantity_change ?? row.carton_count_change ?? row.loose_units_change ?? 0);
+          const value = Number(row.quantity_change ?? row.carton_count_change ?? 0);
           const isPositive = value >= 0;
           const Icon = isPositive ? ArrowUpRight : ArrowDownRight;
           return <span className={`inline-flex items-center justify-end gap-1 font-mono text-sm ${isPositive ? 'text-emerald-200' : 'text-rose-200'}`}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{formatAdjustmentChange(row)}</span>;
@@ -349,7 +345,7 @@ export default function AdjustmentsTab() {
       </div>
 
       <GlassPanel>
-        <GlassPanelHeader title="Recent adjustments" subtitle="Canonical item-stock corrections, including sealed cartons and opened loose units." />
+        <GlassPanelHeader title="Recent adjustments" subtitle="Canonical item-stock corrections, including whole sealed cartons." />
         <GlassPanelBody>
           {!canViewMovements ? (
             <EmptyState title="Movements view restricted" description="The stock.movements permission is needed to see adjustment history." />

@@ -8,9 +8,7 @@ export function createLocationsApi(client) {
     only: ['list', 'create', 'update', 'remove']
   });
   const salesmen = createResourceApi(client, '/salesmen', { only: RESOURCE_METHODS });
-  const locationTargets = createResourceApi(client, '/location-targets', {
-    only: ['list', 'create', 'get', 'update']
-  });
+  const locationTargets = createResourceApi(client, '/location-targets', { only: ['list', 'get'] });
 
   return {
     locations: {
@@ -34,14 +32,9 @@ export function createLocationsApi(client) {
     },
     locationTargets: {
       ...locationTargets,
-      createSublocationTarget: (id, payload, options) => (
-        client.post(`/location-targets/${id}/sublocation-targets`, payload, options)
-      )
-    },
-    sublocationTargets: {
-      generateSalesmanTargets: (id, options) => (
-        client.post(`/sublocation-targets/${id}/generate-salesman-targets`, undefined, options)
-      )
+      setup: (id, options) => client.get(`/location-targets/setup/${id}`, options),
+      createBundle: (payload, options) => client.post('/location-targets/bundle', payload, options),
+      updateAssignment: (id, payload, options) => client.put(`/location-targets/${id}/assignment`, payload, options)
     }
   };
 }

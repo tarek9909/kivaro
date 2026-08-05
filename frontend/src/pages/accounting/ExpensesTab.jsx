@@ -29,6 +29,7 @@ export default function ExpensesTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(ACCOUNTING_PERMISSIONS.view);
   const canManage = hasPermission(ACCOUNTING_PERMISSIONS.manage);
+  const canRead = canView || canManage;
   const queryClient = useQueryClient();
 
   const [categoryId, setCategoryId] = useState('');
@@ -49,15 +50,13 @@ export default function ExpensesTab() {
     return params;
   }, [categoryId, dateFrom, dateTo, page, limit]);
 
-  // GET /expenses requires accounting.view; do not call it for manage-only
-  // operators.
   const listQuery = useQuery({
     queryKey: ['accounting', 'expenses', queryParams],
     queryFn: () => api.accounting.expenses.list(queryParams),
-    enabled: canView
+    enabled: canRead
   });
 
-  const categoriesQuery = useExpenseCategoriesList(canView);
+  const categoriesQuery = useExpenseCategoriesList(canRead);
   const categories = categoriesQuery.data?.data?.expense_categories || [];
 
   const deleteMutation = useMutation({
@@ -175,7 +174,7 @@ export default function ExpensesTab() {
         </Button>
       </div>
 
-      {!canView ? (
+      {!canRead ? (
         <GlassPanel>
           <GlassPanelBody>
             <EmptyState

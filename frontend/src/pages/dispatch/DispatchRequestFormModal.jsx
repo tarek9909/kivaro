@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Building2, Calendar, FileText, Hash, Truck, User } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
@@ -104,98 +105,142 @@ export function DispatchRequestFormModal({ open, onClose }) {
     <Modal
       open={open}
       onClose={onClose}
-      size="md"
-      title="New dispatch request"
-      description="Plan a route for a salesman to take stock to customers."
+      size="lg"
+      title="New Orders & Delivery Request"
+      description="Plan a route and assign inventory to a salesman for customer deliveries."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="dispatch-create-form" isLoading={mutation.isPending}>
-            Create request
+          <Button type="submit" form="dispatch-create-form" leftIcon={Truck} isLoading={mutation.isPending}>
+            Create Order Request
           </Button>
         </>
       }
     >
-      <form id="dispatch-create-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <Input
-          label="Dispatch number"
-          value={form.dispatch_number}
-          onChange={(event) => handleChange('dispatch_number', event.target.value)}
-          error={errors.dispatch_number}
-          description="Optional. Auto-generated when blank."
-        />
-        <div className="grid gap-4 sm:grid-cols-2">
-          {canPickSalesmen ? (
-            <Select
-              label="Salesman"
-              value={form.salesman_id}
-              onChange={(event) => handleChange('salesman_id', event.target.value)}
-              error={errors.salesman_id}
-              required
-            >
-              <option value="">Select salesman</option>
-              {salesmen.map((salesman) => (
-                <option key={salesman.id} value={salesman.id}>
-                  {salesman.full_name}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <Input
-              label="Salesman ID"
-              type="number"
-              min="1"
-              value={form.salesman_id}
-              onChange={(event) => handleChange('salesman_id', event.target.value)}
-              error={errors.salesman_id}
-              required
-              description="Numeric only."
-            />
-          )}
-          {canPickInventory ? (
-            <Select
-              label="Warehouse"
-              value={form.warehouse_id}
-              onChange={(event) => handleChange('warehouse_id', event.target.value)}
-              error={errors.warehouse_id}
-              required
-            >
-              <option value="">Select warehouse</option>
-              {warehouses.map((warehouse) => (
-                <option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <Input
-              label="Warehouse ID"
-              type="number"
-              min="1"
-              value={form.warehouse_id}
-              onChange={(event) => handleChange('warehouse_id', event.target.value)}
-              error={errors.warehouse_id}
-              required
-              description="Numeric only."
-            />
-          )}
+      <form id="dispatch-create-form" onSubmit={handleSubmit} className="space-y-5" noValidate>
+        {/* Logistics & Assignment Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4.5 space-y-4">
+          <div className="flex items-center gap-2 border-b border-white/5 pb-2.5">
+            <Truck className="h-4 w-4 text-brand-400" />
+            <h3 className="font-display text-xs font-semibold uppercase tracking-wider text-ink-200">
+              Logistics & Assignment
+            </h3>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            {canPickSalesmen ? (
+              <div>
+                <div className="mb-1 flex items-center gap-1.5 text-xs text-ink-300 font-medium">
+                  <User className="h-3.5 w-3.5 text-ink-400" />
+                  <span>Salesman *</span>
+                </div>
+                <Select
+                  value={form.salesman_id}
+                  onChange={(event) => handleChange('salesman_id', event.target.value)}
+                  error={errors.salesman_id}
+                  required
+                >
+                  <option value="">Select salesman</option>
+                  {salesmen.map((salesman) => (
+                    <option key={salesman.id} value={salesman.id}>
+                      {salesman.full_name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : (
+              <Input
+                label="Salesman ID"
+                type="number"
+                min="1"
+                value={form.salesman_id}
+                onChange={(event) => handleChange('salesman_id', event.target.value)}
+                error={errors.salesman_id}
+                required
+                description="Numeric only."
+              />
+            )}
+
+            {canPickInventory ? (
+              <div>
+                <div className="mb-1 flex items-center gap-1.5 text-xs text-ink-300 font-medium">
+                  <Building2 className="h-3.5 w-3.5 text-ink-400" />
+                  <span>Warehouse *</span>
+                </div>
+                <Select
+                  value={form.warehouse_id}
+                  onChange={(event) => handleChange('warehouse_id', event.target.value)}
+                  error={errors.warehouse_id}
+                  required
+                >
+                  <option value="">Select warehouse</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            ) : (
+              <Input
+                label="Warehouse ID"
+                type="number"
+                min="1"
+                value={form.warehouse_id}
+                onChange={(event) => handleChange('warehouse_id', event.target.value)}
+                error={errors.warehouse_id}
+                required
+                description="Numeric only."
+              />
+            )}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 text-xs text-ink-300 font-medium">
+                <Calendar className="h-3.5 w-3.5 text-ink-400" />
+                <span>Request Date *</span>
+              </div>
+              <Input
+                type="date"
+                value={form.request_date}
+                onChange={(event) => handleChange('request_date', event.target.value)}
+                error={errors.request_date}
+                required
+              />
+            </div>
+            <div>
+              <div className="mb-1 flex items-center gap-1.5 text-xs text-ink-300 font-medium">
+                <Hash className="h-3.5 w-3.5 text-ink-400" />
+                <span>Dispatch Reference #</span>
+              </div>
+              <Input
+                placeholder="Auto-generated if left blank"
+                value={form.dispatch_number}
+                onChange={(event) => handleChange('dispatch_number', event.target.value)}
+                error={errors.dispatch_number}
+              />
+            </div>
+          </div>
         </div>
-        <Input
-          label="Request date"
-          type="date"
-          value={form.request_date}
-          onChange={(event) => handleChange('request_date', event.target.value)}
-          error={errors.request_date}
-          required
-        />
-        <Textarea
-          label="Notes"
-          value={form.notes}
-          onChange={(event) => handleChange('notes', event.target.value)}
-          rows={3}
-        />
+
+        {/* Notes Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4.5 space-y-3">
+          <div className="flex items-center gap-2 border-b border-white/5 pb-2">
+            <FileText className="h-4 w-4 text-brand-400" />
+            <h3 className="font-display text-xs font-semibold uppercase tracking-wider text-ink-200">
+              Route Instructions & Notes
+            </h3>
+          </div>
+          <Textarea
+            placeholder="Add any special instructions or route notes..."
+            value={form.notes}
+            onChange={(event) => handleChange('notes', event.target.value)}
+            rows={3}
+          />
+        </div>
       </form>
     </Modal>
   );

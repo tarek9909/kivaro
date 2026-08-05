@@ -7,14 +7,14 @@ function documentedPermission(path, method) {
 
 describe('OpenAPI canonical packaging permission contract', () => {
   test('documents the permissions enforced by the active packaging router', () => {
-    expect(documentedPermission('/packaging-groups', 'get')).toBe('inventory.view');
+    expect(documentedPermission('/packaging-groups', 'get')).toBe('inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust');
     expect(documentedPermission('/packaging-groups', 'post')).toBe('inventory.create');
     expect(documentedPermission('/packaging-groups/{id}/components', 'put')).toBe('inventory.update');
-    expect(documentedPermission('/packaging-groups/{id}/preview', 'post')).toBe('inventory.view');
+    expect(documentedPermission('/packaging-groups/{id}/preview', 'post')).toBe('inventory.view or inventory.create or stock.adjust');
     expect(documentedPermission('/packaging-groups/{id}/complete', 'post')).toBe('inventory.create or stock.adjust');
-    expect(documentedPermission('/packaging-operations', 'get')).toBe('inventory.view');
-    expect(documentedPermission('/ready-stock', 'get')).toBe('inventory.view');
-    expect(documentedPermission('/sale-catalog', 'get')).toBe('inventory.view or dispatch.create');
+    expect(documentedPermission('/packaging-operations', 'get')).toBe('inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust');
+    expect(documentedPermission('/ready-stock', 'get')).toBe('inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust');
+    expect(documentedPermission('/sale-catalog', 'get')).toBe('inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust or dispatch.create');
     expect(documentedPermission('/sale-catalog', 'post')).toBe('inventory.create');
   });
 

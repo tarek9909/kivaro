@@ -76,20 +76,27 @@ describe('typed item dispatch, gifts, invoices, and returns integration', () => 
     expect(invoice.status).toBe('issued');
 
     await authRequest(token)
-      .get(`/api/dispatch-requests/${dispatchId}/documents/customer-table`)
-      .expect('Content-Type', /application\/pdf/)
-      .expect(200);
-    await authRequest(token)
-      .get(`/api/dispatch-requests/${dispatchId}/documents/quantity-table`)
-      .expect('Content-Type', /application\/pdf/)
-      .expect(200);
-    await authRequest(token)
       .get(`/api/invoices/${invoice.id}/pdf`)
       .expect('Content-Type', /application\/pdf/)
       .expect(200);
 
     await authRequest(token).post(`/api/dispatch-requests/${dispatchId}/approve`).expect(200);
+    const [approvedCustomer] = await dbQuery(`SELECT fulfillment_status FROM dispatch_customers WHERE dispatch_request_id = ?`, [dispatchId]);
+    expect(approvedCustomer.fulfillment_status).toBe('released');
+
+    await authRequest(token)
+      .get(`/api/dispatch-requests/${dispatchId}/documents/customer-table`)
+      .expect('Content-Type', /application\/pdf/)
+      .expect(200);
+
     await authRequest(token).post(`/api/dispatch-requests/${dispatchId}/dispatch`).expect(200);
+    const [dispatchedCustomer] = await dbQuery(`SELECT fulfillment_status FROM dispatch_customers WHERE dispatch_request_id = ?`, [dispatchId]);
+    expect(dispatchedCustomer.fulfillment_status).toBe('out_for_delivery');
+
+    await authRequest(token)
+      .get(`/api/dispatch-requests/${dispatchId}/customers/${dispatchCustomer.id}/delivery-document-pdf`)
+      .expect('Content-Type', /application\/pdf/)
+      .expect(200);
 
     const allocations = await dbQuery(
       `SELECT status, SUM(inventory_quantity) AS inventory_quantity
@@ -115,6 +122,9 @@ describe('typed item dispatch, gifts, invoices, and returns integration', () => 
       .post(`/api/dispatch-requests/${dispatchId}/returns`)
       .send({ dispatch_item_id: saleLine.id, returned_quantity: 1, reason: 'Customer return' })
       .expect(201);
+
+    const [returnedCustomer] = await dbQuery(`SELECT fulfillment_status FROM dispatch_customers WHERE dispatch_request_id = ?`, [dispatchId]);
+    expect(returnedCustomer.fulfillment_status).toBe('partial');
 
     const [afterReturn] = await dbQuery(
       `SELECT quantity_on_hand FROM item_stock_balances WHERE warehouse_id = ? AND item_id = ?`,

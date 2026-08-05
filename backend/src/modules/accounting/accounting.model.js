@@ -57,6 +57,19 @@ async function listCashAccounts(input) {
   }, input);
 }
 
+async function listPaymentOptions(input) {
+  const requiredPermission = input.direction === 'outgoing' ? 'outgoing' : 'incoming';
+  const rows = await query(
+    `SELECT id, account_name AS display_name
+     FROM cash_accounts
+     WHERE store_id = ? AND status = 'active'
+       AND cash_flow_permission IN (?, 'both')
+     ORDER BY account_name ASC`,
+    [input.store_id, requiredPermission]
+  );
+  return rows;
+}
+
 async function listFinancialTransactions(input) {
   return listRecords({
     select: `SELECT ft.id, ft.cash_account_id, ca.account_name, ft.transaction_date,
@@ -176,7 +189,22 @@ async function deleteExpenseCategory(id) {
   return result.affectedRows;
 }
 
-async function createCashAccount(data) {
+async function createCashAccount(data, connection = null) {
+  if (connection) {
+    const [result] = await connection.execute(
+      `INSERT INTO cash_accounts (
+        store_id, account_name, account_type, opening_balance, current_balance,
+        cash_flow_permission, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nullable(data.store_id), data.account_name, data.account_type || 'cash',
+        data.opening_balance || 0, data.current_balance || 0,
+        data.cash_flow_permission || 'both', data.status || 'active'
+      ]
+    );
+    const [rows] = await connection.execute('SELECT * FROM cash_accounts WHERE id = ? LIMIT 1', [result.insertId]);
+    return rows[0] || null;
+  }
   return insertRecord('cash_accounts', data);
 }
 
@@ -337,7 +365,7 @@ async function createFinancialTransaction(connection, data) {
     const directionAllowed = capability === 'both'
       || (capability === 'incoming' && data.direction === 'in')
       || (capability === 'outgoing' && data.direction === 'out');
-    if (!directionAllowed) {
+    if (!directionAllowed && data.transaction_type !== 'opening_balance') {
       throw ApiError.badRequest('Validation failed', [
         {
           field: 'cash_account_id',
@@ -366,7 +394,7 @@ async function createFinancialTransaction(connection, data) {
     ]
   );
 
-  if (data.cash_account_id) {
+  if (data.cash_account_id && !data.skip_cash_account_balance_update) {
     await connection.execute(
       `UPDATE cash_accounts
        SET current_balance = current_balance ${data.direction === 'in' ? '+' : '-'} ?
@@ -429,6 +457,7 @@ module.exports = {
   findLatestPostedExpenseTransaction,
   findSalesmanBalanceById,
   listCashAccounts,
+  listPaymentOptions,
   listExpenseCategories,
   listExpenses,
   listFinancialTransactions,

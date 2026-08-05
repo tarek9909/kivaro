@@ -36,15 +36,6 @@ async function createCustomer(req, res) {
   });
 }
 
-async function listOrders(req, res) {
-  const result = await service.listOwnOrders(req.query, req.user);
-  successResponse(res, {
-    message: 'Mini POS orders fetched',
-    data: { pos_orders: result.rows },
-    meta: result.meta
-  });
-}
-
 async function getWorkspace(req, res) {
   const workspace = await service.getOwnWorkspace(req.query, req.user);
   successResponse(res, {
@@ -53,67 +44,10 @@ async function getWorkspace(req, res) {
   });
 }
 
-async function createOrder(req, res) {
-  const pos_order = await service.createOwnOrder(req.body, req.user.id, req.user);
-  successResponse(res, {
-    statusCode: 201,
-    message: 'Mini POS order created',
-    data: { pos_order }
-  });
-}
-
-async function getOrder(req, res) {
-  const pos_order = await service.getOwnOrder(req.params.id, req.user, req.query);
-  successResponse(res, {
-    message: 'Mini POS order fetched',
-    data: { pos_order }
-  });
-}
-
-async function updateOrder(req, res) {
-  const pos_order = await service.updateOwnOrder(req.params.id, req.body, req.user);
-  successResponse(res, {
-    message: 'Mini POS order updated',
-    data: { pos_order }
-  });
-}
-
-async function cancelOrder(req, res) {
-  const pos_order = await service.cancelOwnOrder(req.params.id, req.body, req.user);
-  successResponse(res, {
-    message: 'Mini POS order cancelled',
-    data: { pos_order }
-  });
-}
-
-async function listReview(req, res) {
-  const result = await service.listManagerReview(req.query, req.user);
-  successResponse(res, {
-    message: 'Grouped Mini POS review fetched',
-    data: { salesmen: result.rows },
-    meta: result.meta
-  });
-}
-
-async function prepareDispatch(req, res) {
-  const dispatch_preparation = await service.prepareSelectedOrders(req.body, req.user);
-  successResponse(res, {
-    message: 'Mini POS dispatch preparation generated',
-    data: { dispatch_preparation }
-  });
-}
-
 module.exports = {
-  cancelOrder,
   createCustomer,
-  createOrder,
-  getOrder,
   getWorkspace,
   listCatalog,
   listCustomers,
-  listOrders,
-  listReview,
-  listTerritories,
-  prepareDispatch,
-  updateOrder
+  listTerritories
 };

@@ -109,56 +109,60 @@ function CategoryFormModal({ open, onClose, category, parents }) {
       }
     >
       <form id="category-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Name"
-            value={form.name}
-            onChange={(event) => handleChange('name', event.target.value)}
-            error={errors.name}
-            required
-          />
-          <Input
-            label="Code"
-            value={form.code || ''}
-            onChange={(event) => handleChange('code', event.target.value)}
-            error={errors.code}
-          />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Parent category"
-            value={form.parent_id || ''}
-            onChange={(event) => handleChange('parent_id', event.target.value)}
-            error={errors.parent_id}
-          >
-            <option value="">No parent</option>
-            {parents
-              .filter((parent) => parent.id !== category?.id)
-              .map((parent) => (
-                <option key={parent.id} value={parent.id}>
-                  {parent.name}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={(event) => handleChange('name', event.target.value)}
+              error={errors.name}
+              required
+            />
+            <Input
+              label="Code"
+              value={form.code || ''}
+              onChange={(event) => handleChange('code', event.target.value)}
+              error={errors.code}
+              placeholder="e.g. CAT-BEV"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Parent category"
+              value={form.parent_id || ''}
+              onChange={(event) => handleChange('parent_id', event.target.value)}
+              error={errors.parent_id}
+            >
+              <option value="">No parent (Top level)</option>
+              {parents
+                .filter((parent) => parent.id !== category?.id)
+                .map((parent) => (
+                  <option key={parent.id} value={parent.id}>
+                    {parent.name}
+                  </option>
+                ))}
+            </Select>
+            <Select
+              label="Status"
+              value={form.status}
+              onChange={(event) => handleChange('status', event.target.value)}
+              error={errors.status}
+            >
+              {STATUSES.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
-          </Select>
-          <Select
-            label="Status"
-            value={form.status}
-            onChange={(event) => handleChange('status', event.target.value)}
-            error={errors.status}
-          >
-            {STATUSES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
+            </Select>
+          </div>
+          <Textarea
+            label="Description"
+            value={form.description || ''}
+            onChange={(event) => handleChange('description', event.target.value)}
+            rows={3}
+            placeholder="Brief explanation of items in this category..."
+          />
         </div>
-        <Textarea
-          label="Description"
-          value={form.description || ''}
-          onChange={(event) => handleChange('description', event.target.value)}
-          rows={3}
-        />
       </form>
     </Modal>
   );

@@ -6,19 +6,18 @@ import { Modal } from '@/components/ui/Modal.jsx';
 import { Input } from '@/components/ui/Input.jsx';
 import { Select } from '@/components/ui/Select.jsx';
 import { Button } from '@/components/ui/Button.jsx';
-import { Switch } from '@/components/ui/Switch.jsx';
 import { cn } from '@/lib/cn.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 
 function emptyState(roles, defaults) {
+  const assignableRoles = (roles || []).filter((role) => role.name !== 'salesman');
   return {
-    role_id: defaults?.role_id ?? roles?.[0]?.id ?? '',
+    role_id: defaults?.role_id ?? assignableRoles[0]?.id ?? '',
     full_name: defaults?.full_name ?? '',
     username: defaults?.username ?? '',
     email: defaults?.email ?? '',
     phone: defaults?.phone ?? '',
     password: '',
-    create_real_salesman: false,
     status: defaults?.status ?? 'active'
   };
 }
@@ -28,6 +27,7 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(() => emptyState(roles, user));
   const [errors, setErrors] = useState({});
+  const assignableRoles = roles.filter((role) => role.name !== 'salesman' || (isEdit && Number(role.id) === Number(user?.role_id)));
 
   useEffect(() => {
     if (open) {
@@ -60,10 +60,7 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
   function handleChange(field, value) {
     setForm((prev) => ({
       ...prev,
-      [field]: value,
-      ...(field === 'role_id' && roles.find((role) => String(role.id) === String(value))?.name !== 'salesman'
-        ? { create_real_salesman: false }
-        : {})
+      [field]: value
     }));
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
   }
@@ -96,9 +93,6 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
       phone: form.phone?.trim() || null,
       status: form.status
     };
-    if (!isEdit && selectedRole?.name === 'salesman' && form.create_real_salesman) {
-      payload.create_real_salesman = true;
-    }
     if (form.password) payload.password = form.password;
     if (!isEdit && !form.password) {
       // create requires password (validated above) but defensive guard
@@ -106,9 +100,6 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
     }
     mutation.mutate(payload);
   }
-
-  const selectedRole = roles.find((role) => String(role.id) === String(form.role_id));
-  const isSalesmanRole = selectedRole?.name === 'salesman';
 
   return (
     <Modal
@@ -194,20 +185,13 @@ export function UserFormModal({ open, onClose, user, roles = [] }) {
           error={errors.role_id}
         >
           <option value="">Select a role</option>
-          {roles.map((role) => (
+          {assignableRoles.map((role) => (
             <option key={role.id} value={role.id}>
               {role.display_name || role.name}
             </option>
           ))}
         </Select>
-        {!isEdit && isSalesmanRole && (
-          <Switch
-            checked={form.create_real_salesman}
-            onChange={(checked) => handleChange('create_real_salesman', checked)}
-            label="Add as real salesman"
-            description="Create a linked salesman record automatically for dispatch, targets, commissions, and customer assignment."
-          />
-        )}
+        {!isEdit && <p className="-mt-2 text-xs text-ink-400">Create salesman accounts from the Salesmen workflow so their salary, commission, and territory stay linked.</p>}
         <Input
           label={isEdit ? 'New password (optional)' : 'Password'}
           type="password"

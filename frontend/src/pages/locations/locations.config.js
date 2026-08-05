@@ -64,20 +64,6 @@ export const LOCATIONS_TABS = [
     to: '/locations/sublocations',
     anyOfPermissions: [LOCATIONS_PERMISSIONS.locations]
   },
-  {
-    id: 'salesmen',
-    featureKey: 'locations.salesmen',
-    label: 'Salesmen',
-    to: '/locations/salesmen',
-    anyOfPermissions: [LOCATIONS_PERMISSIONS.salesmen]
-  },
-  {
-    id: 'targets',
-    featureKey: 'locations.targets',
-    label: 'Targets',
-    to: '/locations/targets',
-    anyOfPermissions: [LOCATIONS_PERMISSIONS.targets]
-  }
 ];
 
 export function pickFirstAllowedLocationsTab(hasPermission, hasModule = () => true) {
@@ -87,5 +73,7 @@ export function pickFirstAllowedLocationsTab(hasPermission, hasModule = () => tr
       return tab.to;
     }
   }
+  if (hasPermission(LOCATIONS_PERMISSIONS.salesmen)) return '/salesmen?tab=directory';
+  if (hasPermission(LOCATIONS_PERMISSIONS.targets)) return '/salesmen?tab=targets';
   return null;
 }

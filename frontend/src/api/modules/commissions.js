@@ -12,9 +12,12 @@ export function createCommissionsApi(client) {
     rules,
     calculations: {
       ...calculations,
-      calculate: (payload, options) => client.post('/commissions/calculate', payload, options),
       approve: (id, options) => client.post(`/commissions/${id}/approve`, undefined, options),
       pay: (id, payload, options) => client.post(`/commissions/${id}/pay`, payload, options)
+    },
+    payroll: {
+      list: (params, options) => client.get('/commission-payroll', { ...options, params }),
+      pay: (salesmanId, payload, options) => client.post(`/commission-payroll/${salesmanId}/pay`, payload, options)
     }
   };
 }

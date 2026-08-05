@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Printer } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { getErrorMessage } from '@/lib/errors.js';
 import {
@@ -17,6 +18,9 @@ import {
   getCustomerStatusTone
 } from './customers.config.js';
 import { cn } from '@/lib/cn.js';
+import { ReceiptPrintModal } from '@/pages/payments/ReceiptPrintModal.jsx';
+import { CustomerPaymentPrintModal } from '@/pages/payments/CustomerPaymentPrintModal.jsx';
+import { CustomerDebtDrawer } from '@/pages/payments/CustomerDebtDrawer.jsx';
 
 const TABS = [
   { id: 'profile', label: 'Profile' },
@@ -76,6 +80,7 @@ function HistoryList({ items, getKey, render, isPending, isError, error, onRetry
 
 function ReceiptsTab({ customerId }) {
   const [page, setPage] = useState(1);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
   const limit = 10;
   const queryParams = useMemo(() => ({ page, limit }), [page]);
   const query = useQuery({
@@ -86,47 +91,65 @@ function ReceiptsTab({ customerId }) {
   const items = query.data?.data?.customer_receipts || [];
   const meta = query.data?.meta || {};
   return (
-    <HistoryList
-      items={items}
-      getKey={(item) => item.id}
-      isPending={query.isPending}
-      isError={query.isError}
-      error={query.error}
-      onRetry={() => query.refetch()}
-      emptyTitle="No receipts yet"
-      emptyDescription="Receipts appear here after customer dispatches are settled."
-      render={(item) => (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink-50">
-              {item.receipt_number || `Receipt #${item.id}`}
-            </p>
-            <p className="truncate text-xs text-ink-400">
-              {formatDateTime(item.created_at || item.receipt_date)}
-            </p>
+    <>
+      <HistoryList
+        items={items}
+        getKey={(item) => item.id}
+        isPending={query.isPending}
+        isError={query.isError}
+        error={query.error}
+        onRetry={() => query.refetch()}
+        emptyTitle="No receipts yet"
+        emptyDescription="Receipts appear here after customer dispatches are settled."
+        render={(item) => (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate font-medium text-ink-50">
+                {item.receipt_number || `Receipt #${item.id}`}
+              </p>
+              <p className="truncate text-xs text-ink-400">
+                {formatDateTime(item.created_at || item.receipt_date)}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-sm text-ink-100">
+                {formatNumber(item.total_amount ?? item.amount, { maximumFractionDigits: 4 })}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={Printer}
+                onClick={() => setSelectedReceipt(item)}
+              >
+                Print
+              </Button>
+            </div>
           </div>
-          <span className="font-mono text-sm text-ink-100">
-            {formatNumber(item.total_amount ?? item.amount, { maximumFractionDigits: 4 })}
-          </span>
-        </div>
-      )}
-      footer={
-        meta?.totalPages ? (
-          <Pagination
-            page={meta.page || page}
-            totalPages={meta.totalPages || 1}
-            total={meta.total}
-            limit={meta.limit || limit}
-            onChange={setPage}
-          />
-        ) : null
-      }
-    />
+        )}
+        footer={
+          meta?.totalPages ? (
+            <Pagination
+              page={meta.page || page}
+              totalPages={meta.totalPages || 1}
+              total={meta.total}
+              limit={meta.limit || limit}
+              onChange={setPage}
+            />
+          ) : null
+        }
+      />
+      <ReceiptPrintModal
+        open={Boolean(selectedReceipt)}
+        onClose={() => setSelectedReceipt(null)}
+        receipt={selectedReceipt}
+      />
+    </>
   );
 }
 
 function DebtsTab({ customerId }) {
   const [page, setPage] = useState(1);
+  const [selectedDebtId, setSelectedDebtId] = useState(null);
   const limit = 10;
   const queryParams = useMemo(() => ({ page, limit }), [page]);
   const query = useQuery({
@@ -137,52 +160,68 @@ function DebtsTab({ customerId }) {
   const items = query.data?.data?.customer_debts || [];
   const meta = query.data?.meta || {};
   return (
-    <HistoryList
-      items={items}
-      getKey={(item) => item.id}
-      isPending={query.isPending}
-      isError={query.isError}
-      error={query.error}
-      onRetry={() => query.refetch()}
-      emptyTitle="No debts on record"
-      emptyDescription="Outstanding debts will appear here as dispatches go on credit."
-      render={(item) => (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink-50">
-              {item.debt_number || `Debt #${item.id}`}
-            </p>
-            <p className="truncate text-xs text-ink-400">
-              {formatDate(item.due_date || item.created_at)}
-            </p>
+    <>
+      <HistoryList
+        items={items}
+        getKey={(item) => item.id}
+        isPending={query.isPending}
+        isError={query.isError}
+        error={query.error}
+        onRetry={() => query.refetch()}
+        emptyTitle="No debts on record"
+        emptyDescription="Outstanding debts will appear here as dispatches go on credit."
+        render={(item) => (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate font-medium text-ink-50">
+                {item.debt_number || `Debt #${item.id}`}
+              </p>
+              <p className="truncate text-xs text-ink-400">
+                {formatDate(item.due_date || item.created_at)}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-sm text-ink-100">
+                {formatNumber(item.balance_amount ?? item.amount, {
+                  maximumFractionDigits: 4
+                })}
+              </span>
+              {item.status ? <Badge tone="neutral">{item.status}</Badge> : null}
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={Printer}
+                onClick={() => setSelectedDebtId(item.id)}
+              >
+                Print statement
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-ink-100">
-              {formatNumber(item.balance_amount ?? item.amount, {
-                maximumFractionDigits: 4
-              })}
-            </span>
-            {item.status ? <Badge tone="neutral">{item.status}</Badge> : null}
-          </div>
-        </div>
-      )}
-      footer={
-        meta?.totalPages ? (
-          <Pagination
-            page={meta.page || page}
-            totalPages={meta.totalPages || 1}
-            total={meta.total}
-            limit={meta.limit || limit}
-            onChange={setPage}
-          />
-        ) : null
-      }
-    />
+        )}
+        footer={
+          meta?.totalPages ? (
+            <Pagination
+              page={meta.page || page}
+              totalPages={meta.totalPages || 1}
+              total={meta.total}
+              limit={meta.limit || limit}
+              onChange={setPage}
+            />
+          ) : null
+        }
+      />
+      <CustomerDebtDrawer
+        open={Boolean(selectedDebtId)}
+        onClose={() => setSelectedDebtId(null)}
+        debtId={selectedDebtId}
+      />
+    </>
   );
 }
 
 function PaymentsTab({ customerId }) {
   const [page, setPage] = useState(1);
+  const [selectedPayment, setSelectedPayment] = useState(null);
   const limit = 10;
   const queryParams = useMemo(() => ({ page, limit }), [page]);
   const query = useQuery({
@@ -193,45 +232,60 @@ function PaymentsTab({ customerId }) {
   const items = query.data?.data?.customer_payments || [];
   const meta = query.data?.meta || {};
   return (
-    <HistoryList
-      items={items}
-      getKey={(item) => item.id}
-      isPending={query.isPending}
-      isError={query.isError}
-      error={query.error}
-      onRetry={() => query.refetch()}
-      emptyTitle="No payments yet"
-      emptyDescription="Payments collected from this customer will be listed here."
-      render={(item) => (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink-50">
-              {item.reference_number || `Payment #${item.id}`}
-            </p>
-            <p className="truncate text-xs text-ink-400">
-              {formatDate(item.payment_date || item.created_at)}
-            </p>
+    <>
+      <HistoryList
+        items={items}
+        getKey={(item) => item.id}
+        isPending={query.isPending}
+        isError={query.isError}
+        error={query.error}
+        onRetry={() => query.refetch()}
+        emptyTitle="No payments yet"
+        emptyDescription="Payments collected from this customer will be listed here."
+        render={(item) => (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate font-medium text-ink-50">
+                {item.reference_number || `Payment #${item.id}`}
+              </p>
+              <p className="truncate text-xs text-ink-400">
+                {formatDate(item.payment_date || item.created_at)}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-sm text-ink-100">
+                {formatNumber(item.amount, { maximumFractionDigits: 4 })}
+              </span>
+              {item.payment_method ? <Badge tone="neutral">{item.payment_method}</Badge> : null}
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={Printer}
+                onClick={() => setSelectedPayment(item)}
+              >
+                Print
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-ink-100">
-              {formatNumber(item.amount, { maximumFractionDigits: 4 })}
-            </span>
-            {item.payment_method ? <Badge tone="neutral">{item.payment_method}</Badge> : null}
-          </div>
-        </div>
-      )}
-      footer={
-        meta?.totalPages ? (
-          <Pagination
-            page={meta.page || page}
-            totalPages={meta.totalPages || 1}
-            total={meta.total}
-            limit={meta.limit || limit}
-            onChange={setPage}
-          />
-        ) : null
-      }
-    />
+        )}
+        footer={
+          meta?.totalPages ? (
+            <Pagination
+              page={meta.page || page}
+              totalPages={meta.totalPages || 1}
+              total={meta.total}
+              limit={meta.limit || limit}
+              onChange={setPage}
+            />
+          ) : null
+        }
+      />
+      <CustomerPaymentPrintModal
+        open={Boolean(selectedPayment)}
+        onClose={() => setSelectedPayment(null)}
+        payment={selectedPayment}
+      />
+    </>
   );
 }
 

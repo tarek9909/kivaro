@@ -4,15 +4,15 @@ const schemas = require('./notifications.schema');
 const asyncHandler = require('../../utils/asyncHandler');
 const validate = require('../../middleware/validate.middleware');
 const { authenticate } = require('../../middleware/auth.middleware');
-const { requirePermission } = require('../../middleware/permission.middleware');
+const { requireAnyPermission, requirePermission } = require('../../middleware/permission.middleware');
 
 const router = express.Router();
 
 router.use('/notifications', authenticate);
 
-router.get('/notifications', requirePermission('dashboard.view'), validate(schemas.listSchema), asyncHandler(controller.listNotifications));
+router.get('/notifications', requireAnyPermission('dashboard.view', 'salesman_workspace.view'), validate(schemas.listSchema), asyncHandler(controller.listNotifications));
 router.post('/notifications', requirePermission('settings.manage'), validate(schemas.createSchema), asyncHandler(controller.createNotification));
-router.patch('/notifications/read-all', requirePermission('dashboard.view'), asyncHandler(controller.markAllRead));
-router.patch('/notifications/:id/read', requirePermission('dashboard.view'), validate(schemas.idSchema), asyncHandler(controller.markRead));
+router.patch('/notifications/read-all', requireAnyPermission('dashboard.view', 'salesman_workspace.view'), asyncHandler(controller.markAllRead));
+router.patch('/notifications/:id/read', requireAnyPermission('dashboard.view', 'salesman_workspace.view'), validate(schemas.idSchema), asyncHandler(controller.markRead));
 
 module.exports = router;

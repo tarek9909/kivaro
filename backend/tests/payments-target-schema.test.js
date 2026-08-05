@@ -77,4 +77,35 @@ describe('payments target-schema contract', () => {
     expect(schemas.listSchema.parse({ query: { status: 'available' } }).query.status).toBe('available');
     expect(schemas.listSchema.parse({ query: { direction: 'credit' } }).query.direction).toBeUndefined();
   });
+
+  test('payments listing accepts the CSV export format and printable PDFs', () => {
+    expect(schemas.listSchema.parse({ query: { format: 'csv' } }).query.format).toBe('csv');
+    expect(schemas.printSchema.parse({ params: { id: 4 }, query: { format: 'pdf' } }).query.format).toBe('pdf');
+  });
+
+  test('direct customer payments require the customer, amount, date, and incoming account', () => {
+    const parsed = schemas.paymentSchema.parse({
+      body: { customer_id: 4, payment_date: '2026-08-04', amount: 12.5, cash_account_id: 2 }
+    });
+    expect(parsed.body.customer_id).toBe(4);
+    expect(parsed.body.cash_account_id).toBe(2);
+  });
+
+  test('debt payments retain the entered date, method, and reference', () => {
+    const parsed = schemas.debtPaymentSchema.parse({
+      params: { id: 4 },
+      body: {
+        amount: 12.5,
+        cash_account_id: 2,
+        payment_date: '2026-08-04',
+        payment_method: 'bank_transfer',
+        reference_number: 'TXN-44'
+      }
+    });
+    expect(parsed.body).toMatchObject({
+      payment_date: '2026-08-04',
+      payment_method: 'bank_transfer',
+      reference_number: 'TXN-44'
+    });
+  });
 });

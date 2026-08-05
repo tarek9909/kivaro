@@ -18,16 +18,14 @@ function buildClientStub() {
 }
 
 describe('Mini POS API module', () => {
-  it('uses the quantity-hidden catalogue and own-order endpoints', async () => {
+  it('uses the direct Mini POS catalogue, territory, customer, and workspace endpoints', async () => {
     const client = buildClientStub();
     const pos = createPosApi(client);
 
     await pos.catalog.list({ warehouse_id: 7 });
     await pos.territories.list();
     await pos.customers.create({ name: 'New customer', location_id: 1, sublocation_id: 2 });
-    await pos.orders.cancel(9, { notes: 'Customer unavailable' });
     await pos.workspace.get({ limit: 20 });
-    await pos.review.prepareDispatch({ pos_order_ids: [9] });
 
     expect(client.calls).toEqual([
       { method: 'get', path: '/pos/catalog', rest: [{ params: { warehouse_id: 7 } }] },
@@ -38,19 +36,9 @@ describe('Mini POS API module', () => {
         rest: [{ name: 'New customer', location_id: 1, sublocation_id: 2 }, undefined]
       },
       {
-        method: 'post',
-        path: '/pos/orders/9/cancel',
-        rest: [{ notes: 'Customer unavailable' }, undefined]
-      },
-      {
         method: 'get',
         path: '/pos/workspace',
         rest: [{ params: { limit: 20 } }]
-      },
-      {
-        method: 'post',
-        path: '/pos/review/prepare-dispatch',
-        rest: [{ pos_order_ids: [9] }, undefined]
       }
     ]);
   });

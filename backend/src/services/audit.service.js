@@ -52,7 +52,6 @@ const TABLE_ALIASES = {
   'ready-stock': 'ready_stock_containers',
   'sale-catalog': 'sale_catalog_entries',
   invoices: 'invoices',
-  pos: 'pos_orders',
   'purchase-orders': 'purchase_orders',
   'stock-adjustments': 'item_stock_movements',
   'stock-movements': 'item_stock_movements'

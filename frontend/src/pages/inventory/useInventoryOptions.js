@@ -29,7 +29,7 @@ export function useUnitsOptions(enabled = true) {
 export function useItemsOptions(enabled = true, params = {}) {
   return useQuery({
     queryKey: ['inventory', 'options', 'items', params],
-    queryFn: () => api.inventory.items.list({ ...PAGE, status: 'active', ...params }),
+    queryFn: () => api.inventory.items.list({ ...PAGE, status: 'active', picker: true, ...params }),
     staleTime: 60_000,
     enabled
   });
@@ -56,7 +56,7 @@ export function useOpenCartonShelvesOptions(enabled = true, params = {}) {
 export function useWarehousesOptions(enabled = true) {
   return useQuery({
     queryKey: ['inventory', 'options', 'warehouses'],
-    queryFn: () => api.inventory.warehouses.list({ ...PAGE, status: 'active' }),
+    queryFn: () => api.inventory.warehouses.list({ ...PAGE, status: 'active', picker: true }),
     staleTime: 60_000,
     enabled
   });

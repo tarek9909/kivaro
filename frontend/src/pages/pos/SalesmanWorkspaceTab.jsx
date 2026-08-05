@@ -1,12 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { BarChart3, CircleDollarSign, ClipboardList, PackageCheck, Route } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/formatters.js';
 import { Badge, Button, EmptyState, GlassPanel, GlassPanelBody, GlassPanelHeader } from '@/components/ui/index.js';
-import { statusLabel, statusTone } from './pos.constants.js';
-import { PosOrderDetailModal } from './PosOrderDetailModal.jsx';
 
 function Metric({ icon: Icon, label, value, description }) {
   return (
@@ -55,24 +53,31 @@ function EmptySection({ title, description }) {
 /**
  * The workspace is intentionally server-backed: its revenue, settlement,
  * debt, commission, and target figures are authoritative operational data,
- * rather than estimates inferred from pending Mini POS orders in the browser.
+ * rather than browser-side estimates.
  */
-export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
-  const [openOrderId, setOpenOrderId] = useState(null);
+export function SalesmanWorkspaceTab({ initialSalesmanId = '' }) {
+  const [selectedSalesmanId, setSelectedSalesmanId] = useState(() => String(initialSalesmanId || ''));
   const navigate = useNavigate();
+  useEffect(() => {
+    setSelectedSalesmanId(String(initialSalesmanId || ''));
+  }, [initialSalesmanId]);
   const workspaceQuery = useQuery({
-    queryKey: ['pos', 'workspace'],
-    queryFn: () => api.pos.workspace.get({ limit: 20 }),
+    queryKey: ['pos', 'workspace', selectedSalesmanId || 'self'],
+    queryFn: () => api.pos.workspace.get({
+      limit: 20,
+      ...(selectedSalesmanId ? { salesman_id: Number(selectedSalesmanId) } : {})
+    }),
     staleTime: 30_000
   });
   const workspace = workspaceQuery.data?.data?.workspace;
   const metrics = workspace?.metrics || {};
-  const orders = workspace?.recent_orders || [];
+  const orders = [];
   const dispatches = workspace?.recent_dispatches || [];
   const debts = workspace?.recent_debts || [];
   const commissions = workspace?.recent_commissions || [];
   const targets = workspace?.target_progress || [];
   const territories = workspace?.territories || [];
+  const availableSalesmen = workspace?.available_salesmen || [];
 
   if (workspaceQuery.isPending) {
     return <p className="py-12 text-center text-sm text-ink-400">Loading your salesman workspace...</p>;
@@ -86,12 +91,41 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
     );
   }
 
+  if (workspace?.selection_required) {
+    return (
+      <GlassPanel>
+        <GlassPanelBody className="space-y-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-ink-50">Choose a salesman workspace</h2>
+            <p className="mt-1 text-sm text-ink-300">Select a salesman to review their orders, deliveries, settlements, debts, and targets.</p>
+          </div>
+          <label className="block max-w-md text-sm font-medium text-ink-200" htmlFor="workspace-salesman">
+            Salesman
+            <select
+              id="workspace-salesman"
+              className="mt-1 w-full rounded-lg border border-white/15 bg-ink-950 px-3 py-2 text-ink-50"
+              value={selectedSalesmanId}
+              onChange={(event) => setSelectedSalesmanId(event.target.value)}
+            >
+              <option value="">Select a salesman</option>
+              {availableSalesmen.map((salesman) => (
+                <option key={salesman.id} value={salesman.id}>
+                  {salesman.full_name}{salesman.code ? ` (${salesman.code})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        </GlassPanelBody>
+      </GlassPanel>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="max-w-3xl text-sm text-ink-300">
-            Revenue, delivery, closeout, debt, and commission figures come directly from your dispatched work. Pending Mini POS orders never reserve stock or count as revenue.
+            Revenue, delivery, closeout, debt, and commission figures come directly from the assigned order and delivery workflow.
           </p>
           {workspace?.salesman?.full_name && (
             <p className="mt-2 text-xs text-ink-400">
@@ -106,7 +140,7 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         <Metric icon={CircleDollarSign} label="Dispatched revenue" value={formatCurrency(metrics.dispatched_revenue || 0)} description="Dispatched, partially settled, and completed work" />
         <Metric icon={PackageCheck} label="Open deliveries" value={formatNumber(metrics.active_delivery_count || 0)} description="Dispatched work still in delivery or settlement" />
-        <Metric icon={ClipboardList} label="Pending POS orders" value={formatNumber(metrics.pending_order_count || 0)} description="Waiting for manager review; no stock is reserved" />
+        <Metric icon={ClipboardList} label="Open orders" value={formatNumber(metrics.pending_dispatch_count || 0)} description="Draft, approval, and release-stage orders" />
         <Metric icon={Route} label="Closeouts submitted" value={formatNumber(metrics.submitted_closeout_count || 0)} description="Waiting for an authorized settlement posting" />
         <Metric icon={CircleDollarSign} label="Customer debt open" value={formatCurrency(metrics.open_balance_debt || 0)} description={`${formatNumber(metrics.open_balance_count || 0)} open salesman balance record(s)`} />
         <Metric icon={BarChart3} label="Commission pending" value={formatCurrency(metrics.pending_commission || 0)} description={`${formatCurrency(metrics.paid_commission || 0)} paid to date`} />
@@ -134,7 +168,7 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
                       <StatusBadge status={dispatch.status} />
                       <StatusBadge status={dispatch.settlement_status} fallback="Closeout not submitted" />
                       <Amount value={dispatch.total_amount} className="text-ink-100" />
-                      {['dispatched', 'partially_settled'].includes(dispatch.status) && (
+                      {['delivery', 'partially_settled'].includes(dispatch.status) && (
                         <Button
                           variant="secondary"
                           size="sm"
@@ -244,7 +278,7 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
           <GlassPanelHeader
             icon={BarChart3}
             title="Target progress"
-            subtitle="Current dispatched sales against each assigned target."
+            subtitle="Collected cash against each assigned target."
           />
           <GlassPanelBody>
             {targets.length ? (
@@ -277,7 +311,7 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
         </GlassPanel>
 
         <GlassPanel>
-          <GlassPanelHeader icon={Route} title="Assigned territories" subtitle="Customers created in Mini POS stay within these areas." />
+          <GlassPanelHeader icon={Route} title="Assigned territories" subtitle="Customers and orders are assigned within these areas." />
           <GlassPanelBody>
             {territories.length ? (
               <ul className="space-y-2">
@@ -295,12 +329,8 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
         </GlassPanel>
       </div>
 
-      <GlassPanel>
-        <GlassPanelHeader
-          icon={ClipboardList}
-          title="Recent Mini POS orders"
-          subtitle="Order status is historical; availability is rechecked only when a manager accepts selected orders."
-        />
+      <GlassPanel className="hidden">
+        <GlassPanelHeader icon={ClipboardList} title="Retired Mini POS history" />
         <GlassPanelBody>
           {orders.length ? (
             <div className="space-y-2">
@@ -311,24 +341,19 @@ export function SalesmanWorkspaceTab({ canLoadOrders = true }) {
                     <p className="mt-1 truncate text-xs text-ink-400">{order.customer_name || 'Customer'} · {formatDate(order.order_date)}</p>
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Badge tone={statusTone(order.status)}>{statusLabel(order.status)}</Badge>
+                    <Badge tone="neutral">Retired</Badge>
                     <Amount value={order.total_amount} className="text-ink-100" />
-                    {canLoadOrders ? (
-                      <Button variant="secondary" size="sm" onClick={() => setOpenOrderId(order.id)}>History</Button>
-                    ) : (
-                      <span className="text-xs text-ink-500">Order history requires own-order access</span>
-                    )}
+                    <span className="text-xs text-ink-500">Retired</span>
                   </div>
                 </article>
               ))}
             </div>
           ) : (
-            <EmptySection title="No Mini POS history yet" description="Your own orders and converted dispatch references will appear here." />
+            <EmptySection title="Orders are managed centrally" description="Use Orders & deliveries to review the salesman’s draft orders and deliveries." />
           )}
         </GlassPanelBody>
       </GlassPanel>
 
-      {canLoadOrders && <PosOrderDetailModal open={Boolean(openOrderId)} onClose={() => setOpenOrderId(null)} orderId={openOrderId} />}
     </div>
   );
 }

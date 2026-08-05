@@ -21,14 +21,19 @@ async function deleteRule(req, res) {
   successResponse(res, { message: 'Commission rule deleted', data: {} });
 }
 
-async function calculate(req, res) {
-  const commission = await service.calculateForSalesmanTarget(req.body.salesman_target_id, req.body, req.user);
-  successResponse(res, { statusCode: 201, message: 'Commission calculated', data: { commission } });
-}
-
 async function listCommissions(req, res) {
   const result = await service.listCommissions(req.query, req.user);
   successResponse(res, { message: 'Commissions fetched', data: { commissions: result.rows }, meta: result.meta });
+}
+
+async function listPayroll(req, res) {
+  const payroll = await service.listMonthlyPayroll(req.query, req.user);
+  successResponse(res, { message: 'Monthly payroll fetched', data: { payroll } });
+}
+
+async function payPayroll(req, res) {
+  const payroll_payment = await service.payMonthlyPayroll(req.params.salesmanId, req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Monthly payroll paid', data: { payroll_payment } });
 }
 
 async function getCommission(req, res) {
@@ -48,12 +53,13 @@ async function payCommission(req, res) {
 
 module.exports = {
   approveCommission,
-  calculate,
   createRule,
   deleteRule,
   getCommission,
   listCommissions,
+  listPayroll,
   listRules,
   payCommission,
+  payPayroll,
   updateRule
 };

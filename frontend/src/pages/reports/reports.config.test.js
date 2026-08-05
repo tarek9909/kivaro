@@ -21,14 +21,23 @@ const CANONICAL_KEYS = [
   'sales',
   'invoices',
   'gifts',
-  'posOrders',
   'customerBalances',
+  'customerProfitability',
   'salesmanPerformance',
   'salesmanTargetProgress',
   'debts',
   'purchases',
   'commissions',
-  'profitLoss'
+  'profitLoss',
+  'cashReconciliation',
+  'deliveryCloseouts',
+  'discounts',
+  'returns',
+  'vatSummary',
+  'productProfitability',
+  'orderPipeline',
+  'inventoryAging',
+  'territoryProfitability'
 ];
 
 describe('reports config', () => {
@@ -59,11 +68,11 @@ describe('reports config', () => {
   it('only declares filter names accepted by the report query schema', () => {
     const accepted = new Set([
       'search', 'warehouse', 'item', 'packaging_group', 'customer', 'salesman',
-      'location', 'sublocation', 'supplier', 'stock_health', 'stock_mode',
+      'location', 'sublocation', 'supplier', 'cash_account', 'stock_health', 'stock_mode',
       'ready_status', 'component_role', 'movement_type', 'reference_type', 'source',
-      'fulfillment_type', 'invoice_status', 'pos_status', 'dispatch_status',
+      'fulfillment_type', 'invoice_status', 'post_settlement_exception', 'dispatch_status',
       'operation_status', 'debt_status', 'purchase_status', 'commission_status',
-      'date_from', 'date_to'
+      'cash_account', 'date_from', 'date_to'
     ]);
     for (const report of Object.values(REPORTS_REGISTRY)) {
       for (const filter of report.filters) expect(accepted.has(filter)).toBe(true);

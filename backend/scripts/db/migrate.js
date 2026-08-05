@@ -4,10 +4,12 @@ const {
   createDatabaseConnection,
   databaseTables,
   ensureDatabaseExists,
-  TARGET_BASELINE_MIGRATION
+  TARGET_BASELINE_MIGRATION,
+  UPGRADE_BASELINE_MIGRATION
 } = require('./lib');
 
 const migrationsDir = path.resolve(__dirname, '..', '..', 'migrations');
+const LEGACY_POS_REMOVAL_MIGRATION = '039_remove_legacy_pending_pos.sql';
 
 function readMigrations() {
   if (!fs.existsSync(migrationsDir)) {
@@ -37,6 +39,29 @@ async function ensureMigrationsTable(connection) {
       applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB`
   );
+  await connection.execute(
+    `CREATE TABLE IF NOT EXISTS schema_migration_runs (
+      migration_name VARCHAR(255) PRIMARY KEY,
+      status ENUM('running', 'completed', 'failed') NOT NULL,
+      started_at DATETIME NOT NULL,
+      completed_at DATETIME NULL,
+      error_message TEXT NULL
+    ) ENGINE=InnoDB`
+  );
+}
+
+async function markMigrationRun(connection, migrationName, status, errorMessage = null) {
+  await connection.execute(
+    `INSERT INTO schema_migration_runs (
+      migration_name, status, started_at, completed_at, error_message
+    ) VALUES (?, ?, NOW(), CASE WHEN ? = 'completed' THEN NOW() ELSE NULL END, ?)
+    ON DUPLICATE KEY UPDATE
+      status = VALUES(status),
+      started_at = CASE WHEN VALUES(status) = 'running' THEN NOW() ELSE started_at END,
+      completed_at = CASE WHEN VALUES(status) = 'completed' THEN NOW() ELSE NULL END,
+      error_message = VALUES(error_message)`,
+    [migrationName, status, status, errorMessage]
+  );
 }
 
 async function appliedMigrations(connection) {
@@ -46,17 +71,20 @@ async function appliedMigrations(connection) {
 
 async function assertTargetBaseline(connection) {
   const tables = new Set(await databaseTables(connection));
+  const applied = await appliedMigrations(connection);
   const required = [
     'items',
     'item_stock_balances',
     'item_stock_movements',
     'carton_stock_lots',
-    'open_carton_shelves',
+    'ready_shelf_stocks',
+    'ready_shelf_stock_movements',
+    'packaging_shelf_remainders',
     'packaging_groups',
     'ready_stock_containers',
     'dispatch_line_allocations',
     'invoices',
-    'pos_orders'
+    ...(applied.has(LEGACY_POS_REMOVAL_MIGRATION) ? [] : ['pos_orders'])
   ];
   const missing = required.filter((table) => !tables.has(table));
 
@@ -67,10 +95,10 @@ async function assertTargetBaseline(connection) {
     );
   }
 
-  const applied = await appliedMigrations(connection);
-  if (!applied.has(TARGET_BASELINE_MIGRATION)) {
+  if (!applied.has(TARGET_BASELINE_MIGRATION) && !applied.has(UPGRADE_BASELINE_MIGRATION)) {
     throw new Error(
-      `Target baseline migration ${TARGET_BASELINE_MIGRATION} is missing from schema_migrations. ` +
+      `Neither the clean baseline ${TARGET_BASELINE_MIGRATION} nor supported upgrade baseline ` +
+      `${UPGRADE_BASELINE_MIGRATION} is recorded in schema_migrations. ` +
       'Re-import the clean baseline instead of marking migrations manually.'
     );
   }
@@ -135,9 +163,7 @@ async function runMigrations({ dryRun = false } = {}) {
     await ensureMigrationsTable(connection);
 
     const applied = await assertTargetBaseline(connection);
-    const pending = migrations.filter(
-      (migration) => migration.name !== TARGET_BASELINE_MIGRATION && !applied.has(migration.name)
-    );
+    const pending = migrations.filter((migration) => !applied.has(migration.name));
 
     if (dryRun) {
       return { pending: pending.map((migration) => migration.name), applied: [], bootstrapped: false };
@@ -145,6 +171,10 @@ async function runMigrations({ dryRun = false } = {}) {
 
     const appliedNow = [];
     for (const migration of pending) {
+      // MySQL DDL may auto-commit, so a transaction alone cannot prove a
+      // migration was atomic.  Keep durable run state for safe diagnosis and
+      // reruns of idempotent migration SQL.
+      await markMigrationRun(connection, migration.name, 'running');
       await connection.beginTransaction();
       try {
         await executeMigrationSql(connection, migration.sql);
@@ -153,9 +183,11 @@ async function runMigrations({ dryRun = false } = {}) {
           [migration.name]
         );
         await connection.commit();
+        await markMigrationRun(connection, migration.name, 'completed');
         appliedNow.push(migration.name);
       } catch (error) {
         await connection.rollback();
+        await markMigrationRun(connection, migration.name, 'failed', error.message);
         throw new Error(`${migration.name}: ${error.message}`);
       }
     }

@@ -6,6 +6,28 @@ const model = require('../src/modules/inventory/inventory.model');
 describe('canonical inventory model queries', () => {
   beforeEach(() => jest.clearAllMocks());
 
+  test('creates carton lots with one value for every declared column', async () => {
+    const connection = { execute: jest.fn().mockResolvedValue([{ insertId: 12 }]) };
+
+    await model.createCartonStockLot(connection, {
+      store_id: 1,
+      warehouse_id: 2,
+      item_id: 3,
+      received_cartons: 4,
+      remaining_cartons: 4,
+      kg_per_carton: 10,
+      unit_cost_per_carton: 20,
+      source_type: 'opening_balance',
+      source_id: 3,
+      received_at: null,
+      created_by: 1
+    });
+
+    const [sql, params] = connection.execute.mock.calls[0];
+    expect((sql.match(/\?/g) || [])).toHaveLength(params.length);
+    expect(params).toHaveLength(11);
+  });
+
   test('lists item balances from the canonical item ledger with shelf and carton state', async () => {
     db.query
       .mockResolvedValueOnce([{ total: 1 }])

@@ -42,6 +42,16 @@ describe('accounting hardening integration', () => {
     const categoryId = categoryResponse.body.data.expense_category.id;
     const cashAccountId = cashAccountResponse.body.data.cash_account.id;
 
+    const openingTransactions = await dbQuery(
+      `SELECT transaction_type, direction, amount
+       FROM financial_transactions
+       WHERE reference_type = 'cash_account' AND reference_id = ?`,
+      [cashAccountId]
+    );
+    expect(openingTransactions).toEqual([
+      expect.objectContaining({ transaction_type: 'opening_balance', direction: 'in', amount: '100.0000' })
+    ]);
+
     await authRequest(token)
       .patch(`/api/expenses/1`)
       .send({ amount: -1 })
@@ -94,6 +104,14 @@ describe('accounting hardening integration', () => {
       [cashAccountId]
     );
     expect(Number(account.current_balance)).toBe(100);
+
+    const ledgerBalance = await dbQuery(
+      `SELECT COALESCE(SUM(CASE WHEN direction = 'in' THEN amount ELSE -amount END), 0) AS balance
+       FROM financial_transactions
+       WHERE cash_account_id = ?`,
+      [cashAccountId]
+    );
+    expect(Number(ledgerBalance[0].balance)).toBe(100);
 
     const [expense] = await dbQuery(
       'SELECT status, voided_at FROM expenses WHERE id = ?',

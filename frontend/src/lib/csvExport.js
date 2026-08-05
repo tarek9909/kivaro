@@ -56,12 +56,6 @@ export const SALESMAN_EXPORT_OPTIONS = [
     filename: 'salesmen-performance.csv'
   },
   {
-    value: 'orders',
-    dataset: 'orders',
-    label: 'Mini POS orders (current filters)',
-    filename: 'salesmen-orders.csv'
-  },
-  {
     value: 'invoices',
     dataset: 'invoices',
     label: 'Invoices (current filters)',
@@ -124,7 +118,6 @@ export function buildSalesmanExport({ optionValue, filters = {} }) {
       ...copyDefined(filters, [
         'search',
         'salesman_id',
-        'pos_status',
         'invoice_status',
         'date_from',
         'date_to'

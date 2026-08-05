@@ -4,10 +4,14 @@ import {
   DISPATCH_PERMISSIONS,
   DISPATCH_STATUSES,
   DISPATCH_STATUS_FILTER_OPTIONS,
+  DISPATCH_WORKFLOW_TABS,
   DISPATCH_TABS,
   PAYMENT_METHODS,
   getAvailableDispatchActions,
+  getDispatchEntityLabel,
+  getDispatchStatusFilterOptions,
   getDispatchStatusTone,
+  getDispatchWorkflowTab,
   pickFirstAllowedDispatchTab
 } from './dispatch.config.js';
 
@@ -17,6 +21,7 @@ describe('dispatch config', () => {
       view: 'dispatch.view',
       create: 'dispatch.create',
       approve: 'dispatch.approve',
+      closeout: 'delivery.closeout',
       settle: 'dispatch.settle',
       print: 'dispatch.print',
       salesmanWorkspace: 'salesman_workspace.view'
@@ -28,18 +33,23 @@ describe('dispatch config', () => {
       'dispatch.view',
       'dispatch.create',
       'dispatch.approve',
+      'delivery.release',
+      'delivery.dispatch',
+      'delivery.record_returns',
+      'finance.settle_deliveries',
+      'delivery.closeout',
       'dispatch.settle',
       'dispatch.print',
       'salesman_workspace.view'
     ]);
   });
 
-  it('lists every backend dispatch status', () => {
+  it('lists the dispatch statuses available in the active UI workflow', () => {
     expect(DISPATCH_STATUSES.map((entry) => entry.value)).toEqual([
       'draft',
       'pending_approval',
       'approved',
-      'dispatched',
+      'delivery',
       'partially_settled',
       'completed',
       'cancelled'
@@ -67,6 +77,11 @@ describe('dispatch config', () => {
       'dispatch.view',
       'dispatch.create',
       'dispatch.approve',
+      'delivery.release',
+      'delivery.dispatch',
+      'delivery.record_returns',
+      'finance.settle_deliveries',
+      'delivery.closeout',
       'dispatch.settle',
       'dispatch.print',
       'salesman_workspace.view'
@@ -79,11 +94,43 @@ describe('getDispatchStatusTone', () => {
     expect(getDispatchStatusTone('draft')).toBe('neutral');
     expect(getDispatchStatusTone('pending_approval')).toBe('info');
     expect(getDispatchStatusTone('approved')).toBe('brand');
-    expect(getDispatchStatusTone('dispatched')).toBe('warn');
-    expect(getDispatchStatusTone('partially_settled')).toBe('info');
+    expect(getDispatchStatusTone('delivery')).toBe('warn');
+    expect(getDispatchStatusTone('partially_settled')).toBe('warn');
     expect(getDispatchStatusTone('completed')).toBe('success');
     expect(getDispatchStatusTone('cancelled')).toBe('danger');
     expect(getDispatchStatusTone('mystery')).toBe('neutral');
+  });
+});
+
+describe('getDispatchEntityLabel', () => {
+  it('uses order wording before approval and delivery wording afterwards', () => {
+    expect(getDispatchEntityLabel('draft')).toBe('Order');
+    expect(getDispatchEntityLabel('pending_approval')).toBe('Order');
+    expect(getDispatchEntityLabel('approved')).toBe('Delivery');
+    expect(getDispatchEntityLabel('delivery')).toBe('Delivery');
+    expect(getDispatchEntityLabel('partially_settled')).toBe('Delivery');
+    expect(getDispatchEntityLabel('completed')).toBe('Delivery');
+    expect(getDispatchEntityLabel('cancelled')).toBe('Order');
+  });
+
+  it('groups the workflow into tabs for the page', () => {
+    expect(DISPATCH_WORKFLOW_TABS).toEqual([
+      { id: 'all', label: 'All', statuses: null },
+      { id: 'orders', label: 'Orders', statuses: ['draft', 'pending_approval', 'cancelled'] },
+      { id: 'deliveries', label: 'Deliveries', statuses: ['approved', 'delivery', 'partially_settled'] },
+      { id: 'completed', label: 'Completed', statuses: ['completed'] }
+    ]);
+    expect(getDispatchStatusFilterOptions('all').length).toBe(8);
+    expect(getDispatchStatusFilterOptions('orders').map((option) => option.value)).toEqual([
+      '', 'draft', 'pending_approval', 'cancelled'
+    ]);
+    expect(getDispatchStatusFilterOptions('deliveries').map((option) => option.value)).toEqual([
+      '', 'approved', 'delivery', 'partially_settled'
+    ]);
+    expect(getDispatchStatusFilterOptions('completed').map((option) => option.value)).toEqual([
+      '', 'completed'
+    ]);
+    expect(getDispatchWorkflowTab('unknown').id).toBe('all');
   });
 });
 
@@ -111,20 +158,14 @@ describe('getAvailableDispatchActions', () => {
     );
   });
 
-  it('offers createReturn/createCloseout for a dispatched request', () => {
-    expect(getAvailableDispatchActions({ status: 'dispatched' })).toEqual(
+  it('offers createReturn/createCloseout for a delivery', () => {
+    expect(getAvailableDispatchActions({ status: 'delivery' })).toEqual(
       new Set(['createReturn', 'createCloseout'])
     );
   });
 
-  it('locks down a completed request', () => {
-    expect(getAvailableDispatchActions({ status: 'completed' })).toEqual(new Set());
-  });
-
-  it('offers createCloseout for a partially settled request', () => {
-    expect(getAvailableDispatchActions({ status: 'partially_settled' })).toEqual(
-      new Set(['createCloseout'])
-    );
+  it('allows a return adjustment after a completed request', () => {
+    expect(getAvailableDispatchActions({ status: 'completed' })).toEqual(new Set(['createReturn']));
   });
 
   it('locks down a cancelled request', () => {

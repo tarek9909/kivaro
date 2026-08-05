@@ -52,25 +52,25 @@ describe('CSV export query shaping', () => {
 
   it('maps the current salesman status filter to the export contract and preserves applicable filters', () => {
     const { option, params } = buildSalesmanExport({
-      optionValue: 'orders',
+      optionValue: 'invoices',
       filters: {
         page: 2,
         limit: 20,
         search: 'Maya',
         status: 'active',
         salesman_id: 8,
-        pos_status: 'pending',
+        invoice_status: 'issued',
         date_from: '2026-07-01',
         date_to: '2026-07-31'
       }
     });
 
-    expect(option.filename).toBe('salesmen-orders.csv');
+    expect(option.filename).toBe('salesmen-invoices.csv');
     expect(params).toEqual({
-      dataset: 'orders',
+      dataset: 'invoices',
       search: 'Maya',
       salesman_id: 8,
-      pos_status: 'pending',
+      invoice_status: 'issued',
       date_from: '2026-07-01',
       date_to: '2026-07-31',
       salesman_status: 'active'
@@ -80,7 +80,6 @@ describe('CSV export query shaping', () => {
   it('exposes every salesman export dataset', () => {
     expect(SALESMAN_EXPORT_OPTIONS.map((option) => option.value)).toEqual([
       'performance',
-      'orders',
       'invoices',
       'delivered_customers',
       'revenue'

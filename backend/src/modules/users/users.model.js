@@ -126,7 +126,7 @@ async function createUser(data, connection = null) {
   return findUserById(result.insertId, connection);
 }
 
-async function updateUser(id, data) {
+async function updateUser(id, data, connection = null) {
   const fields = [];
   const params = [];
 
@@ -138,28 +138,22 @@ async function updateUser(id, data) {
   }
 
   if (fields.length === 0) {
-    return findUserById(id);
+    return findUserById(id, connection);
   }
 
-  await query(
-    `UPDATE users
+  const sql = `UPDATE users
      SET ${fields.join(', ')}
-     WHERE id = ? AND deleted_at IS NULL`,
-    [...params, id]
-  );
-
+     WHERE id = ? AND deleted_at IS NULL`;
+  if (connection) {
+    await connection.execute(sql, [...params, id]);
+    return findUserById(id, connection);
+  }
+  await query(sql, [...params, id]);
   return findUserById(id);
 }
 
-async function updateUserStatus(id, status) {
-  await query(
-    `UPDATE users
-     SET status = ?
-     WHERE id = ? AND deleted_at IS NULL`,
-    [status, id]
-  );
-
-  return findUserById(id);
+async function updateUserStatus(id, status, connection = null) {
+  return updateUser(id, { status }, connection);
 }
 
 async function softDeleteUser(id) {

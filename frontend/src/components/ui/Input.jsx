@@ -11,6 +11,7 @@ export const Input = forwardRef(function Input(
     className,
     containerClassName,
     id,
+    disabled,
     ...props
   },
   ref
@@ -30,14 +31,16 @@ export const Input = forwardRef(function Input(
       )}
       <div
         className={cn(
-          'group flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 transition focus-within:border-brand-400/70 focus-within:bg-white/[0.07]',
-          error && 'border-rose-400/60 focus-within:border-rose-400/80'
+          'premium-input-container group flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3',
+          error && 'border-rose-400/60 focus-within:border-rose-400/80',
+          disabled && 'is-disabled'
         )}
       >
         {LeftIcon && <LeftIcon className="h-4 w-4 shrink-0 text-ink-300" aria-hidden="true" />}
         <input
           ref={ref}
           id={inputId}
+          disabled={disabled}
           aria-invalid={Boolean(error) || undefined}
           aria-describedby={error ? `${inputId}-error` : description ? `${inputId}-desc` : undefined}
           className={cn(

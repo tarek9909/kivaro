@@ -6,10 +6,12 @@ const bcrypt = require('bcryptjs');
 const mysql = require('mysql2/promise');
 const env = require('../../src/bootstrap/env');
 
-const TARGET_BASELINE_MIGRATION = '025_item_based_rebuild.sql';
+const TARGET_BASELINE_MIGRATION = '030_pos_delivery_batch_foundation.sql';
+const UPGRADE_BASELINE_MIGRATION = '029_whole_carton_shelf_stock.sql';
 
 const REQUIRED_TABLES = [
   'schema_migrations',
+  'schema_migration_runs',
   'roles',
   'stores',
   'store_modules',
@@ -22,10 +24,12 @@ const REQUIRED_TABLES = [
   'locations',
   'sublocations',
   'salesmen',
+  'salesman_salary_rates',
   'salesman_sublocations',
   'location_targets',
   'sublocation_targets',
   'salesman_targets',
+  'salesman_target_commission_snapshots',
   'customers',
   'item_categories',
   'units',
@@ -34,13 +38,15 @@ const REQUIRED_TABLES = [
   'item_stock_balances',
   'item_stock_movements',
   'carton_stock_lots',
-  'open_carton_shelves',
   'packaging_groups',
   'packaging_group_components',
   'packaging_operations',
   'packaging_operation_components',
   'ready_stock_containers',
   'ready_stock_movements',
+  'ready_shelf_stocks',
+  'ready_shelf_stock_movements',
+  'packaging_shelf_remainders',
   'sale_catalog_entries',
   'suppliers',
   'purchase_orders',
@@ -57,13 +63,10 @@ const REQUIRED_TABLES = [
   'invoice_lines',
   'dispatch_document_generations',
   'dispatch_returns',
+  'dispatch_return_credit_notes',
   'dispatch_settlements',
   'dispatch_settlement_customers',
   'salesman_balances',
-  'pos_orders',
-  'pos_order_lines',
-  'pos_order_events',
-  'pos_order_dispatch_links',
   'customer_debts',
   'customer_debt_adjustments',
   'customer_payments',
@@ -76,13 +79,19 @@ const REQUIRED_TABLES = [
   'commission_rules',
   'commission_calculations',
   'commission_payments',
+  'salesman_payroll_payments',
   'audit_logs',
   'notifications',
   'v_current_stock',
   'v_ready_stock',
   'v_customer_balances',
   'v_dispatch_summary',
-  'v_salesman_target_progress'
+  'v_salesman_target_progress',
+  'delivery_target_credits',
+  'target_collection_credits',
+  'target_events',
+  'target_notification_events',
+  'scheduler_heartbeats'
 ];
 
 const REQUIRED_PERMISSIONS = [
@@ -118,11 +127,14 @@ const REQUIRED_PERMISSIONS = [
   'dispatch.gifts.approve',
   'invoices.view',
   'invoices.print',
-  'pos.own_orders',
-  'pos.review',
-  'pos.accept',
   'pos.create_customers',
   'pos.request_gifts',
+  'pos.create_own',
+  'pos.create_for_salesman',
+  'delivery.release',
+  'delivery.dispatch',
+  'delivery.record_returns',
+  'finance.settle_deliveries',
   'salesman_workspace.view',
   'accounting.view',
   'accounting.manage',
@@ -456,7 +468,7 @@ async function checkDatabase() {
         [TARGET_BASELINE_MIGRATION]
       );
       const applied = new Set(migrationRows.map((row) => row.migration_name));
-      missingMigrations = applied.has(TARGET_BASELINE_MIGRATION)
+      missingMigrations = (applied.has(TARGET_BASELINE_MIGRATION) || applied.has(UPGRADE_BASELINE_MIGRATION))
         ? []
         : [TARGET_BASELINE_MIGRATION];
     } else {
@@ -575,6 +587,7 @@ module.exports = {
   REQUIRED_PERMISSIONS,
   REQUIRED_TABLES,
   TARGET_BASELINE_MIGRATION,
+  UPGRADE_BASELINE_MIGRATION,
   archiveAndResetDatabase,
   archiveDatabase,
   backupsDirectory,

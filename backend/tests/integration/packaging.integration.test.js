@@ -34,7 +34,7 @@ describe('flat packaging and ready-stock integration', () => {
 
     expect(preview.group_capacity_kg).toBe('6.0000');
     expect(preview.input.raw_quantity_kg).toBe('12.0000');
-    expect(preview.input.loose_units_required).toBe('30.0000');
+    expect(preview.input.stock_mode).toBe('weight');
     expect(preview.output.total_inner_quantity).toBe('30.0000');
     expect(preview.can_complete).toBe(true);
 

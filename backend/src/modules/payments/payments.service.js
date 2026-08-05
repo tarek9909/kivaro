@@ -6,7 +6,31 @@ const { withTransaction } = require('../../utils/transaction');
 const accountingModel = require('../accounting/accounting.model');
 const customerModel = require('../customers/customers.model');
 const locationModel = require('../locations/locations.model');
+const targetCollections = require('../locations/targetCollections.service');
 const model = require('./payments.model');
+
+async function recordDebtCollection(connection, debt, sourceId, amount, paymentDate) {
+  if (!debt.dispatch_customer_id) return;
+  const [rows] = await connection.execute(
+    `SELECT dc.sublocation_id, dr.salesman_id
+     FROM dispatch_customers dc JOIN dispatch_requests dr ON dr.id = dc.dispatch_request_id
+     WHERE dc.id = ? LIMIT 1`,
+    [debt.dispatch_customer_id]
+  );
+  const source = rows[0];
+  if (!source?.sublocation_id || !source?.salesman_id) return;
+  await targetCollections.recordCollection(connection, {
+    storeId: debt.store_id,
+    salesmanId: source.salesman_id,
+    sublocationId: source.sublocation_id,
+    dispatchCustomerId: debt.dispatch_customer_id,
+    sourceType: 'payment_allocation',
+    sourceId,
+    amount,
+    collectionDate: paymentDate,
+    notes: 'Customer debt collection'
+  });
+}
 
 async function validateCashAccount(cashAccountId, storeId) {
   if (!cashAccountId) {
@@ -98,16 +122,25 @@ async function createCustomerPayment(data, userId, actor = {}) {
       const nextRemaining = decimal(debt.remaining_amount).minus(allocationAmount);
       const nextPaid = decimal(debt.paid_amount).plus(allocationAmount);
       const nextStatus = nextRemaining.eq(0) ? 'paid' : 'partially_paid';
-      await model.createPaymentAllocation(connection, {
+      const allocationId = await model.createPaymentAllocation(connection, {
         customer_payment_id: paymentId,
         customer_debt_id: debt.id,
         allocated_amount: toMoney(allocationAmount)
       });
+      await recordDebtCollection(connection, debt, allocationId, allocationAmount, scoped.payment_date);
       await model.updateDebt(debt.id, {
         paid_amount: toMoney(nextPaid),
         remaining_amount: toMoney(nextRemaining),
         status: nextStatus
       }, connection);
+      if (nextStatus === 'paid' && debt.dispatch_customer_id) {
+        await connection.execute(
+          `UPDATE delivery_target_credits
+           SET status = 'earned', reference_date = ?
+           WHERE store_id = ? AND dispatch_customer_id = ? AND status = 'pending'`,
+          [scoped.payment_date, debt.store_id, debt.dispatch_customer_id]
+        );
+      }
       allocations.push({
         customer_debt_id: debt.id,
         allocated_amount: toMoney(allocationAmount)
@@ -151,6 +184,7 @@ async function createCustomerPayment(data, userId, actor = {}) {
     await accountingModel.createFinancialTransaction(connection, {
       store_id: scoped.store_id,
       cash_account_id: scoped.cash_account_id,
+      transaction_date: scoped.payment_date,
       transaction_type: 'sale_collection',
       direction: 'in',
       amount: scoped.amount,
@@ -167,12 +201,13 @@ async function createCustomerPayment(data, userId, actor = {}) {
 async function payDebt(debtId, data, userId, actor = {}) {
   let paymentId;
   let receiptId;
+  const paymentDate = data.payment_date || new Date().toISOString().slice(0, 10);
 
   await withTransaction(async (connection) => {
     const debt = await model.lockDebtById(connection, debtId);
     assertRowInScope(debt, actor, 'Customer debt not found');
     await validateCashAccount(data.cash_account_id, debt.store_id);
-    await validateSalesman(data.collected_by_salesman_id || debt.salesman_id, debt.store_id);
+    await validateSalesman(debt.salesman_id, debt.store_id);
 
     if (!['pending', 'partially_paid'].includes(debt.status)) {
       throw ApiError.conflict('Only pending or partially paid debts can be paid');
@@ -191,24 +226,36 @@ async function payDebt(debtId, data, userId, actor = {}) {
       customer_id: debt.customer_id,
       cash_account_id: data.cash_account_id,
       payment_number: createDocumentNumber('PAY'),
-      payment_date: data.payment_date,
+      payment_date: paymentDate,
       amount: data.amount,
-      payment_method: data.payment_method,
-      reference_number: data.reference_number,
-      collected_by_salesman_id: data.collected_by_salesman_id || debt.salesman_id,
+      payment_method: data.payment_method || 'cash',
+      reference_number: data.reference_number || null,
+      collected_by_salesman_id: debt.salesman_id,
       notes: data.notes,
       created_by: userId
     });
-    await model.createPaymentAllocation(connection, {
+    const allocationId = await model.createPaymentAllocation(connection, {
       customer_payment_id: paymentId,
       customer_debt_id: debtId,
       allocated_amount: data.amount
     });
+    await recordDebtCollection(connection, debt, allocationId, data.amount, paymentDate);
     await model.updateDebt(debtId, {
       paid_amount: toMoney(paidAmount),
       remaining_amount: toMoney(remaining),
       status: nextStatus
     }, connection);
+    if (nextStatus === 'paid' && debt.dispatch_customer_id) {
+      // Debt does not contribute to the salesman target until it is fully
+      // closed. Keep the original delivery date, but credit the target in the
+      // payment period that actually closed the debt.
+      await connection.execute(
+        `UPDATE delivery_target_credits
+         SET status = 'earned', reference_date = ?
+         WHERE store_id = ? AND dispatch_customer_id = ? AND status = 'pending'`,
+        [paymentDate, debt.store_id, debt.dispatch_customer_id]
+      );
+    }
     receiptId = await model.createReceipt(connection, {
       store_id: debt.store_id,
       receipt_number: createDocumentNumber('RCP'),
@@ -216,7 +263,7 @@ async function payDebt(debtId, data, userId, actor = {}) {
       dispatch_request_id: debt.dispatch_request_id,
       dispatch_customer_id: debt.dispatch_customer_id,
       customer_payment_id: paymentId,
-      receipt_date: data.payment_date,
+      receipt_date: paymentDate,
       subtotal_amount: debt.subtotal_amount || debt.original_amount,
       vat_amount: debt.vat_amount || 0,
       total_amount: debt.original_amount,
@@ -229,6 +276,7 @@ async function payDebt(debtId, data, userId, actor = {}) {
     await accountingModel.createFinancialTransaction(connection, {
       store_id: debt.store_id,
       cash_account_id: data.cash_account_id,
+      transaction_date: paymentDate,
       transaction_type: 'customer_debt_payment',
       direction: 'in',
       amount: data.amount,
@@ -290,6 +338,14 @@ async function applyCreditToDebt(debtId, data = {}, userId, actor = {}) {
       remaining_amount: toMoney(remaining),
       status: nextStatus
     }, connection);
+    if (nextStatus === 'paid' && debt.dispatch_customer_id) {
+      await connection.execute(
+        `UPDATE delivery_target_credits
+         SET status = 'earned', reference_date = ?
+         WHERE store_id = ? AND dispatch_customer_id = ? AND status = 'pending'`,
+        [data.apply_date || new Date().toISOString().slice(0, 10), debt.store_id, debt.dispatch_customer_id]
+      );
+    }
     receiptId = await model.createReceipt(connection, {
       store_id: debt.store_id,
       receipt_number: createDocumentNumber('RCP'),
@@ -318,50 +374,16 @@ module.exports = {
   applyCreditToDebt,
   createCustomerPayment,
   getDebt,
+  getPayment: async (id, actor = {}) => {
+    const payment = await model.findPaymentById(id);
+    assertRowInScope(payment, actor, 'Customer payment not found');
+    return payment;
+  },
   getReceipt,
   listDebts: (query, actor = {}) => model.listDebts(scopedQuery(query, actor)),
   listCredits: (query, actor = {}) => model.listCredits(scopedQuery(query, actor)),
   listPayments: (query, actor = {}) => model.listPayments(scopedQuery(query, actor)),
   listReceipts: (query, actor = {}) => model.listReceipts(scopedQuery(query, actor)),
   markReceiptPrinted: async (id, actor = {}) => { await getReceipt(id, actor); return model.markReceiptPrinted(id); },
-  payDebt,
-  updateDebtStatus: async (id, status, actor = {}) => {
-    const debt = await getDebt(id, actor);
-    const paid = decimal(debt.paid_amount);
-    const remaining = decimal(debt.remaining_amount);
-    if (status === 'paid' && !remaining.eq(0)) {
-      throw ApiError.conflict('Debt can only be marked paid when remaining amount is zero');
-    }
-    if (status === 'pending' && !paid.eq(0)) {
-      throw ApiError.conflict('Debt with payments cannot be marked pending');
-    }
-    if (['written_off', 'cancelled'].includes(status) && remaining.gt(0)) {
-      return withTransaction(async (connection) => {
-        const lockedDebt = await model.lockDebtById(connection, id);
-        assertRowInScope(lockedDebt, actor, 'Customer debt not found');
-        const lockedRemaining = decimal(lockedDebt.remaining_amount);
-        if (lockedRemaining.lte(0)) {
-          return model.updateDebt(id, { status }, connection);
-        }
-
-        await model.createDebtAdjustment(connection, {
-          store_id: lockedDebt.store_id,
-          customer_debt_id: lockedDebt.id,
-          dispatch_request_id: lockedDebt.dispatch_request_id,
-          adjustment_date: new Date().toISOString().slice(0, 10),
-          adjustment_type: status === 'written_off' ? 'write_off' : 'decrease',
-          amount: toMoney(lockedRemaining),
-          reason: `Non-cash ${status} adjustment applied.`,
-          created_by: actor.id
-        });
-
-        return model.updateDebt(id, {
-          status,
-          remaining_amount: toMoney(0),
-          notes: [lockedDebt.notes, `Non-cash ${status} adjustment applied.`].filter(Boolean).join('\n')
-        }, connection);
-      });
-    }
-    return model.updateDebt(id, { status });
-  }
+  payDebt
 };

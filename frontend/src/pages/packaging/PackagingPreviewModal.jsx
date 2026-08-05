@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, PackageCheck } from 'lucide-react';
-import { Badge, Button, DataTable, GlassPanel, GlassPanelBody, Modal } from '@/components/ui/index.js';
+import { Badge, Button, DataTable, Modal } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
 
 function quantity(value, unit = '') {
@@ -9,15 +9,21 @@ function quantity(value, unit = '') {
 
 function SummaryCard({ label, value, tone = 'text-ink-50' }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-ink-400">{label}</p>
+    <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3.5">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">{label}</p>
       <p className={`mt-1 font-mono text-lg font-semibold ${tone}`}>{value}</p>
     </div>
   );
 }
 
-export function PackagingPreviewModal({ open, onClose, preview, onComplete, isCompleting }) {
+export function PackagingPreviewModal({ open, onClose, preview, onComplete, isCompleting, canComplete = false }) {
   if (!preview) return null;
+  const shelfMetrics = [
+    ['Reusable shelf bags used', preview.input?.reusable_shelf_packages_used, 'bags'],
+    ['Unpacked kg reused', preview.input?.unpacked_shelf_kg_used, 'kg'],
+    ['New shelf bags', preview.input?.new_shelf_packages, 'bags'],
+    ['New unpacked carry', preview.input?.new_unpacked_shelf_kg, 'kg']
+  ].filter(([, value]) => value !== null && value !== undefined);
   const shortageColumns = [
     {
       id: 'label',
@@ -103,7 +109,7 @@ export function PackagingPreviewModal({ open, onClose, preview, onComplete, isCo
           <Button
             leftIcon={PackageCheck}
             onClick={onComplete}
-            disabled={!preview.can_complete}
+            disabled={!preview.can_complete || !canComplete}
             isLoading={isCompleting}
           >
             Complete packaging
@@ -111,12 +117,12 @@ export function PackagingPreviewModal({ open, onClose, preview, onComplete, isCo
         </>
       }
     >
-      <div className="space-y-5">
-        <div className={`flex items-start gap-3 rounded-xl border p-4 ${preview.can_complete ? 'border-emerald-400/25 bg-emerald-500/[0.07]' : 'border-rose-400/25 bg-rose-500/[0.07]'}`}>
+      <div className="space-y-4">
+        <div className={`flex items-start gap-3 rounded-2xl border p-4 ${preview.can_complete ? 'border-emerald-400/25 bg-emerald-500/[0.07]' : 'border-rose-400/25 bg-rose-500/[0.07]'}`}>
           {preview.can_complete ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" /> : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" />}
           <div>
             <p className="font-medium text-ink-50">{preview.can_complete ? 'All inputs are currently available' : 'Packaging cannot be completed yet'}</p>
-            <p className="mt-1 text-sm text-ink-300">{preview.can_complete ? 'Confirmation atomically consumes the listed source stock and creates ready containers.' : 'Resolve every shortage, then generate a fresh preview before completion.'}</p>
+            <p className="mt-1 text-xs text-ink-300">{!canComplete ? 'You can review this preview, but packaging completion requires inventory creation or stock-adjustment permission.' : preview.can_complete ? 'Confirmation atomically consumes the listed source stock and creates ready containers.' : 'Resolve every shortage, then generate a fresh preview before completion.'}</p>
           </div>
         </div>
 
@@ -127,33 +133,33 @@ export function PackagingPreviewModal({ open, onClose, preview, onComplete, isCo
           <SummaryCard label="Total cost" value={formatNumber(preview.costs?.total_cost, { maximumFractionDigits: 4 })} />
         </div>
 
-        <GlassPanel>
-          <GlassPanelBody className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Input Source & Consumption Summary</h4>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
             <SummaryCard label="Saved input" value={preview.input?.item_name || '-'} />
-            <SummaryCard label="Raw consumption" value={quantity(preview.input?.raw_quantity_kg, 'kg')} />
+            <SummaryCard label="Cartons consumed" value={quantity(preview.input?.cartons_consumed, 'cartons')} />
             <SummaryCard label="Input WAC" value={formatNumber(preview.input?.unit_cost, { maximumFractionDigits: 4 })} />
-            {preview.input?.loose_units_required !== null && preview.input?.loose_units_required !== undefined && (
-              <SummaryCard label="Loose units opened/used" value={quantity(preview.input.loose_units_required, 'units')} />
-            )}
-            {preview.input?.loose_unit_weight_kg !== null && preview.input?.loose_unit_weight_kg !== undefined && (
-              <SummaryCard label="Loose-unit weight" value={quantity(preview.input.loose_unit_weight_kg, 'kg')} />
-            )}
+            {shelfMetrics.map(([label, value, unit]) => (
+              <SummaryCard key={label} label={label} value={quantity(value, unit)} />
+            ))}
             <SummaryCard label="Warehouse" value={preview.warehouse_id || '-'} />
-          </GlassPanelBody>
-        </GlassPanel>
+          </div>
+        </div>
 
-        <section className="space-y-2">
-          <div>
-            <h3 className="font-display text-sm font-semibold text-ink-50">Availability and shortages</h3>
-            <p className="text-xs text-ink-300">Server-provided availability is checked again under transaction locks when you complete.</p>
+        <section className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="border-b border-white/5 pb-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Availability and Shortages</h4>
+            <p className="mt-0.5 text-xs text-ink-300">Server-provided availability is checked again under transaction locks when you complete.</p>
           </div>
           <DataTable columns={shortageColumns} rows={preview.shortages || []} rowKey={(row) => `${row.label}-${row.unit}`} />
         </section>
 
-        <section className="space-y-2">
-          <div>
-            <h3 className="font-display text-sm font-semibold text-ink-50">Packaging material cost</h3>
-            <p className="text-xs text-ink-300">These physical components are consumed as inputs; only configured ready outputs are sale offers.</p>
+        <section className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="border-b border-white/5 pb-2">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Packaging Material Cost</h4>
+            <p className="mt-0.5 text-xs text-ink-300">These physical components are consumed as inputs; only configured ready outputs are sale offers.</p>
           </div>
           <DataTable columns={componentColumns} rows={preview.components || []} rowKey={(row) => `${row.component_role}-${row.item_id}`} />
         </section>

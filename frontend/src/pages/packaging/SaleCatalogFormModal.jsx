@@ -125,37 +125,55 @@ export function SaleCatalogFormModal({ open, onClose, entry, items = [], groups 
       }
     >
       <form id="sale-catalog-form" onSubmit={submit} className="space-y-4" noValidate>
-        <Select label="Fulfillment offer" value={form.entry_type} onChange={(event) => change('entry_type', event.target.value)} error={errors.entry_type}>
-          {CATALOG_ENTRY_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
-        </Select>
-
-        {selectedType?.target === 'item' ? (
-          <Select label="Normal item" value={form.item_id} onChange={(event) => change('item_id', event.target.value)} error={errors.item_id} description={`Only normal ${selectedType.stockMode.replace('_', ' ')} items are eligible.`}>
-            <option value="">Select normal item</option>
-            {targetItems.map((item) => <option key={item.id} value={item.id}>{itemLabel(item)}</option>)}
+        {/* Target Selection Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Offer Target</h4>
+          </div>
+          <Select label="Fulfillment offer" value={form.entry_type} onChange={(event) => change('entry_type', event.target.value)} error={errors.entry_type}>
+            {CATALOG_ENTRY_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
           </Select>
-        ) : (
-          <Select label="Packaging group" value={form.packaging_group_id} onChange={(event) => change('packaging_group_id', event.target.value)} error={errors.packaging_group_id} description="Availability comes from ready containers produced by this group.">
-            <option value="">Select packaging group</option>
-            {targetGroups.map((group) => <option key={group.id} value={group.id}>{group.name} ({group.code})</option>)}
-          </Select>
-        )}
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input label="Default price" type="number" min="0" step="0.0001" inputMode="decimal" value={form.default_price} onChange={(event) => change('default_price', event.target.value)} error={errors.default_price} description={selectedType?.target === 'item' ? 'Prefilled from the item price when configured; this offer can override it.' : undefined} required />
-          <Input label="VAT rate (%)" type="number" min="0" max="100" step="0.01" inputMode="decimal" value={form.vat_rate} onChange={(event) => change('vat_rate', event.target.value)} error={errors.vat_rate} placeholder="Store default" description="Leave blank on create to use the current store VAT default." />
+          {selectedType?.target === 'item' ? (
+            <Select label="Normal item" value={form.item_id} onChange={(event) => change('item_id', event.target.value)} error={errors.item_id} description={`Only normal ${selectedType.stockMode.replace('_', ' ')} items are eligible.`}>
+              <option value="">Select normal item</option>
+              {targetItems.map((item) => <option key={item.id} value={item.id}>{itemLabel(item)}</option>)}
+            </Select>
+          ) : (
+            <Select label="Packaging group" value={form.packaging_group_id} onChange={(event) => change('packaging_group_id', event.target.value)} error={errors.packaging_group_id} description="Availability comes from ready containers produced by this group.">
+              <option value="">Select packaging group</option>
+              {targetGroups.map((group) => <option key={group.id} value={group.id}>{group.name} ({group.code})</option>)}
+            </Select>
+          )}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input label="Display name" value={form.display_name} onChange={(event) => change('display_name', event.target.value)} placeholder="Server-generated if blank" />
-          <Input label="Unit label" value={form.unit_label} onChange={(event) => change('unit_label', event.target.value)} placeholder="Server-generated if blank" />
+        {/* Financials & Tax Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Pricing & Tax</h4>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input label="Default price" type="number" min="0" step="0.0001" inputMode="decimal" value={form.default_price} onChange={(event) => change('default_price', event.target.value)} error={errors.default_price} description={selectedType?.target === 'item' ? 'Prefilled from item price when configured.' : undefined} required placeholder="0.00" />
+            <Input label="VAT rate (%)" type="number" min="0" max="100" step="0.01" inputMode="decimal" value={form.vat_rate} onChange={(event) => change('vat_rate', event.target.value)} error={errors.vat_rate} placeholder="Store default" description="Leave blank to use current store VAT default." />
+          </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <Switch checked={form.is_pos_active} onChange={(value) => change('is_pos_active', value)} label="Active in Mini POS" description="POS sees only active offers with current server availability, never stock quantities." />
-          <Select label="Status" value={form.status} onChange={(event) => change('status', event.target.value)}>
-            {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </Select>
+        {/* Display & Status Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Display & Visibility</h4>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input label="Display name" value={form.display_name} onChange={(event) => change('display_name', event.target.value)} placeholder="Server-generated if blank" />
+            <Input label="Unit label" value={form.unit_label} onChange={(event) => change('unit_label', event.target.value)} placeholder="Server-generated if blank" />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 pt-1">
+            <Switch checked={form.is_pos_active} onChange={(value) => change('is_pos_active', value)} label="Active in Mini POS" description="POS sees only active offers with current server availability." />
+            <Select label="Status" value={form.status} onChange={(event) => change('status', event.target.value)}>
+              {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </Select>
+          </div>
         </div>
       </form>
     </Modal>

@@ -2,7 +2,7 @@ const { query } = require('../../bootstrap/db');
 const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 const { scopedQuery } = require('../../utils/storeScope');
 
-const PHYSICAL_DISPATCH_STATUSES = ['dispatched', 'partially_settled', 'completed'];
+const PHYSICAL_DISPATCH_STATUSES = ['delivery', 'partially_settled', 'completed'];
 
 function sql(parts) {
   return parts.filter(Boolean).join('\n');
@@ -65,12 +65,32 @@ async function pagedRows(config, input = {}) {
       : [...(config.params || []), pagination.limit, pagination.offset]
   );
 
+  const summaryMetrics = Array.isArray(input.__summary_metrics)
+    ? input.__summary_metrics.filter((metric) => /^[a-z_]+$/i.test(metric))
+    : [];
+  let summary = null;
+  if (summaryMetrics.length) {
+    const aggregateRows = await query(
+      `SELECT COUNT(*) AS \`rows\`, ${summaryMetrics
+        .map((metric) => `COALESCE(SUM(\`${metric}\`), 0) AS \`${metric}\``)
+        .join(', ')} FROM (${baseSql}) report_summary`,
+      config.params || []
+    ) || [];
+    const aggregate = aggregateRows[0] || {};
+    summary = {
+      rows: Number(aggregate.rows || 0),
+      totals: Object.fromEntries(summaryMetrics.map((metric) => [metric, Number(aggregate[metric] || 0)])),
+      metrics: summaryMetrics
+    };
+  }
+
   return {
     rows,
     meta: getPaginationMeta({
       ...pagination,
       total: Number(countRows[0]?.total || 0)
-    })
+    }),
+    summary
   };
 }
 
@@ -101,8 +121,9 @@ async function stock(input = {}, actor = {}, forcedItemKind = null) {
   return pagedRows({
     select: sql([
       'cs.*, i.code AS item_code, i.reorder_level, i.kg_per_carton,',
-      'i.loose_units_per_carton, i.max_content_weight_kg, i.status AS item_status,',
-      "CASE WHEN cs.stock_mode = 'carton_weight' THEN cs.quantity_on_hand / NULLIF(i.kg_per_carton, 0) ELSE NULL END AS sealed_carton_equivalent"
+      // Keep the public column stable without depending on loose-carton data.
+      'NULL AS loose_units_per_carton, i.max_content_weight_kg, i.status AS item_status,',
+      "CASE WHEN cs.stock_mode = 'carton' THEN cs.quantity_on_hand ELSE NULL END AS sealed_carton_equivalent"
     ]),
     from: 'v_current_stock cs',
     joins: 'JOIN items i ON i.id = cs.item_id',
@@ -172,7 +193,9 @@ async function stockMovements(input = {}, actor = {}) {
       '    ism.movement_type, ism.quantity_change, ism.quantity_before, ism.quantity_after,',
       '    ism.reserved_quantity_change, ism.reserved_quantity_before, ism.reserved_quantity_after,',
       '    ism.unit_cost, ism.total_cost, ism.reference_type, ism.reference_id,',
-      '    ism.carton_stock_lot_id, ism.open_carton_shelf_id, ism.notes, ism.created_by, ism.created_at',
+      // Open-carton shelves are introduced by a later inventory model. The
+      // current baseline has no such column, so legacy movements report null.
+      '    ism.carton_stock_lot_id, NULL AS open_carton_shelf_id, ism.notes, ism.created_by, ism.created_at',
       '  FROM item_stock_movements ism',
       '  JOIN warehouses w ON w.id = ism.warehouse_id',
       '  JOIN items i ON i.id = ism.item_id',
@@ -301,7 +324,7 @@ async function packagingShortages(input = {}, actor = {}) {
 }
 
 function physicalDispatchFilters(input, conditions, params, alias = 'dr', dateColumn = null) {
-  conditions.push(alias + ".status IN ('dispatched', 'partially_settled', 'completed')");
+  conditions.push(alias + ".status IN ('delivery', 'partially_settled', 'completed')");
   addEquals(input, 'status', alias + '.status', conditions, params);
   addEquals(input, 'store_id', alias + '.store_id', conditions, params);
   addEquals(input, 'salesman_id', alias + '.salesman_id', conditions, params);
@@ -431,58 +454,6 @@ async function invoices(input = {}, actor = {}) {
     conditions,
     params,
     orderBy: 'ORDER BY inv.invoice_date DESC, inv.id DESC'
-  }, reportInput);
-}
-
-async function posOrders(input = {}, actor = {}) {
-  const reportInput = scoped(input, actor);
-  const conditions = [];
-  const params = [];
-  addEquals(reportInput, 'store_id', 'po.store_id', conditions, params);
-  addEquals(reportInput, 'salesman_id', 'po.salesman_id', conditions, params);
-  addEquals(reportInput, 'warehouse_id', 'po.warehouse_id', conditions, params);
-  addEquals(reportInput, 'customer_id', 'po.customer_id', conditions, params);
-  addEquals(reportInput, 'location_id', 'po.location_id', conditions, params);
-  addEquals(reportInput, 'sublocation_id', 'po.sublocation_id', conditions, params);
-  addEquals(reportInput, 'pos_status', 'po.status', conditions, params);
-  addEquals(reportInput, 'status', 'po.status', conditions, params);
-  addDateRange(reportInput, 'po.order_date', conditions, params);
-  addSearch(reportInput, ['po.order_number', 's.full_name', 'c.name', 'w.name'], conditions, params);
-  return pagedRows({
-    select: sql([
-      'po.*, s.full_name AS salesman_name, c.name AS customer_name,',
-      'l.name AS location_name, sl.name AS sublocation_name, w.name AS warehouse_name,',
-      'dr.dispatch_number, dr.status AS dispatch_status,',
-      'COALESCE(line_summary.sale_quantity, 0) AS sale_quantity,',
-      'COALESCE(line_summary.gift_quantity, 0) AS gift_quantity,',
-      'COALESCE(line_summary.sale_subtotal, 0) AS sale_subtotal,',
-      'COALESCE(line_summary.sale_vat, 0) AS sale_vat,',
-      'COALESCE(line_summary.sale_total, 0) AS sale_total,',
-      'COALESCE(line_summary.gift_line_count, 0) AS gift_line_count'
-    ]),
-    from: 'pos_orders po',
-    joins: sql([
-      'JOIN salesmen s ON s.id = po.salesman_id',
-      'JOIN customers c ON c.id = po.customer_id',
-      'JOIN locations l ON l.id = po.location_id',
-      'JOIN sublocations sl ON sl.id = po.sublocation_id',
-      'JOIN warehouses w ON w.id = po.warehouse_id',
-      'LEFT JOIN dispatch_requests dr ON dr.id = po.dispatch_request_id',
-      'LEFT JOIN (',
-      '  SELECT pos_order_id,',
-      "    SUM(CASE WHEN line_type = 'sale' THEN quantity ELSE 0 END) AS sale_quantity,",
-      "    SUM(CASE WHEN line_type = 'free_gift' THEN quantity ELSE 0 END) AS gift_quantity,",
-      "    SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price ELSE 0 END) AS sale_subtotal,",
-      "    SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price * vat_rate / 100 ELSE 0 END) AS sale_vat,",
-      "    SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price * (1 + vat_rate / 100) ELSE 0 END) AS sale_total,",
-      "    SUM(line_type = 'free_gift') AS gift_line_count",
-      '  FROM pos_order_lines',
-      '  GROUP BY pos_order_id',
-      ') line_summary ON line_summary.pos_order_id = po.id'
-    ]),
-    conditions,
-    params,
-    orderBy: 'ORDER BY po.order_date DESC, po.created_at DESC, po.id DESC'
   }, reportInput);
 }
 
@@ -680,7 +651,7 @@ async function salesmanTargetProgress(input = {}, actor = {}) {
 function physicalConditionsForDerived(input, alias, params) {
   const conditions = [
     alias + '.store_id = ?',
-    alias + ".status IN ('dispatched', 'partially_settled', 'completed')"
+    alias + ".status IN ('delivery', 'partially_settled', 'completed')"
   ];
   params.push(input.store_id);
   if (input.date_from) {
@@ -699,25 +670,14 @@ async function salesmanPerformance(input = {}, actor = {}) {
   const dispatchParams = [];
   const customerParams = [];
   const lineParams = [];
-  const posParams = [reportInput.store_id];
   const dispatchWhere = physicalConditionsForDerived(reportInput, 'dr', dispatchParams).join(' AND ');
   const customerWhere = physicalConditionsForDerived(reportInput, 'dr', customerParams).join(' AND ');
   const lineWhere = physicalConditionsForDerived(reportInput, 'dr', lineParams).join(' AND ');
-  const posConditions = ['po.store_id = ?'];
-  if (reportInput.date_from) {
-    posConditions.push('DATE(po.order_date) >= ?');
-    posParams.push(reportInput.date_from);
-  }
-  if (reportInput.date_to) {
-    posConditions.push('DATE(po.order_date) <= ?');
-    posParams.push(reportInput.date_to);
-  }
   const conditions = ['s.store_id = ?'];
   const params = [
     ...dispatchParams,
     ...customerParams,
     ...lineParams,
-    ...posParams,
     reportInput.store_id
   ];
   addEquals(reportInput, 'salesman_id', 's.id', conditions, params);
@@ -734,9 +694,7 @@ async function salesmanPerformance(input = {}, actor = {}) {
       'COALESCE(line_summary.sales_cogs, 0) AS sales_cogs,',
       'COALESCE(line_summary.gift_quantity, 0) AS gift_quantity,',
       'COALESCE(line_summary.gift_cogs, 0) AS gift_cogs,',
-      '(COALESCE(line_summary.sales_revenue, 0) - COALESCE(line_summary.sales_cogs, 0) - COALESCE(line_summary.gift_cogs, 0)) AS gross_profit_after_gifts,',
-      'COALESCE(pos_summary.pending_pos_orders, 0) AS pending_pos_orders,',
-      'COALESCE(pos_summary.converted_pos_orders, 0) AS converted_pos_orders'
+      '(COALESCE(line_summary.sales_revenue, 0) - COALESCE(line_summary.sales_cogs, 0) - COALESCE(line_summary.gift_cogs, 0)) AS gross_profit_after_gifts'
     ]),
     from: 'salesmen s',
     joins: sql([
@@ -768,15 +726,7 @@ async function salesmanPerformance(input = {}, actor = {}) {
       '  ) allocation_summary ON allocation_summary.dispatch_item_id = di.id',
       '  WHERE ' + lineWhere,
       '  GROUP BY dr.salesman_id',
-      ') line_summary ON line_summary.salesman_id = s.id',
-      'LEFT JOIN (',
-      '  SELECT po.salesman_id,',
-      "    SUM(po.status = 'pending') AS pending_pos_orders,",
-      "    SUM(po.status = 'converted') AS converted_pos_orders",
-      '  FROM pos_orders po',
-      '  WHERE ' + posConditions.join(' AND '),
-      '  GROUP BY po.salesman_id',
-      ') pos_summary ON pos_summary.salesman_id = s.id'
+      ') line_summary ON line_summary.salesman_id = s.id'
     ]),
     conditions,
     params,
@@ -797,7 +747,7 @@ async function commissions(input = {}, actor = {}) {
   return pagedRows({
     select: sql([
       'cc.*, s.full_name AS salesman_name, s.base_salary, sl.name AS sublocation_name, cr.name AS commission_rule_name,',
-      '(s.base_salary + cc.total_commission) AS total_payable,',
+      'cc.total_commission AS total_payable,',
       'COALESCE(payment_summary.paid_amount, 0) AS paid_amount'
     ]),
     from: 'commission_calculations cc',
@@ -825,12 +775,15 @@ async function profitLoss(input = {}, actor = {}) {
   const expenseParams = [reportInput.store_id];
   const commissionConditions = ['cp.store_id = ?'];
   const commissionParams = [reportInput.store_id];
+  const payrollConditions = ['spp.store_id = ?'];
+  const payrollParams = [reportInput.store_id];
   const supplierConditions = ['sp.store_id = ?'];
   const supplierParams = [reportInput.store_id];
   const writeoffConditions = ["cda.store_id = ?", "cda.adjustment_type = 'write_off'"];
   const writeoffParams = [reportInput.store_id];
   addDateRange(reportInput, 'e.expense_date', expenseConditions, expenseParams);
   addDateRange(reportInput, 'cp.payment_date', commissionConditions, commissionParams);
+  addDateRange(reportInput, 'spp.payment_date', payrollConditions, payrollParams);
   addDateRange(reportInput, 'sp.payment_date', supplierConditions, supplierParams);
   addDateRange(reportInput, 'cda.adjustment_date', writeoffConditions, writeoffParams);
   const rows = await query(
@@ -838,11 +791,11 @@ async function profitLoss(input = {}, actor = {}) {
       'SELECT sales.sales_revenue, sales.sales_vat, sales.sales_cogs, sales.gift_cogs,',
       '(sales.sales_revenue - sales.sales_cogs) AS gross_profit_before_gifts,',
       '(sales.sales_revenue - sales.sales_cogs - sales.gift_cogs) AS gross_profit_after_gifts,',
-      'expenses.operating_expenses, commissions.commission_expenses, writeoffs.debt_write_offs,',
+      'expenses.operating_expenses, commissions.commission_expenses, payroll.payroll_expenses, writeoffs.debt_write_offs,',
       'supplier_cash.supplier_payments_cash_outflow,',
-      '(sales.sales_cogs + sales.gift_cogs + expenses.operating_expenses + commissions.commission_expenses + writeoffs.debt_write_offs) AS total_expense,',
+      '(sales.sales_cogs + sales.gift_cogs + expenses.operating_expenses + commissions.commission_expenses + payroll.payroll_expenses + writeoffs.debt_write_offs) AS total_expense,',
       'sales.sales_revenue AS total_income,',
-      '(sales.sales_revenue - sales.sales_cogs - sales.gift_cogs - expenses.operating_expenses - commissions.commission_expenses - writeoffs.debt_write_offs) AS net_profit',
+      '(sales.sales_revenue - sales.sales_cogs - sales.gift_cogs - expenses.operating_expenses - commissions.commission_expenses - payroll.payroll_expenses - writeoffs.debt_write_offs) AS net_profit',
       'FROM (',
       '  SELECT',
       "    COALESCE(SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / di.quantity ELSE 0 END), 0) AS sales_revenue,",
@@ -866,8 +819,13 @@ async function profitLoss(input = {}, actor = {}) {
       'CROSS JOIN (',
       '  SELECT COALESCE(SUM(cp.amount), 0) AS commission_expenses',
       '  FROM commission_payments cp',
-      '  WHERE ' + commissionConditions.join(' AND '),
+      '  WHERE ' + commissionConditions.join(' AND ') + ' AND cp.payroll_payment_id IS NULL',
       ') commissions',
+      'CROSS JOIN (',
+      '  SELECT COALESCE(SUM(spp.total_amount), 0) AS payroll_expenses',
+      '  FROM salesman_payroll_payments spp',
+      '  WHERE ' + payrollConditions.join(' AND '),
+      ') payroll',
       'CROSS JOIN (',
       '  SELECT COALESCE(SUM(sp.amount), 0) AS supplier_payments_cash_outflow',
       '  FROM supplier_payments sp',
@@ -883,6 +841,7 @@ async function profitLoss(input = {}, actor = {}) {
       ...salesParams,
       ...expenseParams,
       ...commissionParams,
+      ...payrollParams,
       ...supplierParams,
       ...writeoffParams
     ]
@@ -898,11 +857,313 @@ async function profitLoss(input = {}, actor = {}) {
   };
 }
 
+async function deliveryCloseouts(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'ds.store_id', conditions, params);
+  addEquals(reportInput, 'salesman_id', 'dr.salesman_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'dr.warehouse_id', conditions, params);
+  addEquals(reportInput, 'status', 'ds.status', conditions, params);
+  addDateRange(reportInput, 'ds.settlement_date', conditions, params);
+  addSearch(reportInput, ['ds.settlement_number', 'dr.dispatch_number', 's.full_name', 'ca.account_name'], conditions, params);
+  return pagedRows({
+    select: sql([
+      'ds.*, dr.dispatch_number, dr.salesman_id, s.full_name AS salesman_name, w.name AS warehouse_name,',
+      'ca.account_name AS cash_account_name, COALESCE(customer_summary.customer_count, 0) AS customer_count,',
+      'COALESCE(customer_summary.collected_amount, 0) AS customer_collected_amount,',
+      'COALESCE(customer_summary.debt_amount, 0) AS customer_debt_amount'
+    ]),
+    from: 'dispatch_settlements ds',
+    joins: sql([
+      'JOIN dispatch_requests dr ON dr.id = ds.dispatch_request_id',
+      'JOIN salesmen s ON s.id = dr.salesman_id',
+      'JOIN warehouses w ON w.id = dr.warehouse_id',
+      'LEFT JOIN cash_accounts ca ON ca.id = ds.cash_account_id',
+      'LEFT JOIN (',
+      '  SELECT dispatch_settlement_id, COUNT(*) AS customer_count, SUM(collected_amount) AS collected_amount, SUM(debt_amount) AS debt_amount',
+      '  FROM dispatch_settlement_customers GROUP BY dispatch_settlement_id',
+      ') customer_summary ON customer_summary.dispatch_settlement_id = ds.id'
+    ]),
+    conditions,
+    params,
+    orderBy: 'ORDER BY ds.settlement_date DESC, ds.id DESC'
+  }, reportInput);
+}
+
+async function discounts(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = ['dc.discount_amount > 0'];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'dc.store_id', conditions, params);
+  addEquals(reportInput, 'salesman_id', 'dr.salesman_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'dr.warehouse_id', conditions, params);
+  addEquals(reportInput, 'customer_id', 'dc.customer_id', conditions, params);
+  addDateRange(reportInput, 'dr.request_date', conditions, params);
+  addSearch(reportInput, ['dr.dispatch_number', 'c.name', 's.full_name'], conditions, params);
+  return pagedRows({
+    select: 'dc.id AS dispatch_customer_id, dr.id AS dispatch_request_id, dr.dispatch_number, dr.request_date, dr.status AS dispatch_status, c.name AS customer_name, s.full_name AS salesman_name, w.name AS warehouse_name, dc.discount_type, dc.discount_value, dc.discount_amount, dc.subtotal_amount, dc.vat_amount, dc.customer_total_amount',
+    from: 'dispatch_customers dc',
+    joins: sql([
+      'JOIN dispatch_requests dr ON dr.id = dc.dispatch_request_id',
+      'JOIN customers c ON c.id = dc.customer_id',
+      'JOIN salesmen s ON s.id = dr.salesman_id',
+      'JOIN warehouses w ON w.id = dr.warehouse_id'
+    ]),
+    conditions,
+    params,
+    orderBy: 'ORDER BY dr.request_date DESC, dc.id DESC'
+  }, reportInput);
+}
+
+async function returns(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'ret.store_id', conditions, params);
+  addEquals(reportInput, 'salesman_id', 'dr.salesman_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'dr.warehouse_id', conditions, params);
+  addEquals(reportInput, 'customer_id', 'dc.customer_id', conditions, params);
+  addEquals(reportInput, 'item_id', 'di.item_id', conditions, params);
+  addDateRange(reportInput, 'ret.created_at', conditions, params);
+  if (reportInput.post_settlement_exception) {
+    conditions.push('posted_settlement.posted_at IS NOT NULL AND ret.created_at >= posted_settlement.posted_at');
+  }
+  addSearch(reportInput, ['dr.dispatch_number', 'c.name', 'di.item_name_snapshot', 'ret.reason'], conditions, params);
+  return pagedRows({
+    select: sql([
+      'ret.*, dr.dispatch_number, dr.request_date, dr.status AS dispatch_status, s.full_name AS salesman_name, w.name AS warehouse_name,',
+      'c.name AS customer_name, di.item_id, di.item_name_snapshot AS item_name, di.unit_label_snapshot AS unit_label, di.line_type,',
+      'di.unit_price, di.unit_cost, note.credit_note_number, note.credit_note_date,',
+      'COALESCE(note.subtotal_amount, ret.returned_quantity * di.unit_price) AS returned_subtotal_amount,',
+      'COALESCE(note.vat_amount, 0) AS returned_vat_amount,',
+      'COALESCE(note.total_amount, ret.returned_quantity * di.unit_price) AS returned_sales_value,',
+      '(ret.returned_quantity * di.unit_cost) AS returned_cost,',
+      'posted_settlement.posted_at AS settlement_posted_at,',
+      "CASE WHEN posted_settlement.posted_at IS NOT NULL AND ret.created_at >= posted_settlement.posted_at THEN 1 ELSE 0 END AS post_settlement_exception,",
+      "CASE WHEN posted_settlement.posted_at IS NOT NULL AND ret.created_at >= posted_settlement.posted_at AND posted_settlement.posted_at_is_estimated = 1 THEN 1 ELSE 0 END AS post_settlement_exception_estimated"
+    ]),
+    from: 'dispatch_returns ret',
+    joins: sql([
+      'JOIN dispatch_items di ON di.id = ret.dispatch_item_id',
+      'JOIN dispatch_requests dr ON dr.id = ret.dispatch_request_id',
+      'JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id',
+      'JOIN customers c ON c.id = dc.customer_id',
+      'JOIN salesmen s ON s.id = dr.salesman_id',
+      'JOIN warehouses w ON w.id = dr.warehouse_id',
+      'LEFT JOIN dispatch_return_credit_notes note ON note.dispatch_return_id = ret.id',
+      `LEFT JOIN (
+        SELECT dispatch_request_id, MAX(posted_at) AS posted_at,
+          MAX(posted_at_is_estimated) AS posted_at_is_estimated
+        FROM dispatch_settlements
+        WHERE status = 'posted'
+        GROUP BY dispatch_request_id
+      ) posted_settlement ON posted_settlement.dispatch_request_id = ret.dispatch_request_id`
+    ]),
+    conditions,
+    params,
+    orderBy: 'ORDER BY ret.created_at DESC, ret.id DESC'
+  }, reportInput);
+}
+
+async function vatSummary(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'vat_rows.store_id', conditions, params);
+  addEquals(reportInput, 'salesman_id', 'vat_rows.salesman_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'vat_rows.warehouse_id', conditions, params);
+  addEquals(reportInput, 'customer_id', 'vat_rows.customer_id', conditions, params);
+  addEquals(reportInput, 'invoice_status', 'vat_rows.invoice_status', conditions, params);
+  addDateRange(reportInput, 'vat_rows.report_date', conditions, params);
+  return pagedRows({
+    select: 'vat_rows.report_date, vat_rows.invoice_status, SUM(vat_rows.document_count) AS invoice_count, SUM(vat_rows.taxable_sales) AS taxable_sales, SUM(vat_rows.output_vat) AS output_vat, SUM(vat_rows.gross_sales) AS gross_sales',
+    from: sql([
+      '(',
+      'SELECT inv.store_id, dr.salesman_id, dr.warehouse_id, dc.customer_id, inv.invoice_date AS report_date, inv.status AS invoice_status,',
+      '1 AS document_count, inv.subtotal_amount AS taxable_sales, inv.vat_amount AS output_vat, inv.total_amount AS gross_sales',
+      'FROM invoices inv JOIN dispatch_requests dr ON dr.id = inv.dispatch_request_id JOIN dispatch_customers dc ON dc.id = inv.dispatch_customer_id',
+      'UNION ALL',
+      "SELECT note.store_id, dr.salesman_id, dr.warehouse_id, dc.customer_id, note.credit_note_date AS report_date, 'return_credit' AS invoice_status,",
+      '-1 AS document_count, -note.subtotal_amount AS taxable_sales, -note.vat_amount AS output_vat, -note.total_amount AS gross_sales',
+      'FROM dispatch_return_credit_notes note JOIN dispatch_requests dr ON dr.id = note.dispatch_request_id JOIN dispatch_customers dc ON dc.id = note.dispatch_customer_id',
+      ') vat_rows'
+    ]),
+    joins: '',
+    conditions,
+    params,
+    groupBy: 'GROUP BY vat_rows.report_date, vat_rows.invoice_status',
+    orderBy: 'ORDER BY vat_rows.report_date DESC, vat_rows.invoice_status ASC'
+  }, reportInput);
+}
+
+async function cashReconciliation(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'ft.store_id', conditions, params);
+  addEquals(reportInput, 'cash_account_id', 'ft.cash_account_id', conditions, params);
+  addDateRange(reportInput, 'ft.transaction_date', conditions, params);
+  addSearch(reportInput, ['ca.account_name', 'ft.reference_type', 'ft.description'], conditions, params);
+  return pagedRows({
+    select: sql([
+      'ca.id AS cash_account_id, ca.account_name, ca.account_type, ca.opening_balance, ca.current_balance,',
+      'DATE(ft.transaction_date) AS report_date, COUNT(*) AS transaction_count,',
+      "SUM(CASE WHEN ft.direction = 'in' THEN ft.amount ELSE 0 END) AS cash_in,",
+      "SUM(CASE WHEN ft.direction = 'out' THEN ft.amount ELSE 0 END) AS cash_out,",
+      "SUM(CASE WHEN ft.direction = 'in' THEN ft.amount ELSE -ft.amount END) AS net_movement"
+    ]),
+    from: 'financial_transactions ft',
+    joins: 'JOIN cash_accounts ca ON ca.id = ft.cash_account_id',
+    conditions,
+    params,
+    groupBy: 'GROUP BY ca.id, ca.account_name, ca.account_type, ca.opening_balance, ca.current_balance, DATE(ft.transaction_date)',
+    orderBy: 'ORDER BY report_date DESC, ca.account_name ASC'
+  }, reportInput);
+}
+
+async function productProfitability(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  physicalDispatchFilters(reportInput, conditions, params);
+  addEquals(reportInput, 'customer_id', 'dc.customer_id', conditions, params);
+  addEquals(reportInput, 'item_id', 'di.item_id', conditions, params);
+  addEquals(reportInput, 'packaging_group_id', 'di.packaging_group_id', conditions, params);
+  addSearch(reportInput, ['di.item_name_snapshot', 's.full_name', 'c.name'], conditions, params);
+  return pagedRows({
+    select: sql([
+      'di.item_id, di.packaging_group_id, di.item_name_snapshot AS item_name, di.unit_label_snapshot AS unit_label,',
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.quantity - di.returned_quantity ELSE 0 END) AS net_sale_quantity,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0) ELSE 0 END) AS net_revenue,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN COALESCE(costs.dispatched_cost, 0) ELSE 0 END) AS sales_cogs,",
+      "SUM(CASE WHEN di.line_type = 'free_gift' THEN COALESCE(costs.dispatched_cost, 0) ELSE 0 END) AS gift_cogs,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0) ELSE 0 END) - SUM(COALESCE(costs.dispatched_cost, 0)) AS gross_profit"
+    ]),
+    from: 'dispatch_items di',
+    joins: sql([
+      'JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id',
+      'JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id',
+      'JOIN customers c ON c.id = dc.customer_id',
+      'JOIN salesmen s ON s.id = dr.salesman_id',
+      'LEFT JOIN (SELECT dispatch_item_id, SUM(CASE WHEN status = \'dispatched\' THEN total_cost ELSE 0 END) AS dispatched_cost FROM dispatch_line_allocations GROUP BY dispatch_item_id) costs ON costs.dispatch_item_id = di.id'
+    ]),
+    conditions,
+    params,
+    groupBy: 'GROUP BY di.item_id, di.packaging_group_id, di.item_name_snapshot, di.unit_label_snapshot',
+    orderBy: 'ORDER BY gross_profit DESC, item_name ASC'
+  }, reportInput);
+}
+
+async function groupedProfitability(input, actor, grouping) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  physicalDispatchFilters(reportInput, conditions, params);
+  grouping.filters.forEach(([key, column]) => addEquals(reportInput, key, column, conditions, params));
+  addSearch(reportInput, grouping.search, conditions, params);
+  return pagedRows({
+    select: sql([
+      grouping.select,
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.quantity - di.returned_quantity ELSE 0 END) AS net_sale_quantity,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0) ELSE 0 END) AS net_revenue,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN COALESCE(costs.dispatched_cost, 0) ELSE 0 END) AS sales_cogs,",
+      "SUM(CASE WHEN di.line_type = 'free_gift' THEN COALESCE(costs.dispatched_cost, 0) ELSE 0 END) AS gift_cogs,",
+      "SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / NULLIF(di.quantity, 0) ELSE 0 END) - SUM(COALESCE(costs.dispatched_cost, 0)) AS gross_profit"
+    ]),
+    from: 'dispatch_items di',
+    joins: sql([
+      'JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id',
+      'JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id',
+      'JOIN customers c ON c.id = dc.customer_id',
+      'JOIN locations l ON l.id = dc.location_id',
+      'JOIN sublocations sl ON sl.id = dc.sublocation_id',
+      'LEFT JOIN (SELECT dispatch_item_id, SUM(CASE WHEN status = \'dispatched\' THEN total_cost ELSE 0 END) AS dispatched_cost FROM dispatch_line_allocations GROUP BY dispatch_item_id) costs ON costs.dispatch_item_id = di.id'
+    ]),
+    conditions,
+    params,
+    groupBy: grouping.groupBy,
+    orderBy: `ORDER BY gross_profit DESC, ${grouping.orderBy}`
+  }, reportInput);
+}
+
+function customerProfitability(input = {}, actor = {}) {
+  return groupedProfitability(input, actor, {
+    select: 'c.id AS customer_id, c.name AS customer_name, l.name AS location_name, sl.name AS sublocation_name,',
+    filters: [['customer_id', 'dc.customer_id'], ['location_id', 'dc.location_id'], ['sublocation_id', 'dc.sublocation_id']],
+    search: ['c.name', 'l.name', 'sl.name'],
+    groupBy: 'GROUP BY c.id, c.name, l.name, sl.name',
+    orderBy: 'customer_name ASC'
+  });
+}
+
+function territoryProfitability(input = {}, actor = {}) {
+  return groupedProfitability(input, actor, {
+    select: 'l.id AS location_id, l.name AS location_name, sl.id AS sublocation_id, sl.name AS sublocation_name, COUNT(DISTINCT dc.customer_id) AS customer_count,',
+    filters: [['location_id', 'dc.location_id'], ['sublocation_id', 'dc.sublocation_id']],
+    search: ['l.name', 'sl.name'],
+    groupBy: 'GROUP BY l.id, l.name, sl.id, sl.name',
+    orderBy: 'location_name ASC, sublocation_name ASC'
+  });
+}
+
+async function orderPipeline(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = [];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'dr.store_id', conditions, params);
+  addEquals(reportInput, 'salesman_id', 'dr.salesman_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'dr.warehouse_id', conditions, params);
+  addEquals(reportInput, 'status', 'dr.status', conditions, params);
+  addDateRange(reportInput, 'dr.request_date', conditions, params);
+  return pagedRows({
+    select: sql([
+      'dr.status, COUNT(*) AS order_count, SUM(dr.total_amount) AS order_value,',
+      'AVG(CASE WHEN dr.status IN (\'draft\', \'pending_approval\', \'approved\') THEN DATEDIFF(CURDATE(), dr.request_date) ELSE 0 END) AS average_open_days,',
+      "SUM(dr.status = 'draft') AS draft_count, SUM(dr.status = 'pending_approval') AS pending_approval_count,",
+      "SUM(dr.status = 'approved') AS approved_count, SUM(dr.status = 'delivery') AS delivery_count,",
+      "SUM(dr.status = 'partially_settled') AS partially_settled_count, SUM(dr.status = 'completed') AS completed_count"
+    ]),
+    from: 'dispatch_requests dr',
+    conditions,
+    params,
+    groupBy: 'GROUP BY dr.status',
+    orderBy: 'ORDER BY FIELD(dr.status, \'draft\', \'pending_approval\', \'approved\', \'delivery\', \'partially_settled\', \'completed\', \'cancelled\')'
+  }, reportInput);
+}
+
+async function inventoryAging(input = {}, actor = {}) {
+  const reportInput = scoped(input, actor);
+  const conditions = ['lot.remaining_cartons > 0'];
+  const params = [];
+  addEquals(reportInput, 'store_id', 'lot.store_id', conditions, params);
+  addEquals(reportInput, 'warehouse_id', 'lot.warehouse_id', conditions, params);
+  addEquals(reportInput, 'item_id', 'lot.item_id', conditions, params);
+  addDateRange(reportInput, 'lot.received_at', conditions, params);
+  addSearch(reportInput, ['i.name', 'i.code', 'w.name', 'lot.source_type'], conditions, params);
+  return pagedRows({
+    select: sql([
+      'lot.*, i.name AS item_name, i.code AS item_code, w.name AS warehouse_name,',
+      'DATEDIFF(CURDATE(), DATE(lot.received_at)) AS age_days,',
+      '(lot.remaining_cartons * lot.unit_cost_per_carton) AS remaining_inventory_value'
+    ]),
+    from: 'carton_stock_lots lot',
+    joins: sql(['JOIN items i ON i.id = lot.item_id', 'JOIN warehouses w ON w.id = lot.warehouse_id']),
+    conditions,
+    params,
+    orderBy: 'ORDER BY age_days DESC, lot.received_at ASC, lot.id ASC'
+  }, reportInput);
+}
+
 module.exports = {
   commissions,
+  cashReconciliation,
   currentStock,
   customerBalances,
+  customerProfitability,
   debts,
+  deliveryCloseouts,
+  discounts,
   dispatchSummary,
   gifts,
   invoices,
@@ -910,7 +1171,7 @@ module.exports = {
   packagingOperations,
   packagingShortages,
   packagingStock,
-  posOrders,
+  productProfitability,
   profitLoss,
   purchases,
   readyStock,
@@ -918,6 +1179,11 @@ module.exports = {
   salesmanTargetProgress,
   sales,
   stockMovements,
+  territoryProfitability,
+  returns,
+  vatSummary,
+  orderPipeline,
+  inventoryAging,
   _private: {
     pagedRows,
     physicalConditionsForDerived,

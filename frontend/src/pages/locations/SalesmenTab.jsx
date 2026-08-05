@@ -134,10 +134,24 @@ export default function SalesmenTab() {
         )
       },
       {
+        id: 'commission_rule_name',
+        header: 'Commission rule',
+        cell: (row) => (
+          <span className="text-sm text-ink-200">{row.commission_rule_name || 'Not assigned'}</span>
+        )
+      },
+      {
         id: 'joined_at',
         header: 'Joined',
         cell: (row) => (
           <span className="text-sm text-ink-200">{formatDate(row.joined_at)}</span>
+        )
+      },
+      {
+        id: 'employment_end_date',
+        header: 'Ended',
+        cell: (row) => (
+          <span className="text-sm text-ink-200">{formatDate(row.employment_end_date)}</span>
         )
       },
       {
@@ -297,7 +311,7 @@ export default function SalesmenTab() {
         title="Deactivate salesman"
         description={
           deleteTarget
-            ? `Set ${deleteTarget.full_name} to inactive? Assignments stay on record but new dispatches will not target them.`
+            ? `Set ${deleteTarget.full_name} to inactive? Their linked login is revoked, active territory assignments end today, and open targets remain auditable for reassignment.`
             : ''
         }
         confirmLabel="Deactivate"

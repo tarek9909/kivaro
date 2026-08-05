@@ -75,10 +75,10 @@ export function DispatchRequestEditModal({ open, onClose, dispatchRequest }) {
       size="md"
       title={
         dispatchRequest
-          ? `Edit ${dispatchRequest.dispatch_number || `request #${dispatchRequest.id}`}`
-          : 'Edit dispatch request'
+          ? `Edit ${dispatchRequest.dispatch_number || `Request #${dispatchRequest.id}`}`
+          : 'Edit Order & Delivery Request'
       }
-      description="Update the request date and notes. Salesman, warehouse, customers, and items stay locked."
+      description="Update the request date and notes."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -90,34 +90,36 @@ export function DispatchRequestEditModal({ open, onClose, dispatchRequest }) {
             isLoading={mutation.isPending}
             disabled={!editAllowed}
           >
-            Save changes
+            Save Changes
           </Button>
         </>
       }
     >
       {!editAllowed ? (
-        <p className="text-sm text-ink-300">
-          Only draft dispatch requests can be edited. This request is locked at its
-          current stage.
-        </p>
+        <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">
+          Only draft requests can be edited. This record is locked at its current stage.
+        </div>
       ) : (
         <form id="dispatch-edit-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <Input
-            label="Request date"
-            type="date"
-            value={form.request_date}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, request_date: event.target.value }))
-            }
-            error={errors.request_date}
-          />
-          <Textarea
-            label="Notes"
-            value={form.notes || ''}
-            onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-            error={errors.notes}
-            rows={4}
-          />
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4.5 space-y-4">
+            <Input
+              label="Request date"
+              type="date"
+              value={form.request_date}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, request_date: event.target.value }))
+              }
+              error={errors.request_date}
+            />
+            <Textarea
+              label="Notes"
+              value={form.notes || ''}
+              onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+              error={errors.notes}
+              rows={4}
+              placeholder="Update instructions or route details..."
+            />
+          </div>
         </form>
       )}
     </Modal>

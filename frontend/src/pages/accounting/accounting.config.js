@@ -83,7 +83,7 @@ export const ACCOUNTING_TABS = [
     featureKey: 'accounting.cash-accounts',
     label: 'Cash accounts',
     to: '/accounting/cash-accounts',
-    anyOfPermissions: [ACCOUNTING_PERMISSIONS.view, ACCOUNTING_PERMISSIONS.manage]
+    anyOfPermissions: [ACCOUNTING_PERMISSIONS.view]
   },
   {
     id: 'financial-transactions',

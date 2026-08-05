@@ -17,7 +17,7 @@ describe('reports model queries', () => {
 
     await model.sales({}, { store_id: 1 });
 
-    expect(db.query.mock.calls[0][0]).toContain("dr.status IN ('dispatched', 'partially_settled', 'completed')");
+    expect(db.query.mock.calls[0][0]).toContain("dr.status IN ('delivery', 'partially_settled', 'completed')");
     expect(db.query.mock.calls[0][0]).toContain('di.line_type = ?');
     expect(db.query.mock.calls[0][1]).toEqual([1, 'sale']);
   });
@@ -33,6 +33,18 @@ describe('reports model queries', () => {
     expect(db.query.mock.calls[0][1]).toEqual(['pending', 1, 'sale']);
   });
 
+  test('uses the canonical carton stock mode in stock reports', async () => {
+    db.query
+      .mockResolvedValueOnce([{ total: 0 }])
+      .mockResolvedValueOnce([]);
+
+    await model.currentStock({ stock_mode: 'carton' }, { store_id: 1 });
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain('cs.stock_mode = ?');
+    expect(params).toEqual([1, 'carton']);
+  });
+
   test('profit-loss recognizes dispatched revenue/COGS and avoids supplier-payment double counting', async () => {
     db.query.mockResolvedValueOnce([]);
 
@@ -43,7 +55,9 @@ describe('reports model queries', () => {
     expect(sql).toContain("di.line_type = 'free_gift'");
     expect(sql).toContain('supplier_payments_cash_outflow');
     expect(sql).toContain('sales_cogs + sales.gift_cogs + expenses.operating_expenses');
+    expect(sql).toContain('payroll.payroll_expenses');
+    expect(sql).toContain('cp.payroll_payment_id IS NULL');
     expect(sql).not.toContain('supplier_payments_cash_outflow) AS total_expense');
-    expect(params).toEqual([1, 1, 1, 1, 1]);
+    expect(params).toEqual([1, 1, 1, 1, 1, 1]);
   });
 });

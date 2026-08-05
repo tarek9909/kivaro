@@ -1,9 +1,14 @@
 jest.mock('../src/modules/locations/locations.model', () => ({
-  createSalesman: jest.fn()
+  createSalesman: jest.fn(),
+  createSalaryRate: jest.fn()
 }));
 
 jest.mock('../src/modules/users/users.service', () => ({
   createSalesmanUser: jest.fn()
+}));
+
+jest.mock('../src/modules/commissions/commissions.model', () => ({
+  findRuleById: jest.fn()
 }));
 
 const mockTransactionConnection = { execute: jest.fn() };
@@ -14,6 +19,7 @@ jest.mock('../src/utils/transaction', () => ({
 
 const model = require('../src/modules/locations/locations.model');
 const userService = require('../src/modules/users/users.service');
+const commissionModel = require('../src/modules/commissions/commissions.model');
 const service = require('../src/modules/locations/locations.service');
 const { _private } = require('../src/modules/locations/locations.service');
 
@@ -38,18 +44,19 @@ describe('locations service target periods', () => {
 describe('locations service salesman user linking', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    commissionModel.findRuleById.mockResolvedValue({ id: 3, store_id: 1, status: 'active' });
   });
 
   test('creates a salesman login user when requested', async () => {
     userService.createSalesmanUser.mockResolvedValue({ id: 44 });
-    model.createSalesman.mockResolvedValue({ id: 7, user_id: 44 });
+    model.createSalesman.mockResolvedValue({ id: 7, user_id: 44, store_id: 1, base_salary: '500.0000' });
 
     await service.createSalesman({
       full_name: 'Route Driver',
       phone: '+96170000000',
       email: 'driver@example.com',
       password: 'ChangeMe123!',
-      create_login_user: true,
+      commission_rule_id: 3,
       status: 'active'
     }, 5, { id: 5, store_id: 1, is_superadmin: false });
 
@@ -64,7 +71,14 @@ describe('locations service salesman user linking', () => {
     expect(model.createSalesman).toHaveBeenCalledWith(expect.objectContaining({
       store_id: 1,
       user_id: 44,
+      commission_rule_id: 3,
       full_name: 'Route Driver'
     }), mockTransactionConnection);
+    expect(model.createSalaryRate).toHaveBeenCalledWith(mockTransactionConnection, expect.objectContaining({
+      store_id: 1,
+      salesman_id: 7,
+      monthly_salary: '500.0000',
+      created_by: 5
+    }));
   });
 });

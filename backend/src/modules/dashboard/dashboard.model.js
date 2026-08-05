@@ -18,7 +18,7 @@ function addDateRange(filters = {}, column, conditions, params) {
 function physicalDispatchConditions(storeId, filters, alias = 'dr') {
   const conditions = [
     alias + '.store_id = ?',
-    alias + ".status IN ('dispatched', 'partially_settled', 'completed')"
+    alias + ".status IN ('delivery', 'partially_settled', 'completed')"
   ];
   const params = [storeId];
   addDateRange(filters, 'COALESCE(' + alias + '.dispatched_at, ' + alias + '.request_date)', conditions, params);
@@ -67,17 +67,13 @@ async function getSummary(storeId, filters = {}) {
       '  COALESCE((SELECT SUM(c.remaining_cost) FROM ready_stock_containers c WHERE c.store_id = ? AND c.status IN (\'full\', \'partial\')), 0) AS ready_stock_value,',
       '  COALESCE((SELECT SUM(ca.current_balance) FROM cash_accounts ca WHERE ca.store_id = ? AND ca.status = \'active\'), 0) AS cash_balance,',
       '  COALESCE((SELECT SUM(cd.remaining_amount) FROM customer_debts cd WHERE cd.store_id = ? AND cd.status IN (\'pending\', \'partially_paid\')), 0) AS open_receivables,',
-      '  (SELECT COUNT(*) FROM dispatch_requests dr WHERE dr.store_id = ? AND dr.status IN (\'pending_approval\', \'approved\', \'dispatched\', \'partially_settled\')) AS active_dispatches,',
+      '  (SELECT COUNT(*) FROM dispatch_requests dr WHERE dr.store_id = ? AND dr.status IN (\'pending_approval\', \'approved\', \'delivery\', \'partially_settled\')) AS active_dispatches,',
       '  (SELECT COUNT(*) FROM item_stock_balances b JOIN items i ON i.id = b.item_id',
       '    WHERE b.store_id = ? AND i.reorder_level > 0 AND b.quantity_on_hand - b.quantity_reserved <= i.reorder_level) AS low_stock_balances,',
       '  (SELECT COUNT(*) FROM item_stock_balances b WHERE b.store_id = ?) AS stock_balance_count,',
-      '  (SELECT COUNT(*) FROM pos_orders po WHERE po.store_id = ? AND po.status = \'pending\') AS pending_pos_orders,',
-      '  (SELECT COUNT(DISTINCT po.salesman_id) FROM pos_orders po WHERE po.store_id = ? AND po.status = \'pending\') AS pending_pos_salesmen,',
       '  COALESCE((SELECT SUM(ds.total_collected) FROM dispatch_settlements ds WHERE ' + collectionConditions.join(' AND ') + '), 0) AS collections'
     ]),
     [
-      storeId,
-      storeId,
       storeId,
       storeId,
       storeId,
@@ -98,17 +94,20 @@ async function getFinancialSummary(storeId, filters = {}) {
   const expenseParams = [storeId];
   const commissionConditions = ['cp.store_id = ?'];
   const commissionParams = [storeId];
+  const payrollConditions = ['spp.store_id = ?'];
+  const payrollParams = [storeId];
   const writeoffConditions = ["cda.store_id = ?", "cda.adjustment_type = 'write_off'"];
   const writeoffParams = [storeId];
   addDateRange(filters, 'e.expense_date', expenseConditions, expenseParams);
   addDateRange(filters, 'cp.payment_date', commissionConditions, commissionParams);
+  addDateRange(filters, 'spp.payment_date', payrollConditions, payrollParams);
   addDateRange(filters, 'cda.adjustment_date', writeoffConditions, writeoffParams);
   const rows = await query(
     sql([
       'SELECT sales.sales_revenue, sales.sales_cogs, sales.gift_cogs,',
-      '  expenses.operating_expenses, commissions.commission_expenses, writeoffs.debt_write_offs,',
+      '  expenses.operating_expenses, commissions.commission_expenses, payroll.payroll_expenses, writeoffs.debt_write_offs,',
       '  (sales.sales_revenue - sales.sales_cogs - sales.gift_cogs) AS gross_profit_after_gifts,',
-      '  (sales.sales_revenue - sales.sales_cogs - sales.gift_cogs - expenses.operating_expenses - commissions.commission_expenses - writeoffs.debt_write_offs) AS net_profit',
+      '  (sales.sales_revenue - sales.sales_cogs - sales.gift_cogs - expenses.operating_expenses - commissions.commission_expenses - payroll.payroll_expenses - writeoffs.debt_write_offs) AS net_profit',
       'FROM (',
       '  SELECT',
       "    COALESCE(SUM(CASE WHEN di.line_type = 'sale' THEN di.subtotal_amount * (di.quantity - di.returned_quantity) / di.quantity ELSE 0 END), 0) AS sales_revenue,",
@@ -129,8 +128,12 @@ async function getFinancialSummary(storeId, filters = {}) {
       ') expenses',
       'CROSS JOIN (',
       '  SELECT COALESCE(SUM(cp.amount), 0) AS commission_expenses FROM commission_payments cp',
-      '  WHERE ' + commissionConditions.join(' AND '),
+      '  WHERE ' + commissionConditions.join(' AND ') + ' AND cp.payroll_payment_id IS NULL',
       ') commissions',
+      'CROSS JOIN (',
+      '  SELECT COALESCE(SUM(spp.total_amount), 0) AS payroll_expenses FROM salesman_payroll_payments spp',
+      '  WHERE ' + payrollConditions.join(' AND '),
+      ') payroll',
       'CROSS JOIN (',
       '  SELECT COALESCE(SUM(cda.amount), 0) AS debt_write_offs FROM customer_debt_adjustments cda',
       '  WHERE ' + writeoffConditions.join(' AND '),
@@ -140,6 +143,7 @@ async function getFinancialSummary(storeId, filters = {}) {
       ...dispatchScope.params,
       ...expenseParams,
       ...commissionParams,
+      ...payrollParams,
       ...writeoffParams
     ]
   );
@@ -151,9 +155,6 @@ async function getBenchmarks(storeId, filters = {}) {
   const requestParams = [storeId];
   addDateRange(filters, 'dr.request_date', requestConditions, requestParams);
   const dispatchedScope = physicalDispatchConditions(storeId, filters, 'dr');
-  const posConditions = ['po.store_id = ?', "po.status NOT IN ('cancelled', 'rejected')"];
-  const posParams = [storeId];
-  addDateRange(filters, 'po.order_date', posConditions, posParams);
   const collectionConditions = ["ds.store_id = ?", "ds.status = 'posted'"];
   const collectionParams = [storeId];
   addDateRange(filters, 'ds.settlement_date', collectionConditions, collectionParams);
@@ -162,8 +163,6 @@ async function getBenchmarks(storeId, filters = {}) {
       'SELECT',
       '  (SELECT COUNT(*) FROM dispatch_requests dr WHERE ' + requestConditions.join(' AND ') + ') AS dispatch_total,',
       '  (SELECT COUNT(*) FROM dispatch_requests dr WHERE ' + dispatchedScope.conditions.join(' AND ') + ') AS dispatch_done,',
-      '  (SELECT COUNT(*) FROM pos_orders po WHERE ' + posConditions.join(' AND ') + ') AS pos_total,',
-      '  (SELECT COUNT(*) FROM pos_orders po WHERE ' + posConditions.join(' AND ') + " AND po.status = 'converted') AS pos_converted,",
       '  (SELECT COUNT(*) FROM item_stock_balances b WHERE b.store_id = ?) AS stock_total,',
       '  (SELECT COUNT(*) FROM item_stock_balances b JOIN items i ON i.id = b.item_id',
       '    WHERE b.store_id = ? AND i.reorder_level > 0 AND b.quantity_on_hand - b.quantity_reserved <= i.reorder_level) AS low_stock,',
@@ -173,8 +172,6 @@ async function getBenchmarks(storeId, filters = {}) {
     [
       ...requestParams,
       ...dispatchedScope.params,
-      ...posParams,
-      ...posParams,
       storeId,
       storeId,
       ...dispatchedScope.params,
@@ -241,36 +238,6 @@ async function getPackagingShortageCount(storeId) {
   return Number(rows[0]?.total || 0);
 }
 
-async function getPendingPosWork(storeId, filters = {}, limit = 8) {
-  const conditions = ['po.store_id = ?', "po.status = 'pending'"];
-  const params = [storeId];
-  addDateRange(filters, 'po.order_date', conditions, params);
-  return query(
-    sql([
-      'SELECT po.salesman_id, s.full_name AS salesman_name, COUNT(*) AS pending_order_count,',
-      '  COUNT(DISTINCT po.customer_id) AS pending_customer_count,',
-      '  COALESCE(SUM(line_summary.sale_total), 0) AS pending_sale_total,',
-      '  COALESCE(SUM(line_summary.gift_quantity), 0) AS requested_gift_quantity,',
-      '  COALESCE(SUM(line_summary.gift_line_count), 0) AS requested_gift_line_count',
-      'FROM pos_orders po',
-      'JOIN salesmen s ON s.id = po.salesman_id',
-      'LEFT JOIN (',
-      '  SELECT pos_order_id,',
-      "    SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price * (1 + vat_rate / 100) ELSE 0 END) AS sale_total,",
-      "    SUM(CASE WHEN line_type = 'free_gift' THEN quantity ELSE 0 END) AS gift_quantity,",
-      "    SUM(line_type = 'free_gift') AS gift_line_count",
-      '  FROM pos_order_lines',
-      '  GROUP BY pos_order_id',
-      ') line_summary ON line_summary.pos_order_id = po.id',
-      'WHERE ' + conditions.join(' AND '),
-      'GROUP BY po.salesman_id, s.full_name',
-      'ORDER BY pending_order_count DESC, s.full_name ASC',
-      'LIMIT ?'
-    ]),
-    [...params, limit]
-  );
-}
-
 async function getSalesChart(storeId, filters = {}) {
   const dispatchScope = physicalDispatchConditions(storeId, filters, 'dr');
   return query(
@@ -317,7 +284,6 @@ module.exports = {
   getNotifications,
   getPackagingShortageCount,
   getPackagingShortages,
-  getPendingPosWork,
   getSalesChart,
   getSummary,
   _private: {

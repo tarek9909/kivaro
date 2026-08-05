@@ -107,16 +107,6 @@ export default function SalesPage() {
       )
     },
     {
-      id: 'base_salary',
-      header: 'Base salary',
-      align: 'right',
-      cell: (row) => (
-        <span className="font-mono text-sm text-ink-100">
-          {formatCurrency(row.base_salary || 0)}
-        </span>
-      )
-    },
-    {
       id: 'achieved_sales_amount',
       header: 'Achieved',
       align: 'right',
@@ -245,10 +235,6 @@ export default function SalesPage() {
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Target</p>
           <p className="mt-1 font-mono text-xl font-semibold text-ink-50">{formatNumber(summary.target_amount || 0, { maximumFractionDigits: 4 })}</p>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Base salary</p>
-          <p className="mt-1 font-mono text-xl font-semibold text-ink-50">{formatCurrency(summary.base_salary || 0)}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Achieved</p>

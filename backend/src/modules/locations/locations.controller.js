@@ -69,14 +69,19 @@ async function unassignSalesmanSublocation(req, res) {
   successResponse(res, { message: 'Salesman unassigned from sublocation', data: {} });
 }
 
-async function createSublocationTarget(req, res) {
-  const sublocation_target = await service.createSublocationTarget(req.params.id, req.body, req.user);
-  successResponse(res, { statusCode: 201, message: 'Sublocation target created', data: { sublocation_target } });
+async function createTargetBundle(req, res) {
+  const location_target = await service.createTargetBundle(req.body, req.user.id, req.user);
+  successResponse(res, { statusCode: 201, message: 'Active target bundle created', data: { location_target } });
 }
 
-async function generateSalesmanTargets(req, res) {
-  const salesman_targets = await service.generateSalesmanTargets(req.params.id, req.user);
-  successResponse(res, { message: 'Salesman targets generated', data: { salesman_targets } });
+async function updateTargetAssignment(req, res) {
+  const location_target = await service.updateTargetAssignment(req.params.id, req.body, req.user.id, req.user);
+  successResponse(res, { message: 'Target assignment updated', data: { location_target } });
+}
+
+async function getTargetSetup(req, res) {
+  const setup = await service.getTargetSetup(req.params.id, req.user);
+  successResponse(res, { message: 'Target assignment setup fetched', data: { setup } });
 }
 
 async function listLocationSublocations(req, res) {
@@ -94,14 +99,13 @@ async function listLocationSublocations(req, res) {
 module.exports = {
   assignSalesmanSublocation,
   createLocation: create(service.createLocation, 'location', 'Location created'),
-  createLocationTarget: create(service.createLocationTarget, 'location_target', 'Location target created'),
+  createTargetBundle,
   createSalesman: create(service.createSalesman, 'salesman', 'Salesman created'),
   createSublocation: create(service.createSublocation, 'sublocation', 'Sublocation created'),
-  createSublocationTarget,
   deleteLocation: remove(service.deleteLocation, 'Location deleted'),
   deleteSalesman: remove(service.deleteSalesman, 'Salesman deleted'),
   deleteSublocation: remove(service.deleteSublocation, 'Sublocation deleted'),
-  generateSalesmanTargets,
+  getTargetSetup,
   getLocation: get(service.getLocation, 'location', 'Location fetched'),
   getLocationTarget: get(service.getLocationTarget, 'location_target', 'Location target fetched'),
   getSalesman: get(service.getSalesman, 'salesman', 'Salesman fetched'),
@@ -114,7 +118,7 @@ module.exports = {
   listSalesmen: list(service.listSalesmen, 'salesmen', 'Salesmen fetched'),
   listSublocations: list(service.listSublocations, 'sublocations', 'Sublocations fetched'),
   updateLocation: update(service.updateLocation, 'location', 'Location updated'),
-  updateLocationTarget: update(service.updateLocationTarget, 'location_target', 'Location target updated'),
+  updateTargetAssignment,
   updateSalesman: update(service.updateSalesman, 'salesman', 'Salesman updated'),
   updateSublocation: update(service.updateSublocation, 'sublocation', 'Sublocation updated'),
   unassignSalesmanSublocation

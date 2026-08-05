@@ -23,13 +23,26 @@ describe('payments API module', () => {
   it('exposes only the supported debt methods', () => {
     const client = buildClientStub();
     const api = createPaymentsApi(client);
-    expect(Object.keys(api.debts).sort()).toEqual(['applyCredit', 'get', 'list', 'pay', 'updateStatus']);
+    expect(Object.keys(api.debts).sort()).toEqual(['applyCredit', 'csv', 'get', 'list', 'pay', 'printPdf']);
   });
 
-  it('exposes only list/create on customer payments', () => {
+  it('exposes payment creation, history, and printing', () => {
     const client = buildClientStub();
     const api = createPaymentsApi(client);
-    expect(Object.keys(api.customerPayments).sort()).toEqual(['create', 'list']);
+    expect(Object.keys(api.customerPayments).sort()).toEqual(['create', 'csv', 'list', 'print', 'printPdf']);
+  });
+
+  it('posts a direct customer payment to the supported endpoint', async () => {
+    const client = buildClientStub();
+    const api = createPaymentsApi(client);
+
+    await api.customerPayments.create({ customer_id: 8, amount: 25, cash_account_id: 3 });
+
+    expect(client.calls).toEqual([{
+      method: 'post',
+      path: '/customer-payments',
+      rest: [{ customer_id: 8, amount: 25, cash_account_id: 3 }, undefined]
+    }]);
   });
 
   it('exposes list on customer credits', () => {
@@ -41,7 +54,7 @@ describe('payments API module', () => {
   it('exposes list/get/print/printPdf on receipts (no update or delete)', () => {
     const client = buildClientStub();
     const api = createPaymentsApi(client);
-    expect(Object.keys(api.receipts).sort()).toEqual(['get', 'list', 'print', 'printPdf']);
+    expect(Object.keys(api.receipts).sort()).toEqual(['csv', 'get', 'list', 'print', 'printPdf']);
   });
 
   it('routes debt actions to the correct endpoints', async () => {
@@ -49,9 +62,7 @@ describe('payments API module', () => {
     const api = createPaymentsApi(client);
     await api.debts.list({ status: 'pending' });
     await api.debts.get(11);
-    await api.debts.pay(11, { payment_date: '2026-05-27', amount: 50, payment_method: 'cash' });
-    await api.debts.applyCredit(11, {});
-    await api.debts.updateStatus(11, { status: 'paid' });
+    await api.debts.pay(11, { amount: 50, cash_account_id: 4 });
     expect(client.calls).toEqual([
       { method: 'get', path: '/customer-debts', rest: [{ params: { status: 'pending' } }] },
       { method: 'get', path: '/customer-debts/11', rest: [undefined] },
@@ -59,19 +70,9 @@ describe('payments API module', () => {
         method: 'post',
         path: '/customer-debts/11/payments',
         rest: [
-          { payment_date: '2026-05-27', amount: 50, payment_method: 'cash' },
+          { amount: 50, cash_account_id: 4 },
           undefined
         ]
-      },
-      {
-        method: 'post',
-        path: '/customer-debts/11/apply-credit',
-        rest: [{}, undefined]
-      },
-      {
-        method: 'patch',
-        path: '/customer-debts/11/status',
-        rest: [{ status: 'paid' }, undefined]
       }
     ]);
   });
@@ -120,27 +121,4 @@ describe('payments API module', () => {
     });
   });
 
-  it('POSTs a customer payment to /customer-payments', async () => {
-    const client = buildClientStub();
-    const api = createPaymentsApi(client);
-    await api.customerPayments.create({
-      customer_id: 12,
-      payment_date: '2026-05-27',
-      amount: 100,
-      payment_method: 'cash'
-    });
-    expect(client.calls[0]).toEqual({
-      method: 'post',
-      path: '/customer-payments',
-      rest: [
-        {
-          customer_id: 12,
-          payment_date: '2026-05-27',
-          amount: 100,
-          payment_method: 'cash'
-        },
-        undefined
-      ]
-    });
-  });
 });

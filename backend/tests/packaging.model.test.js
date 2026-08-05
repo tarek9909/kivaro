@@ -1,45 +1,31 @@
-jest.mock('../src/bootstrap/db', () => ({
-  query: jest.fn()
-}));
+jest.mock('../src/bootstrap/db', () => ({ query: jest.fn() }));
 
-const db = require('../src/bootstrap/db');
 const model = require('../src/modules/packaging/packaging.model');
 
-describe('packaging model ready-stock listing', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+describe('packaging shelf-stock movement queries', () => {
+  test('includes the required store identifier when writing a shelf-stock movement', async () => {
+    const connection = { execute: jest.fn().mockResolvedValue([{ insertId: 21 }]) };
 
-  test('lists canonical ready containers and their immutable packaging operation context', async () => {
-    db.query
-      .mockResolvedValueOnce([{ total: 1 }])
-      .mockResolvedValueOnce([{
-        id: 11,
-        packaging_operation_id: 9,
-        packaging_group_id: 4,
-        initial_inner_quantity: '15.0000',
-        remaining_inner_quantity: '12.0000',
-        status: 'partial',
-        packaging_group_name: 'Six kilogram retail carton'
-      }]);
-
-    const result = await model.listReadyStockContainers({
+    await model.createReadyShelfStockMovement(connection, {
       store_id: 1,
       warehouse_id: 2,
-      status: 'partial'
+      ready_shelf_stock_id: 2,
+      movement_type: 'production',
+      quantity_change: 5,
+      quantity_before: 0,
+      quantity_after: 5,
+      state_before: 'reusable',
+      state_after: 'reusable',
+      reference_type: 'packaging_operation',
+      reference_id: 3,
+      notes: null,
+      created_by: 4
     });
 
-    expect(result.rows).toEqual([
-      expect.objectContaining({
-        packaging_operation_id: 9,
-        initial_inner_quantity: '15.0000',
-        remaining_inner_quantity: '12.0000',
-        status: 'partial'
-      })
-    ]);
-    expect(db.query.mock.calls[0][0]).toContain('ready_stock_containers');
-    expect(db.query.mock.calls[1][0]).toContain('packaging_operations');
-    expect(db.query.mock.calls[1][0]).toContain('remaining_ratio');
-    expect(result.meta.total).toBe(1);
+    const [sql, params] = connection.execute.mock.calls[0];
+    expect(sql).toContain('store_id');
+    expect(params).toHaveLength(13);
+    expect(params[0]).toBe(1);
+    expect(params[1]).toBe(2);
   });
 });

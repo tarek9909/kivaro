@@ -17,7 +17,7 @@ function assertCanonicalItem(item) {
   if (!item || !['normal', 'packaging'].includes(item.item_kind)) {
     throw validationError('item_id', 'Item is not configured for canonical inventory');
   }
-  if (!['carton_weight', 'weight', 'piece'].includes(item.stock_mode)) {
+  if (!['carton', 'weight', 'piece'].includes(item.stock_mode)) {
     throw validationError('stock_mode', 'Item stock mode is invalid');
   }
   if (item.item_kind === 'packaging' && item.stock_mode !== 'piece') {
@@ -26,17 +26,20 @@ function assertCanonicalItem(item) {
   return item;
 }
 
+// Kept only as a defensive boundary for callers compiled against the retired
+// loose-carton API. New carton flows never call this helper.
 function cartonUnitWeight(item) {
   assertCanonicalItem(item);
-  if (item.stock_mode !== 'carton_weight') {
-    throw validationError('item_id', 'Item does not use carton-weight stock');
+  if (item.stock_mode !== 'carton') {
+    throw validationError('item_id', 'Item does not use carton stock');
   }
-  const kgPerCarton = decimal(item.kg_per_carton);
-  const looseUnits = decimal(item.loose_units_per_carton);
-  if (kgPerCarton.lte(0) || looseUnits.lte(0) || !looseUnits.isInteger()) {
-    throw validationError('item_id', 'Carton-weight item configuration is incomplete');
-  }
-  return kgPerCarton.div(looseUnits);
+  return positiveCartonWeight(item);
+}
+
+function positiveCartonWeight(item) {
+  const kg = decimal(item.kg_per_carton);
+  if (kg.lte(0)) throw validationError('kg_per_carton', 'Carton items require kg per carton');
+  return kg;
 }
 
 function normalizeQuantity(item, quantity, field = 'quantity', options = {}) {
@@ -44,15 +47,8 @@ function normalizeQuantity(item, quantity, field = 'quantity', options = {}) {
   const normalized = decimal(quantity);
   assertCanonicalItem(item);
 
-  if (item.stock_mode === 'piece' && !normalized.isInteger()) {
-    throw validationError(field, 'Piece-based stock quantities must be whole numbers');
-  }
-
-  if (item.stock_mode === 'carton_weight' && options.requireLooseUnitMultiple) {
-    const unitWeight = cartonUnitWeight(item);
-    if (!normalized.div(unitWeight).isInteger()) {
-      throw validationError(field, 'Carton-weight quantity must match a whole number of loose units');
-    }
+  if (['piece', 'carton'].includes(item.stock_mode) && !normalized.isInteger()) {
+    throw validationError(field, 'Piece and carton stock quantities must be whole numbers');
   }
 
   return normalized;
@@ -131,7 +127,6 @@ async function writeMovement(connection, input) {
     unit_cost: unitCost === null ? null : toMoney(unitCost),
     total_cost: totalCost === null ? null : toMoney(totalCost),
     carton_stock_lot_id: input.cartonStockLotId,
-    open_carton_shelf_id: input.openCartonShelfId,
     reference_type: input.referenceType,
     reference_id: input.referenceId,
     notes: input.notes,
@@ -205,8 +200,8 @@ async function notifyLowStockTransition(connection, input) {
 
 async function increaseItemStock(connection, input) {
   const item = await resolveItem(connection, input);
-  if (item.stock_mode === 'carton_weight' && !input.allowCartonWeightQuantity) {
-    throw validationError('item_id', 'Carton-weight stock must be received by carton count');
+  if (item.stock_mode === 'carton' && !input.allowCartonQuantity) {
+    throw validationError('item_id', 'Carton stock must be received by carton count');
   }
   const quantity = normalizeQuantity(item, input.quantity, 'quantity');
   const balance = await getItemBalanceForUpdate(connection, input.warehouseId, item.id, input.storeId);
@@ -295,17 +290,10 @@ async function decreaseStandardItemStock(connection, item, input, quantity) {
 
 async function decreaseItemStock(connection, input) {
   const item = await resolveItem(connection, input);
-  const quantity = normalizeQuantity(item, input.quantity, 'quantity', {
-    requireLooseUnitMultiple: item.stock_mode === 'carton_weight'
-  });
-  if (item.stock_mode === 'carton_weight' && !input.skipCartonSelection) {
-    const looseUnits = quantity.div(cartonUnitWeight(item));
-    return consumeCartonLooseUnits(connection, {
-      ...input,
-      item,
-      itemId: item.id,
-      looseUnits,
-      quantity,
+  const quantity = normalizeQuantity(item, input.quantity, 'quantity');
+  if (item.stock_mode === 'carton' && !input.skipCartonSelection) {
+    return consumeSealedCartons(connection, {
+      ...input, item, itemId: item.id, cartonCount: quantity,
       movementType: input.movementType || 'stock_adjustment'
     });
   }
@@ -314,9 +302,7 @@ async function decreaseItemStock(connection, input) {
 
 async function reserveItemStock(connection, input) {
   const item = await resolveItem(connection, input);
-  const quantity = normalizeQuantity(item, input.quantity, 'quantity', {
-    requireLooseUnitMultiple: item.stock_mode === 'carton_weight'
-  });
+  const quantity = normalizeQuantity(item, input.quantity, 'quantity');
   const balance = await getItemBalanceForUpdate(connection, input.warehouseId, item.id, input.storeId);
   if (availableQuantity(balance).lt(quantity)) {
     throw ApiError.conflict('Insufficient stock available');
@@ -356,9 +342,7 @@ async function reserveItemStock(connection, input) {
 
 async function releaseReservedItemStock(connection, input) {
   const item = await resolveItem(connection, input);
-  const quantity = normalizeQuantity(item, input.quantity, 'quantity', {
-    requireLooseUnitMultiple: item.stock_mode === 'carton_weight'
-  });
+  const quantity = normalizeQuantity(item, input.quantity, 'quantity');
   const balance = await getItemBalanceForUpdate(connection, input.warehouseId, item.id, input.storeId);
   const reservedBefore = decimal(balance.quantity_reserved);
   if (reservedBefore.lt(quantity)) {
@@ -398,19 +382,19 @@ async function releaseReservedItemStock(connection, input) {
 
 async function receiveCartonStock(connection, input) {
   const item = await resolveItem(connection, input);
-  if (item.stock_mode !== 'carton_weight') {
-    throw validationError('item_id', 'Only carton-weight items can be received by carton count');
+  if (item.stock_mode !== 'carton') {
+    throw validationError('item_id', 'Only carton items can be received by carton count');
   }
   assertPositiveQuantity(input.cartonCount, 'carton_count');
   assertWholeNumber(input.cartonCount, 'carton_count');
   const cartonCount = decimal(input.cartonCount);
   const kgPerCarton = decimal(item.kg_per_carton);
-  const totalQuantity = cartonCount.mul(kgPerCarton);
-  const configuredDefaultCostPerCarton = decimal(item.default_cost || 0).mul(kgPerCarton);
+  const totalQuantity = cartonCount;
+  const configuredDefaultCostPerCarton = decimal(item.default_cost || 0);
   const costPerCarton = input.costPerCarton === undefined || input.costPerCarton === null
     ? configuredDefaultCostPerCarton
     : decimal(input.costPerCarton);
-  const unitCost = costPerCarton.div(kgPerCarton);
+  const unitCost = costPerCarton;
   const balance = await getItemBalanceForUpdate(connection, input.warehouseId, item.id, input.storeId);
   const quantityBefore = decimal(balance.quantity_on_hand);
   const quantityAfter = quantityBefore.plus(totalQuantity);
@@ -427,8 +411,7 @@ async function receiveCartonStock(connection, input) {
     received_cartons: Number(cartonCount.toString()),
     remaining_cartons: Number(cartonCount.toString()),
     kg_per_carton: toMoney(kgPerCarton),
-    loose_units_per_carton: Number(decimal(item.loose_units_per_carton).toString()),
-    unit_cost_per_kg: toMoney(unitCost),
+    unit_cost_per_carton: toMoney(unitCost),
     source_type: input.referenceType || input.sourceType || 'stock_receipt',
     source_id: input.referenceId || input.sourceId || null,
     received_at: input.receivedAt,
@@ -724,13 +707,13 @@ function DecimalMin(left, right) {
 
 async function consumeSealedCartons(connection, input) {
   const item = await resolveItem(connection, input);
-  if (item.stock_mode !== 'carton_weight') {
-    throw validationError('item_id', 'Only carton-weight items have sealed cartons');
+  if (item.stock_mode !== 'carton') {
+    throw validationError('item_id', 'Only carton items have sealed cartons');
   }
   assertPositiveQuantity(input.cartonCount, 'carton_count');
   assertWholeNumber(input.cartonCount, 'carton_count');
   const cartonCount = decimal(input.cartonCount);
-  const quantity = cartonCount.mul(decimal(item.kg_per_carton));
+  const quantity = cartonCount;
   const balance = await getItemBalanceForUpdate(connection, input.warehouseId, item.id, input.storeId);
   assertBalanceCanConsume(balance, quantity, input);
   const allocations = [];
@@ -831,7 +814,7 @@ async function consumeSealedCartons(connection, input) {
 
 async function adjustItemStock(connection, input) {
   const item = await resolveItem(connection, input);
-  if (item.stock_mode === 'carton_weight') {
+  if (item.stock_mode === 'carton') {
     if (input.cartonCountChange !== undefined) {
       const cartonCount = decimal(input.cartonCountChange);
       if (cartonCount.eq(0)) throw validationError('carton_count_change', 'Quantity change cannot be zero');
@@ -856,21 +839,7 @@ async function adjustItemStock(connection, input) {
         referenceType: input.referenceType || 'stock_adjustment'
       });
     }
-    if (input.looseUnitsChange !== undefined) {
-      const looseUnits = decimal(input.looseUnitsChange);
-      if (looseUnits.gte(0)) {
-        throw validationError('loose_units_change', 'Loose-unit adjustments must remove stock; receive sealed cartons instead');
-      }
-      return consumeCartonLooseUnits(connection, {
-        ...input,
-        item,
-        itemId: item.id,
-        looseUnits: looseUnits.abs(),
-        movementType: 'stock_adjustment',
-        referenceType: input.referenceType || 'stock_adjustment'
-      });
-    }
-    throw validationError('carton_count_change', 'Carton-weight adjustments require carton count or loose-unit change');
+    throw validationError('carton_count_change', 'Carton adjustments require a whole carton count');
   }
 
   if (input.quantityChange === undefined || decimal(input.quantityChange).eq(0)) {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calculator , SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import {
@@ -20,7 +20,6 @@ import {
   COMMISSION_STATUS_FILTER_OPTIONS,
   getCommissionStatusTone
 } from './commissions.config.js';
-import { CommissionCalculateModal } from './CommissionCalculateModal.jsx';
 import { CommissionDrawer } from './CommissionDrawer.jsx';
 
 function StatusBadge({ status }) {
@@ -34,6 +33,7 @@ export default function CommissionsCalculationsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canManage = hasPermission(COMMISSIONS_PERMISSIONS.manage);
   const canPickSalesmen = hasPermission(LOCATIONS_PERMISSIONS.salesmen);
+  const canPickSublocations = hasPermission(LOCATIONS_PERMISSIONS.locations);
 
   const [status, setStatus] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -43,7 +43,6 @@ export default function CommissionsCalculationsTab() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
-  const [calculating, setCalculating] = useState(false);
   const [openCommissionId, setOpenCommissionId] = useState(null);
 
   const queryParams = useMemo(() => {
@@ -64,7 +63,7 @@ export default function CommissionsCalculationsTab() {
   const salesmenQuery = useSalesmenList(canPickSalesmen);
   const salesmen = salesmenQuery.data?.data?.salesmen || [];
 
-  const sublocationsQuery = useSublocationsList(true);
+  const sublocationsQuery = useSublocationsList(canPickSublocations);
   const sublocations = sublocationsQuery.data?.data?.sublocations || [];
 
   const rows = listQuery.data?.data?.commissions || [];
@@ -158,18 +157,10 @@ export default function CommissionsCalculationsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          leftIcon={Calculator}
-          onClick={() => setCalculating(true)}
-          disabled={!canManage}
-        >
-          Calculate commission
-        </Button>
-      </div>
+      <p className="text-sm text-ink-400">Commissions are calculated automatically from collected cash after each target period ends.</p>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Select
+        {canPickSublocations ? <Select
           value={status}
           onChange={(event) => {
             setStatus(event.target.value);
@@ -181,7 +172,17 @@ export default function CommissionsCalculationsTab() {
               {option.label}
             </option>
           ))}
-        </Select>
+        </Select> : <Input
+          label="Sublocation ID"
+          type="number"
+          min="1"
+          value={sublocationId}
+          onChange={(event) => {
+            setSublocationId(event.target.value);
+            setPage(1);
+          }}
+          description="Numeric only."
+        />}
         {canPickSalesmen ? (
           <Select
             value={salesmanId}
@@ -278,7 +279,7 @@ export default function CommissionsCalculationsTab() {
         empty={{
           title: 'No commissions match the filters',
           description: canManage
-            ? 'Adjust your filters or calculate a new commission.'
+            ? 'Automatic period-close commissions will appear here.'
             : 'Adjust your filters to find existing commissions.'
         }}
         footer={
@@ -294,10 +295,6 @@ export default function CommissionsCalculationsTab() {
         }
       />
 
-      <CommissionCalculateModal
-        open={calculating}
-        onClose={() => setCalculating(false)}
-      />
       <CommissionDrawer
         open={Boolean(openCommissionId)}
         onClose={() => setOpenCommissionId(null)}

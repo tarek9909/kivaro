@@ -8,7 +8,6 @@ import { formatNumber } from '@/lib/formatters.js';
 
 const ENTRY_LABELS = {
   normal_carton: 'Normal — sealed carton',
-  normal_loose_unit: 'Normal — loose unit',
   normal_weight: 'Normal — weight',
   normal_piece: 'Normal — piece',
   ready_outer_carton: 'Ready stock — outer carton',
@@ -17,7 +16,6 @@ const ENTRY_LABELS = {
 
 const WHOLE_QUANTITY_TYPES = new Set([
   'normal_carton',
-  'normal_loose_unit',
   'normal_piece',
   'ready_outer_carton',
   'ready_inner_unit'
@@ -149,21 +147,21 @@ export function AddDispatchItemModal({
       open={open}
       onClose={onClose}
       size="md"
-      title={dispatchItem ? `Edit line for ${dispatchCustomer?.customer_name || 'customer'}` : dispatchCustomer ? `Add line for ${dispatchCustomer.customer_name || 'customer'}` : 'Add dispatch line'}
-      description={dispatchItem ? 'Update the draft line before resubmitting. The next invoice revision snapshots the corrected offer, price, VAT, and gift status.' : 'Choose a configured sale offer. Availability, costs, carton opening, and ready-container allocation are verified by the server at approval.'}
+      title={dispatchItem ? `Edit Line for ${dispatchCustomer?.customer_name || 'Customer'}` : dispatchCustomer ? `Add Line for ${dispatchCustomer.customer_name || 'Customer'}` : 'Add Dispatch Line'}
+      description={dispatchItem ? 'Update the draft line before resubmitting. The next invoice revision snapshots the corrected offer, price, VAT, and gift status.' : 'Choose a configured sale offer. Availability and allocation are verified at approval.'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
           <Button type="submit" form="add-dispatch-item-form" isLoading={mutation.isPending}>
-            {dispatchItem ? 'Save line' : isGift ? 'Add gift' : 'Add line'}
+            {dispatchItem ? 'Save Line' : isGift ? 'Add Gift Line' : 'Add Line'}
           </Button>
         </>
       }
     >
       <form id="add-dispatch-item-form" onSubmit={submit} className="space-y-4" noValidate>
         {dispatchCustomer && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Customer</p>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-3.5 text-sm">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-400">Customer</p>
             <p className="mt-1 font-medium text-ink-50">{dispatchCustomer.customer_name || `Customer #${dispatchCustomer.customer_id}`}</p>
             <p className="mt-0.5 text-xs text-ink-400">
               {[dispatchCustomer.location_name, dispatchCustomer.sublocation_name].filter(Boolean).join(' · ') || 'No territory label'}
@@ -226,16 +224,28 @@ export function AddDispatchItemModal({
             error={errors.unit_price}
             disabled={isGift}
             required={!isGift}
-            description={isGift ? 'Zero by policy.' : 'Starts from the offer default; override only when allowed.'}
+            description={isGift ? 'Zero by policy.' : 'Starts from the offer default.'}
           />
         </div>
 
         {selectedOffer && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
-            <div className="flex justify-between gap-3"><span className="text-ink-300">Offer type</span><span className="text-ink-100">{ENTRY_LABELS[selectedOffer.entry_type] || selectedOffer.entry_type}</span></div>
-            <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">Subtotal</span><span className="font-mono text-ink-100">{formatNumber(subtotal, { maximumFractionDigits: 4 })}</span></div>
-            <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">VAT</span><span className="font-mono text-ink-100">{formatNumber(vat, { maximumFractionDigits: 4 })}</span></div>
-            <div className="mt-2 flex justify-between gap-3 border-t border-white/10 pt-2"><span className="font-medium text-ink-100">Line total</span><span className="font-mono font-medium text-ink-50">{formatNumber(subtotal + vat, { maximumFractionDigits: 4 })}</span></div>
+          <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.03] to-white/[0.01] p-4 space-y-2 text-sm shadow-inner">
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-ink-400">Offer Type</span>
+              <span className="text-ink-200 font-medium">{ENTRY_LABELS[selectedOffer.entry_type] || selectedOffer.entry_type}</span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-ink-400">Subtotal</span>
+              <span className="font-mono text-ink-100">{formatNumber(subtotal, { maximumFractionDigits: 4 })}</span>
+            </div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-ink-400">VAT ({vatRate}%)</span>
+              <span className="font-mono text-ink-100">{formatNumber(vat, { maximumFractionDigits: 4 })}</span>
+            </div>
+            <div className="mt-2.5 flex justify-between items-center border-t border-white/10 pt-2.5">
+              <span className="font-display font-semibold text-ink-50">Line Total</span>
+              <span className="font-mono font-bold text-brand-300 text-base">{formatNumber(subtotal + vat, { maximumFractionDigits: 4 })}</span>
+            </div>
           </div>
         )}
       </form>

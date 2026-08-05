@@ -5,7 +5,6 @@ const status = z.enum(['active', 'inactive']);
 const componentRole = z.enum(['outer_sellable', 'inner_sellable', 'consumable']);
 const saleEntryType = z.enum([
   'normal_carton',
-  'normal_loose_unit',
   'normal_weight',
   'normal_piece',
   'ready_outer_carton',
@@ -42,6 +41,7 @@ const groupBody = z.object({
 const previewBody = z.object({
   warehouse_id: z.coerce.number().int().positive().optional(),
   output_carton_count: z.coerce.number().int().positive(),
+  remainder_component_item_id: z.coerce.number().int().positive().optional(),
   notes: optionalText
 });
 
@@ -104,11 +104,15 @@ module.exports = {
       status: z.enum(['full', 'partial', 'depleted', 'cancelled']).optional()
     })
   }),
+  listReadyShelfStockSchema: z.object({
+    query: z.object({ ...pageQuery, warehouse_id: z.coerce.number().int().positive().optional(), packaging_group_id: z.coerce.number().int().positive().optional(), packaging_item_id: z.coerce.number().int().positive().optional(), state: z.enum(['reusable', 'gift']).optional() })
+  }),
   previewSchema: z.object({ params: idParam, body: previewBody }),
   replaceComponentsSchema: z.object({
     params: idParam,
     body: z.object({ components: z.array(componentBody).min(2) })
   }),
+  transferShelfStockSchema: z.object({ params: idParam, body: z.object({ quantity: z.coerce.number().int().positive() }) }),
   updateGroupSchema: z.object({
     params: idParam,
     body: groupBody.omit({ store_id: true }).partial().refine((body) => Object.keys(body).length > 0, {

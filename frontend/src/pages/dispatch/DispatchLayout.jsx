@@ -6,8 +6,8 @@ export default function DispatchLayout() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Operations"
-        title="Dispatch"
-        description="Plan, approve, dispatch, and settle outbound stock against customers in the field."
+        title="Orders & deliveries"
+        description="Review customer orders, release deliveries, and settle outbound stock in the field."
       />
       <Outlet />
     </div>

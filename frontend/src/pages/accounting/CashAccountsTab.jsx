@@ -27,6 +27,7 @@ export default function CashAccountsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(ACCOUNTING_PERMISSIONS.view);
   const canManage = hasPermission(ACCOUNTING_PERMISSIONS.manage);
+  const canRead = canView;
 
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -44,12 +45,10 @@ export default function CashAccountsTab() {
     return params;
   }, [debouncedSearch, status, page, limit]);
 
-  // GET /cash-accounts requires accounting.view; do not call it for
-  // manage-only operators.
   const listQuery = useQuery({
     queryKey: ['accounting', 'cash-accounts', queryParams],
     queryFn: () => api.accounting.cashAccounts.list(queryParams),
-    enabled: canView
+    enabled: canRead
   });
 
   const rows = listQuery.data?.data?.cash_accounts || [];
@@ -140,7 +139,7 @@ export default function CashAccountsTab() {
         </Button>
       </div>
 
-      {!canView ? (
+      {!canRead ? (
         <GlassPanel>
           <GlassPanelBody>
             <EmptyState

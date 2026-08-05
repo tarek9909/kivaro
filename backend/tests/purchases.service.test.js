@@ -72,45 +72,14 @@ describe('purchases service approval payments', () => {
 
     purchaseModel.findPurchaseOrderById
       .mockResolvedValueOnce(purchaseOrder)
-      .mockResolvedValueOnce({ ...purchaseOrder, status: 'approved', amount_paid: '125.00' });
+      .mockResolvedValueOnce({ ...purchaseOrder, status: 'approved' });
     purchaseModel.lockPurchaseOrder.mockResolvedValue(purchaseOrder);
-    purchaseModel.createSupplierPaymentRecord.mockResolvedValue(44);
-    accountingModel.findCashAccountById.mockResolvedValue({
-      id: 2,
-      store_id: 1,
-      status: 'active'
-    });
 
     await service.approvePurchaseOrder(10, actor.id, actor);
 
     expect(purchaseModel.approvePurchaseOrder).toHaveBeenCalledWith(mockConnection, 10, actor.id);
-    expect(purchaseModel.createSupplierPaymentRecord).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        store_id: 1,
-        supplier_id: 5,
-        purchase_order_id: 10,
-        amount: '100.0000',
-        payment_method: 'bank_transfer',
-        reference_number: 'PO-10',
-        cash_account_id: 2,
-        created_by: actor.id
-      })
-    );
-    expect(purchaseModel.incrementPurchaseOrderPaid).toHaveBeenCalledWith(mockConnection, 10, '100.0000');
-    expect(accountingModel.createFinancialTransaction).toHaveBeenCalledWith(
-      mockConnection,
-      expect.objectContaining({
-        store_id: 1,
-        cash_account_id: 2,
-        transaction_type: 'supplier_payment',
-        direction: 'out',
-        amount: '100.0000',
-        reference_type: 'supplier_payment',
-        reference_id: 44,
-        created_by: actor.id
-      })
-    );
+    expect(purchaseModel.createSupplierPaymentRecord).not.toHaveBeenCalled();
+    expect(purchaseModel.incrementPurchaseOrderPaid).not.toHaveBeenCalled();
   });
 });
 
@@ -138,15 +107,17 @@ describe('canonical purchase receiving', () => {
 
   test('receives carton-weight lines as carton count/cost, creates a lot-backed inventory receipt, and stores canonical item ids only', async () => {
     const cartonItem = {
-      id: 100,
+      id: 20,
       store_id: 1,
+      name: 'Charcoal 10kg',
       item_kind: 'normal',
-      stock_mode: 'carton_weight',
+      stock_mode: 'carton',
       kg_per_carton: '6.0000',
       loose_units_per_carton: 15,
       status: 'active',
       base_unit_type: 'weight',
-      base_unit_conversion_to_base: '1.00000000'
+      base_unit_conversion_to_base: '1.00000000',
+      is_canonical: true
     };
     inventoryModel.findItemById.mockResolvedValue(cartonItem);
     purchaseModel.lockPurchaseOrderItems.mockResolvedValue([{
@@ -169,14 +140,14 @@ describe('canonical purchase receiving', () => {
     expect(purchaseModel.createReceiptItem).toHaveBeenCalledWith(mockConnection, {
       purchase_receipt_id: 90,
       purchase_order_item_id: 51,
-      item_id: 100,
+      item_id: 20,
       received_quantity: '2.0000',
       unit_cost: '15.0000'
     });
     expect(stockService.receiveCartonStock).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
       storeId: 1,
       warehouseId: 3,
-      itemId: 100,
+      itemId: 20,
       cartonCount: expect.anything(),
       costPerCarton: expect.anything(),
       movementType: 'purchase_receive',

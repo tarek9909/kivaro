@@ -31,16 +31,15 @@ describe('ReportsLayout helpers', () => {
     })).toEqual(['total_amount', 'total_collected', 'total_debt', 'gift_cogs']);
   });
 
-  it('includes salary metrics in commission summaries', () => {
+  it('does not sum monthly salary across commission rows', () => {
     expect(getSummaryMetricKeys('commissions', {
-      metrics: ['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable'],
+      metrics: ['sales_amount', 'target_amount', 'total_commission', 'total_payable'],
       totals: {
         sales_amount: 1000,
         target_amount: 900,
-        base_salary: 300,
         total_commission: 50,
-        total_payable: 350
+        total_payable: 50
       }
-    })).toEqual(['sales_amount', 'target_amount', 'base_salary', 'total_commission', 'total_payable']);
+    })).toEqual(['sales_amount', 'target_amount', 'total_commission', 'total_payable']);
   });
 });

@@ -79,14 +79,23 @@ export const PAYMENTS_TABS = [
     featureKey: 'payments.customer-credits',
     label: 'Customer credits',
     to: '/payments/customer-credits',
-    anyOfPermissions: [PAYMENTS_PERMISSIONS.accountingView]
+    anyOfPermissions: [
+      PAYMENTS_PERMISSIONS.debts,
+      PAYMENTS_PERMISSIONS.accountingView,
+      PAYMENTS_PERMISSIONS.accountingManage
+    ]
   },
   {
     id: 'receipts',
     featureKey: 'payments.receipts',
     label: 'Receipts',
     to: '/payments/receipts',
-    anyOfPermissions: [PAYMENTS_PERMISSIONS.receiptsPrint]
+    anyOfPermissions: [
+      PAYMENTS_PERMISSIONS.receiptsPrint,
+      PAYMENTS_PERMISSIONS.debts,
+      PAYMENTS_PERMISSIONS.accountingView,
+      PAYMENTS_PERMISSIONS.accountingManage
+    ]
   }
 ];
 
@@ -102,16 +111,21 @@ export function pickFirstAllowedPaymentsTab(hasPermission, hasModule = () => tru
 
 /**
  * Workflow availability for a customer debt. Mirrors the backend service.
+      return tab.to;
+    }
+  }
+  return null;
+}
+
+/**
+ * Workflow availability for a customer debt. Mirrors the backend service.
  *
  * - pay: backend allows payDebt only on pending or partially_paid.
- * - updateStatus: backend has no status-based restriction; expose for any
- *   loaded debt as long as the user has debts.manage.
  */
 export function getAvailableDebtActions(debt) {
   if (!debt) return new Set();
   const status = debt.status;
   const actions = new Set();
-  actions.add('updateStatus');
   if (status === 'pending' || status === 'partially_paid') {
     actions.add('pay');
   }

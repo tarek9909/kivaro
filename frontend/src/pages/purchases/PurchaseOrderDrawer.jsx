@@ -109,7 +109,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
   const approveMutation = useMutation({
     mutationFn: () => api.purchases.purchaseOrders.approve(purchaseOrderId),
     onSuccess: () => {
-      toast.success('Purchase order approved and supplier payment recorded');
+      toast.success('Purchase order approved');
       setConfirmTarget(null);
       queryClient.invalidateQueries({ queryKey: ['purchases', 'payments'] });
       invalidatePOQueries();
@@ -137,7 +137,7 @@ export function PurchaseOrderDrawer({ open, onClose, purchaseOrderId }) {
     },
     approve: {
       label: 'Approve',
-      description: 'Approve this purchase order and automatically record the supplier payment for the order total.',
+      description: 'Approve this purchase order.',
       tone: 'primary',
       mutation: approveMutation,
       confirmLabel: 'Approve'

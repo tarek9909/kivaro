@@ -11,6 +11,7 @@ import { Avatar } from '@/components/ui/Avatar.jsx';
 import { Button } from '@/components/ui/Button.jsx';
 import { Select } from '@/components/ui/Select.jsx';
 import { cn } from '@/lib/cn.js';
+import { NotificationsPopover } from './NotificationsPopover.jsx';
 
 function useClickAway(ref, handler) {
   useEffect(() => {
@@ -26,8 +27,6 @@ function useClickAway(ref, handler) {
     };
   }, [ref, handler]);
 }
-
-
 
 export function Topbar({ onOpenSidebar }) {
   const location = useLocation();
@@ -151,6 +150,8 @@ export function Topbar({ onOpenSidebar }) {
             </Button>
           </>
         )}
+
+        <NotificationsPopover />
 
         <button
           type="button"

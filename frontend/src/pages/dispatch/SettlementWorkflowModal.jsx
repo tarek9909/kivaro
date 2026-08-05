@@ -3,8 +3,9 @@ import toast from 'react-hot-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/index.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
-import { Button, Input, Modal } from '@/components/ui/index.js';
+import { Button, Input, Modal, Select } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
+import { useCashAccountsList } from './useDispatchPicker.js';
 
 function todayString() {
   const now = new Date();
@@ -18,6 +19,8 @@ export function SettlementWorkflowModal({ open, onClose, settlement, dispatchReq
   const [settlementDate, setSettlementDate] = useState(todayString());
   const [errors, setErrors] = useState({});
   const collected = Number(settlement?.total_collected || 0);
+  const cashAccountsQuery = useCashAccountsList(open);
+  const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   useEffect(() => {
     if (!open) return;
@@ -46,7 +49,7 @@ export function SettlementWorkflowModal({ open, onClose, settlement, dispatchReq
     const next = {};
     const numericAccount = cashAccountId === '' ? null : Number(cashAccountId);
     if (cashAccountId !== '' && (!Number.isInteger(numericAccount) || numericAccount <= 0)) {
-      next.cash_account_id = 'Enter a valid cash account ID.';
+      next.cash_account_id = 'Select a valid cash account.';
     }
     if (collected > 0 && !numericAccount) {
       next.cash_account_id = 'An incoming cash account is required because money was collected.';
@@ -64,36 +67,62 @@ export function SettlementWorkflowModal({ open, onClose, settlement, dispatchReq
       open={open}
       onClose={onClose}
       size="md"
-      title="Post settlement"
-      description="This records the selected cash account and finalizes customer debts. It cannot be edited after posting."
+      title="Post Settlement & Finalize Cash"
+      description="Record the incoming cash account and finalize customer debts."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" form="post-dispatch-settlement" isLoading={mutation.isPending}>Post settlement</Button>
+          <Button type="submit" form="post-dispatch-settlement" isLoading={mutation.isPending}>Post Settlement</Button>
         </>
       }
     >
-      <form id="post-dispatch-settlement" onSubmit={submit} className="space-y-4" noValidate>
-        <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm">
-          <div className="flex justify-between gap-3"><span className="text-ink-300">Closeout</span><span className="text-ink-100">{settlement?.settlement_number || `#${settlement?.id}`}</span></div>
-          <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">Collected</span><span className="font-mono text-ink-100">{formatNumber(collected, { maximumFractionDigits: 4 })}</span></div>
-          <div className="mt-1 flex justify-between gap-3"><span className="text-ink-300">Debt</span><span className="font-mono text-ink-100">{formatNumber(settlement?.total_debt || 0, { maximumFractionDigits: 4 })}</span></div>
+      <form id="post-dispatch-settlement" onSubmit={submit} className="space-y-5" noValidate>
+        {/* Metric Overview Box */}
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.03] to-transparent p-4 space-y-2.5 text-sm">
+          <div className="flex justify-between gap-3 text-xs">
+            <span className="text-ink-400">Closeout Reference</span>
+            <span className="font-mono text-ink-100 font-medium">{settlement?.settlement_number || `#${settlement?.id}`}</span>
+          </div>
+          <div className="flex justify-between gap-3 text-xs">
+            <span className="text-ink-400">Total Collected Cash</span>
+            <span className="font-mono text-emerald-400 font-semibold">{formatNumber(collected, { maximumFractionDigits: 4 })}</span>
+          </div>
+          <div className="flex justify-between gap-3 text-xs">
+            <span className="text-ink-400">Remaining Debt</span>
+            <span className="font-mono text-amber-400 font-medium">{formatNumber(settlement?.total_debt || 0, { maximumFractionDigits: 4 })}</span>
+          </div>
         </div>
-        <Input
-          label="Incoming cash account ID"
-          type="number"
-          min="1"
-          value={cashAccountId}
-          onChange={(event) => setCashAccountId(event.target.value)}
-          error={errors.cash_account_id}
-          description={collected > 0 ? 'Required because this closeout collected money. Only incoming or both accounts are accepted.' : 'Optional because no money was collected.'}
-        />
-        <Input
-          label="Posting date"
-          type="date"
-          value={settlementDate}
-          onChange={(event) => setSettlementDate(event.target.value)}
-        />
+
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <Select
+            label="Incoming cash account"
+            value={cashAccountId}
+            onChange={(event) => setCashAccountId(event.target.value)}
+            error={errors.cash_account_id}
+            disabled={cashAccountsQuery.isLoading}
+            description={collected > 0 ? 'Required because this closeout collected money.' : 'Optional because no money was collected.'}
+          >
+            <option value="">
+              {cashAccountsQuery.isLoading
+                ? 'Loading cash accounts…'
+                : cashAccountsQuery.isError
+                  ? 'Cash accounts could not be loaded'
+                  : 'Select incoming cash account'}
+            </option>
+            {cashAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.display_name || account.account_name || account.name || `Account #${account.id}`}
+              </option>
+            ))}
+          </Select>
+
+          <Input
+            label="Posting date"
+            type="date"
+            value={settlementDate}
+            onChange={(event) => setSettlementDate(event.target.value)}
+          />
+        </div>
       </form>
     </Modal>
   );

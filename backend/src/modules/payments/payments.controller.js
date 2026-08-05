@@ -1,10 +1,15 @@
 const service = require('./payments.service');
 const { sendCustomerReceiptPdf } = require('../../utils/pdf');
+const { sendCustomerDebtPdf, sendCustomerPaymentPdf } = require('../../utils/pdf');
+const { sendCsv } = require('../../utils/csv');
 const { successResponse } = require('../../utils/response');
 
 function list(method, key, message) {
   return async (req, res) => {
     const result = await method(req.query, req.user);
+    if (req.query.format === 'csv') {
+      return sendCsv(res, `${key}.csv`, result.rows);
+    }
     successResponse(res, { message, data: { [key]: result.rows }, meta: result.meta });
   };
 }
@@ -22,11 +27,6 @@ async function payDebt(req, res) {
 async function applyCreditToDebt(req, res) {
   const credit_application = await service.applyCreditToDebt(req.params.id, req.body, req.user.id, req.user);
   successResponse(res, { statusCode: 201, message: 'Customer credit applied', data: { credit_application } });
-}
-
-async function updateDebtStatus(req, res) {
-  const customer_debt = await service.updateDebtStatus(req.params.id, req.body.status, req.user);
-  successResponse(res, { message: 'Customer debt status updated', data: { customer_debt } });
 }
 
 async function createPayment(req, res) {
@@ -49,6 +49,18 @@ async function printReceipt(req, res) {
   successResponse(res, { message: 'Customer receipt marked printed', data: { customer_receipt } });
 }
 
+async function printDebt(req, res) {
+  const debt = await service.getDebt(req.params.id, req.user);
+  if (req.query.format === 'pdf') return sendCustomerDebtPdf(res, debt);
+  successResponse(res, { message: 'Customer debt fetched', data: { customer_debt: debt } });
+}
+
+async function printPayment(req, res) {
+  const payment = await service.getPayment(req.params.id, req.user);
+  if (req.query.format === 'pdf') return sendCustomerPaymentPdf(res, payment);
+  successResponse(res, { message: 'Customer payment fetched', data: { customer_payment: payment } });
+}
+
 module.exports = {
   applyCreditToDebt,
   createPayment,
@@ -60,5 +72,6 @@ module.exports = {
   listReceipts: list(service.listReceipts, 'customer_receipts', 'Customer receipts fetched'),
   payDebt,
   printReceipt,
-  updateDebtStatus
+  printDebt,
+  printPayment
 };

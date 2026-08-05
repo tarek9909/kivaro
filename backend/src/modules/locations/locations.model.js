@@ -34,10 +34,12 @@ async function listSublocations(input) {
 async function listSalesmen(input) {
   return listRecords({
     select: `SELECT s.id, s.store_id, s.user_id, s.full_name, s.phone, s.email, s.vehicle_number,
-      s.national_id, s.base_salary, s.status, s.joined_at, s.created_at, s.updated_at,
+      s.national_id, s.base_salary, s.commission_rule_id, cr.name AS commission_rule_name,
+      s.status, s.joined_at, s.employment_end_date, s.deactivated_at, s.created_at, s.updated_at,
       COALESCE(active_assignments.active_sublocations, '') AS active_sublocations`,
     from: 'salesmen s',
-    joins: `LEFT JOIN (
+    joins: `LEFT JOIN commission_rules cr ON cr.id = s.commission_rule_id
+    LEFT JOIN (
       SELECT ss.salesman_id,
         GROUP_CONCAT(CONCAT(l.name, ' - ', sl.name) ORDER BY l.name ASC, sl.name ASC SEPARATOR ', ') AS active_sublocations
       FROM salesman_sublocations ss
@@ -102,10 +104,6 @@ async function findLocationTargetById(id) {
   return findById('location_targets', id);
 }
 
-async function findSublocationTargetById(id) {
-  return findById('sublocation_targets', id);
-}
-
 async function createLocation(data) {
   return insertRecord('locations', data);
 }
@@ -151,12 +149,92 @@ async function createSalesman(data, connection = null) {
   return findSalesmanById(result.insertId, connection);
 }
 
-async function updateSalesman(id, data) {
+async function updateSalesman(id, data, connection = null) {
+  if (connection) {
+    const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+    if (!entries.length) return findSalesmanById(id, connection);
+    const assignments = entries.map(([key]) => `${key} = ?`).join(', ');
+    await connection.execute(
+      `UPDATE salesmen SET ${assignments} WHERE id = ?`,
+      [...entries.map(([, value]) => value), id]
+    );
+    return findSalesmanById(id, connection);
+  }
   return updateRecord('salesmen', id, data);
 }
 
-async function deactivateSalesman(id) {
-  const result = await query('UPDATE salesmen SET status = ? WHERE id = ?', ['inactive', id]);
+async function createSalaryRate(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO salesman_salary_rates (store_id, salesman_id, monthly_salary, effective_from, created_by)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE monthly_salary = VALUES(monthly_salary), created_by = VALUES(created_by)`,
+    [data.store_id, data.salesman_id, data.monthly_salary, data.effective_from, data.created_by || null]
+  );
+  return result.insertId;
+}
+
+async function deactivateSalesman(id, { employmentEndDate = null, deactivatedBy = null } = {}, connection = null) {
+  const execute = async (statement, params) => {
+    if (connection) {
+      const [result] = await connection.execute(statement, params);
+      return result;
+    }
+    return query(statement, params);
+  };
+  const result = await execute(
+    `UPDATE salesmen
+     SET status = 'inactive', employment_end_date = COALESCE(?, CURRENT_DATE()),
+       employment_end_date_is_estimated = 0, deactivated_at = NOW(), deactivated_by = ?
+     WHERE id = ?`,
+    [employmentEndDate, deactivatedBy, id]
+  );
+  await execute(
+    `UPDATE salesman_sublocations
+     SET status = 'inactive', unassigned_at = COALESCE(?, CURRENT_DATE())
+     WHERE salesman_id = ? AND status = 'active'`,
+    [employmentEndDate, id]
+  );
+  await execute(
+    `UPDATE users u JOIN salesmen s ON s.user_id = u.id
+     SET u.status = 'inactive'
+     WHERE s.id = ? AND u.deleted_at IS NULL`,
+    [id]
+  );
+  await execute(
+    `UPDATE user_sessions us JOIN salesmen s ON s.user_id = us.user_id
+     SET us.revoked_at = NOW()
+     WHERE s.id = ? AND us.revoked_at IS NULL`,
+    [id]
+  );
+  return result.affectedRows;
+}
+
+async function findSalesmanByUserId(userId, connection = null) {
+  const rows = await execute(connection,
+    'SELECT * FROM salesmen WHERE user_id = ? LIMIT 1', [userId]
+  );
+  return rows[0] || null;
+}
+
+async function reactivateSalesman(id, connection = null) {
+  const run = async (statement, params) => {
+    if (connection) {
+      const [result] = await connection.execute(statement, params);
+      return result;
+    }
+    return query(statement, params);
+  };
+  const result = await run(
+    `UPDATE salesmen
+     SET status = 'active', employment_end_date = NULL, employment_end_date_is_estimated = 0,
+       deactivated_at = NULL, deactivated_by = NULL
+     WHERE id = ?`, [id]
+  );
+  await run(
+    `UPDATE users u JOIN salesmen s ON s.user_id = u.id
+     SET u.status = 'active'
+     WHERE s.id = ? AND u.deleted_at IS NULL`, [id]
+  );
   return result.affectedRows;
 }
 
@@ -197,18 +275,6 @@ async function unassignSalesmanSublocation(salesmanId, sublocationId) {
   return result.affectedRows;
 }
 
-async function createLocationTarget(data) {
-  return insertRecord('location_targets', data);
-}
-
-async function updateLocationTarget(id, data) {
-  return updateRecord('location_targets', id, data);
-}
-
-async function createSublocationTarget(data) {
-  return insertRecord('sublocation_targets', data);
-}
-
 async function getSublocationTargetsByLocationTarget(locationTargetId) {
   return query(
     `SELECT st.id, st.location_target_id, st.sublocation_id, sl.name AS sublocation_name,
@@ -219,17 +285,6 @@ async function getSublocationTargetsByLocationTarget(locationTargetId) {
      ORDER BY sl.name ASC`,
     [locationTargetId]
   );
-}
-
-async function sumSublocationTargets(locationTargetId) {
-  const rows = await query(
-    `SELECT COALESCE(SUM(target_amount), 0) AS total
-     FROM sublocation_targets
-     WHERE location_target_id = ? AND status <> 'cancelled'`,
-    [locationTargetId]
-  );
-
-  return Number(rows[0].total);
 }
 
 async function activeAssignmentsBySublocation(sublocationId) {
@@ -377,19 +432,68 @@ async function reconcileSalesmanTargets(connection, sublocationTargetId, assignm
   }
 }
 
-async function getSalesmanTargets(sublocationTargetId) {
-  return query(
-    `SELECT st.id, st.sublocation_target_id, st.salesman_id, s.full_name AS salesman_name,
-      st.target_amount, st.achieved_sales_amount, st.status, st.created_at, st.updated_at
-     FROM salesman_targets st
-     JOIN salesmen s ON s.id = st.salesman_id
-     WHERE st.sublocation_target_id = ?
-     ORDER BY s.full_name ASC`,
+// A target is a financial commitment.  Capture the rule that applied when a
+// salesman was assigned, rather than letting later rule edits alter a closed
+// period's commission basis.
+async function captureCommissionSnapshots(connection, sublocationTargetId) {
+  await connection.execute(
+    `INSERT IGNORE INTO salesman_target_commission_snapshots (
+      salesman_target_id, commission_rule_id, rule_name, below_target_rate,
+      at_target_rate, above_target_extra_rate, historical_backfill
+    )
+    SELECT st.id, cr.id, COALESCE(cr.name, 'Commission rule unavailable'),
+      COALESCE(cr.below_target_rate, 0), COALESCE(cr.at_target_rate, 0),
+      COALESCE(cr.above_target_extra_rate, 0), 0
+    FROM salesman_targets st
+    JOIN salesmen s ON s.id = st.salesman_id
+    LEFT JOIN commission_rules cr ON cr.id = s.commission_rule_id
+    WHERE st.sublocation_target_id = ? AND st.status = 'active'`,
     [sublocationTargetId]
   );
 }
 
-const DELIVERED_DISPATCH_STATUSES = "'dispatched', 'partially_settled', 'completed'";
+async function getSalesmanTargetsByLocationTarget(locationTargetId) {
+  return query(
+    `SELECT st.id, st.sublocation_target_id, st.salesman_id, s.full_name AS salesman_name,
+      st.target_amount, st.achieved_sales_amount, st.status, slt.sublocation_id,
+      COALESCE(SUM(tcc.amount), 0) AS collected_amount
+     FROM salesman_targets st
+     JOIN sublocation_targets slt ON slt.id = st.sublocation_target_id
+     JOIN salesmen s ON s.id = st.salesman_id
+     LEFT JOIN target_collection_credits tcc ON tcc.salesman_target_id = st.id
+     WHERE slt.location_target_id = ?
+     GROUP BY st.id, st.sublocation_target_id, st.salesman_id, s.full_name, st.target_amount,
+       st.achieved_sales_amount, st.status, slt.sublocation_id
+     ORDER BY slt.sublocation_id, s.full_name ASC`,
+    [locationTargetId]
+  );
+}
+
+async function getTargetEvents(locationTargetId) {
+  return query(
+    `SELECT te.id, te.salesman_target_id, te.event_type, te.description, te.payload,
+      te.created_at, u.full_name AS created_by_name
+     FROM target_events te
+     LEFT JOIN users u ON u.id = te.created_by
+     WHERE te.location_target_id = ?
+     ORDER BY te.created_at DESC, te.id DESC LIMIT 100`,
+    [locationTargetId]
+  );
+}
+
+async function hasCommissionForLocationTarget(locationTargetId) {
+  const rows = await query(
+    `SELECT 1
+     FROM commission_calculations cc
+     JOIN salesman_targets st ON st.id = cc.salesman_target_id
+     JOIN sublocation_targets slt ON slt.id = st.sublocation_target_id
+     WHERE slt.location_target_id = ? LIMIT 1`,
+    [locationTargetId]
+  );
+  return Boolean(rows[0]);
+}
+
+const DELIVERED_DISPATCH_STATUSES = "'delivery', 'partially_settled', 'completed'";
 
 function addDateFilters(input = {}, column) {
   const conditions = [];
@@ -492,7 +596,6 @@ function periodWhere(input = {}, storeColumn, dateColumn) {
 async function exportSalesmanPerformance(input = {}) {
   const dispatchPeriod = periodWhere(input, 'dr.store_id', 'dr.request_date');
   const costPeriod = periodWhere(input, 'dr.store_id', 'dr.request_date');
-  const posPeriod = periodWhere(input, 'po.store_id', 'po.order_date');
   const invoicePeriod = periodWhere(input, 'i.store_id', 'i.invoice_date');
   const base = salesmanBaseFilters(input);
 
@@ -518,10 +621,7 @@ async function exportSalesmanPerformance(input = {}) {
          - COALESCE(cost_summary.sales_cogs, 0)
          - COALESCE(cost_summary.gift_cogs, 0) AS gross_profit_after_gifts,
        COALESCE(invoice_summary.issued_invoice_count, 0) AS issued_invoice_count,
-       COALESCE(invoice_summary.issued_invoice_total, 0) AS issued_invoice_total,
-       COALESCE(pos_summary.pos_order_count, 0) AS pos_order_count,
-       COALESCE(pos_summary.pending_pos_order_count, 0) AS pending_pos_order_count,
-       COALESCE(pos_summary.converted_pos_order_count, 0) AS converted_pos_order_count
+       COALESCE(invoice_summary.issued_invoice_total, 0) AS issued_invoice_total
      FROM salesmen s
      LEFT JOIN (
        SELECT overview.salesman_id,
@@ -560,15 +660,6 @@ async function exportSalesmanPerformance(input = {}) {
        GROUP BY dr.salesman_id
      ) cost_summary ON cost_summary.salesman_id = s.id
      LEFT JOIN (
-       SELECT po.salesman_id,
-         COUNT(*) AS pos_order_count,
-         SUM(po.status = 'pending') AS pending_pos_order_count,
-         SUM(po.status = 'converted') AS converted_pos_order_count
-       FROM pos_orders po
-       ${posPeriod.where}
-       GROUP BY po.salesman_id
-     ) pos_summary ON pos_summary.salesman_id = s.id
-     LEFT JOIN (
        SELECT dr.salesman_id,
          COUNT(*) AS issued_invoice_count,
          SUM(i.total_amount) AS issued_invoice_total
@@ -583,68 +674,9 @@ async function exportSalesmanPerformance(input = {}) {
     [
       ...dispatchPeriod.params,
       ...costPeriod.params,
-      ...posPeriod.params,
       ...invoicePeriod.params,
       ...base.params
     ]
-  );
-}
-
-async function exportSalesmanOrders(input = {}) {
-  const filters = salesmanActivityFilters(input, {
-    storeColumn: 'po.store_id',
-    salesmanColumn: 'po.salesman_id',
-    dateColumn: 'po.order_date',
-    statusColumn: 'po.status',
-    statusValue: input.pos_status,
-    searchColumns: ['po.order_number', 's.full_name', 'c.name', 'c.phone']
-  });
-
-  return query(
-    `SELECT
-       po.id AS pos_order_id,
-       po.order_number,
-       po.order_date,
-       po.status AS pos_status,
-       po.notes AS order_notes,
-       s.id AS salesman_id,
-       s.full_name AS salesman_name,
-       c.id AS customer_id,
-       c.customer_code,
-       c.name AS customer_name,
-       c.phone AS customer_phone,
-       l.name AS location_name,
-       sl.name AS sublocation_name,
-       w.name AS warehouse_name,
-       dr.dispatch_number AS converted_dispatch_number,
-       dr.status AS converted_dispatch_status,
-       COALESCE(line_summary.sale_quantity, 0) AS sale_quantity,
-       COALESCE(line_summary.gift_quantity, 0) AS gift_quantity,
-       COALESCE(line_summary.sale_subtotal, 0) AS sale_subtotal,
-       COALESCE(line_summary.sale_vat, 0) AS sale_vat,
-       COALESCE(line_summary.sale_total, 0) AS sale_total,
-       po.created_at,
-       po.updated_at
-     FROM pos_orders po
-     JOIN salesmen s ON s.id = po.salesman_id
-     JOIN customers c ON c.id = po.customer_id
-     JOIN locations l ON l.id = po.location_id
-     JOIN sublocations sl ON sl.id = po.sublocation_id
-     JOIN warehouses w ON w.id = po.warehouse_id
-     LEFT JOIN dispatch_requests dr ON dr.id = po.dispatch_request_id
-     LEFT JOIN (
-       SELECT pos_order_id,
-         SUM(CASE WHEN line_type = 'sale' THEN quantity ELSE 0 END) AS sale_quantity,
-         SUM(CASE WHEN line_type = 'free_gift' THEN quantity ELSE 0 END) AS gift_quantity,
-         SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price ELSE 0 END) AS sale_subtotal,
-         SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price * vat_rate / 100 ELSE 0 END) AS sale_vat,
-         SUM(CASE WHEN line_type = 'sale' THEN quantity * unit_price * (1 + vat_rate / 100) ELSE 0 END) AS sale_total
-       FROM pos_order_lines
-       GROUP BY pos_order_id
-     ) line_summary ON line_summary.pos_order_id = po.id
-     ${filters.where}
-     ORDER BY po.order_date DESC, po.id DESC`,
-    filters.params
   );
 }
 
@@ -800,8 +832,6 @@ async function exportSalesmanRevenue(input = {}) {
 
 async function exportSalesmen(input = {}) {
   switch (input.dataset || 'performance') {
-    case 'orders':
-      return exportSalesmanOrders(input);
     case 'invoices':
       return exportSalesmanInvoices(input);
     case 'delivered_customers':
@@ -818,10 +848,10 @@ module.exports = {
   activeAssignmentsBySublocation,
   assignSalesmanSublocation,
   createLocation,
-  createLocationTarget,
   createSalesman,
+  createSalaryRate,
   createSublocation,
-  createSublocationTarget,
+  captureCommissionSnapshots,
   deactivateLocation,
   deactivateSalesman,
   deactivateSublocation,
@@ -831,9 +861,11 @@ module.exports = {
   findActiveSalesmanSublocation,
   lockSublocationsByIds,
   findSalesmanById,
+  findSalesmanByUserId,
   findSublocationById,
-  findSublocationTargetById,
-  getSalesmanTargets,
+  getSalesmanTargetsByLocationTarget,
+  getTargetEvents,
+  hasCommissionForLocationTarget,
   getSublocationTargetsByLocationTarget,
   listSalesmanSublocations,
   listLocationTargets,
@@ -841,11 +873,10 @@ module.exports = {
   listSalesmen,
   listSublocations,
   reconcileSalesmanTargets,
+  reactivateSalesman,
   replaceActiveSalesmanSublocations,
-  sumSublocationTargets,
   unassignSalesmanSublocation,
   updateLocation,
-  updateLocationTarget,
   updateSalesman,
   updateSublocation,
   _private: {

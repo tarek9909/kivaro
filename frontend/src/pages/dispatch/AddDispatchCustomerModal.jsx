@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { FileText, Receipt, UserPlus } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
@@ -75,8 +76,8 @@ export function AddDispatchCustomerModal({ open, onClose, dispatchRequest }) {
       open={open}
       onClose={onClose}
       size="md"
-      title="Add customer to dispatch"
-      description="Select the customer that will receive stock on this route. Items are added per customer once they are on the route."
+      title="Add Customer to Route"
+      description="Select a customer to add to this dispatch route. Items are assigned per customer."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -85,9 +86,10 @@ export function AddDispatchCustomerModal({ open, onClose, dispatchRequest }) {
           <Button
             type="submit"
             form="add-dispatch-customer-form"
+            leftIcon={UserPlus}
             isLoading={mutation.isPending}
           >
-            Add customer
+            Add Customer
           </Button>
         </>
       }
@@ -98,52 +100,57 @@ export function AddDispatchCustomerModal({ open, onClose, dispatchRequest }) {
         className="space-y-4"
         noValidate
       >
-        {canPickCustomers ? (
-          <Select
-            label="Customer"
-            value={form.customer_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, customer_id: event.target.value }))
-            }
-            error={errors.customer_id}
-            required
-          >
-            <option value="">Select customer</option>
-            {customers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name}
-                {customer.customer_code ? ` (${customer.customer_code})` : ''}
-              </option>
-            ))}
-          </Select>
-        ) : (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4.5 space-y-4">
+          {canPickCustomers ? (
+            <Select
+              label="Customer"
+              value={form.customer_id}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, customer_id: event.target.value }))
+              }
+              error={errors.customer_id}
+              required
+            >
+              <option value="">Select customer</option>
+              {customers.map((customer) => (
+                <option key={customer.id} value={customer.id}>
+                  {customer.name}
+                  {customer.customer_code ? ` (${customer.customer_code})` : ''}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input
+              label="Customer ID"
+              type="number"
+              min="1"
+              value={form.customer_id}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, customer_id: event.target.value }))
+              }
+              error={errors.customer_id}
+              required
+              description="Numeric only. Customer browsing access is needed for a picker."
+            />
+          )}
+
           <Input
-            label="Customer ID"
-            type="number"
-            min="1"
-            value={form.customer_id}
+            label="Receipt number"
+            value={form.receipt_number}
             onChange={(event) =>
-              setForm((prev) => ({ ...prev, customer_id: event.target.value }))
+              setForm((prev) => ({ ...prev, receipt_number: event.target.value }))
             }
-            error={errors.customer_id}
-            required
-            description="Numeric only. Customer browsing access is needed for a picker."
+            description="Optional. Auto-generated when blank."
           />
-        )}
-        <Input
-          label="Receipt number"
-          value={form.receipt_number}
-          onChange={(event) =>
-            setForm((prev) => ({ ...prev, receipt_number: event.target.value }))
-          }
-          description="Optional. Auto-generated when blank."
-        />
-        <Textarea
-          label="Notes"
-          value={form.notes}
-          onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-          rows={2}
-        />
+
+          <Textarea
+            label="Notes"
+            value={form.notes}
+            onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+            rows={2.5}
+            placeholder="Special delivery instructions for this customer..."
+          />
+        </div>
       </form>
     </Modal>
   );

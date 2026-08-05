@@ -3,39 +3,50 @@ services:
     image: mysql:8.0
     command: --default-authentication-plugin=mysql_native_password
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: charcoal_erp
-    ports:
-      - "3306:3306"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the deployment environment}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-charcoal_erp}
     volumes:
       # A distinct volume makes this item-based release start from the clean
       # baseline without silently reusing a variant/batch-era database volume.
       - mysql_item_based_data:/var/lib/mysql
       - ./charcoal_erp_clean.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 5s
       retries: 10
 
-  api:
+  migrations:
     build: .
+    command: npm run db:migrate
+    restart: "no"
     depends_on:
       mysql:
         condition: service_healthy
-    environment:
+    environment: &database_environment
       NODE_ENV: production
-      PORT: 3000
       DB_HOST: mysql
       DB_PORT: 3306
-      DB_NAME: charcoal_erp
+      DB_NAME: ${MYSQL_DATABASE:-charcoal_erp}
       DB_USER: root
-      DB_PASSWORD: root
-      DB_CONNECTION_LIMIT: 10
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the deployment environment}
+      DB_CONNECTION_LIMIT: 3
       DB_CONNECT_TIMEOUT_MS: 5000
-      JWT_SECRET: replace_this_with_a_very_long_random_secret_before_deploy
+      JWT_SECRET: ${JWT_SECRET:?Set a long random JWT_SECRET in the deployment environment}
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN to the deployed web origin}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?Set PUBLIC_BASE_URL to the public API origin}
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      <<: *database_environment
+      PORT: 3000
+      DB_CONNECTION_LIMIT: 10
       JWT_EXPIRES_IN: 1d
-      CORS_ORIGIN: http://localhost:3000
       REQUEST_BODY_LIMIT: 1mb
       RATE_LIMIT_WINDOW_MS: 900000
       RATE_LIMIT_MAX: 1000
@@ -43,6 +54,17 @@ services:
       AUTH_RATE_LIMIT_MAX: 20
     ports:
       - "3000:3000"
+
+  commission-scheduler:
+    build: .
+    command: npm run commissions:scheduler
+    restart: unless-stopped
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      <<: *database_environment
+      TZ: Asia/Beirut
 
 volumes:
   mysql_item_based_data:

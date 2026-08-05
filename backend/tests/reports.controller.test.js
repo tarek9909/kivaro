@@ -33,33 +33,29 @@ describe('reports summary metrics', () => {
     expect(summary.metrics).toContain('net_total_amount');
   });
 
-  test('summarizes salary and salary plus commission in commission reports', () => {
+  test('summarizes commission amounts without multiplying monthly salary by target rows', () => {
     const summary = _private.buildSummary([
       {
         target_amount: 1000,
         sales_amount: 1200,
-        base_salary: 300,
         total_commission: 60,
-        total_payable: 360
+        total_payable: 60
       },
       {
         target_amount: 800,
         sales_amount: 700,
-        base_salary: 250,
         total_commission: 35,
-        total_payable: 285
+        total_payable: 35
       }
     ], 'commissions');
 
     expect(summary.totals).toMatchObject({
-      base_salary: 550,
       total_commission: 95,
-      total_payable: 645
+      total_payable: 95
     });
     expect(summary.metrics).toEqual([
       'target_amount',
       'sales_amount',
-      'base_salary',
       'total_commission',
       'total_payable'
     ]);

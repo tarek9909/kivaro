@@ -79,11 +79,11 @@ async function getPurchaseOrderItems(id) {
       i.base_unit_id, u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
       u.conversion_to_base AS base_unit_conversion_to_base,
       i.name AS item_name, i.item_kind, i.stock_mode, i.kg_per_carton,
-      i.loose_units_per_carton, i.max_content_weight_kg,
+      i.max_content_weight_kg,
       poi.ordered_quantity, poi.received_quantity, poi.unit_cost, poi.line_total,
-      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.ordered_quantity ELSE NULL END AS ordered_carton_count,
-      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.received_quantity ELSE NULL END AS received_carton_count,
-      CASE WHEN i.stock_mode = 'carton_weight' THEN poi.unit_cost ELSE NULL END AS cost_per_carton,
+      CASE WHEN i.stock_mode = 'carton' THEN poi.ordered_quantity ELSE NULL END AS ordered_carton_count,
+      CASE WHEN i.stock_mode = 'carton' THEN poi.received_quantity ELSE NULL END AS received_carton_count,
+      CASE WHEN i.stock_mode = 'carton' THEN poi.unit_cost ELSE NULL END AS cost_per_carton,
       poi.notes, poi.created_at
      FROM purchase_order_items poi
      JOIN items i ON i.id = poi.item_id
@@ -201,7 +201,7 @@ async function lockPurchaseOrder(connection, id) {
 
 async function lockPurchaseOrderItems(connection, purchaseOrderId) {
   const [rows] = await connection.execute(
-    `SELECT poi.*, i.item_kind, i.stock_mode, i.kg_per_carton, i.loose_units_per_carton,
+    `SELECT poi.*, i.item_kind, i.stock_mode, i.kg_per_carton,
        i.max_content_weight_kg, i.status AS item_status, i.base_unit_id, u.symbol AS base_unit_symbol,
        u.unit_type AS base_unit_type, u.conversion_to_base AS base_unit_conversion_to_base
      FROM purchase_order_items poi

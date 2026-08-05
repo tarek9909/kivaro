@@ -14,11 +14,18 @@ export const ITEM_KINDS = [
   { value: 'packaging', label: 'Packaging item' }
 ];
 
+export const ITEM_KIND_TABS = [
+  { id: 'all', label: 'All items', value: '' },
+  { id: 'normal', label: 'Normal items', value: 'normal' },
+  { id: 'packaging', label: 'Package items', value: 'packaging' }
+];
+
+
 export const STOCK_MODES = [
   {
-    value: 'carton_weight',
-    label: 'Cartons with loose units',
-    description: 'Received as cartons, stocked by kg, and opened into loose units when needed.'
+    value: 'carton',
+    label: 'Cartons',
+    description: 'Stored, moved, and sold as whole cartons; kg per carton is shown for reference.'
   },
   {
     value: 'weight',
@@ -116,6 +123,9 @@ export const INVENTORY_PERMISSIONS = {
  */
 export const INVENTORY_PARENT_PERMISSIONS = [
   INVENTORY_PERMISSIONS.view,
+  INVENTORY_PERMISSIONS.create,
+  INVENTORY_PERMISSIONS.update,
+  INVENTORY_PERMISSIONS.delete,
   INVENTORY_PERMISSIONS.movements,
   INVENTORY_PERMISSIONS.adjust
 ];
@@ -126,21 +136,21 @@ export const INVENTORY_TABS = [
     featureKey: 'inventory.items',
     label: 'Items',
     to: '/inventory/items',
-    anyOfPermissions: [INVENTORY_PERMISSIONS.view]
+    anyOfPermissions: [INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]
   },
   {
     id: 'categories',
     featureKey: 'inventory.categories',
     label: 'Categories',
     to: '/inventory/categories',
-    anyOfPermissions: [INVENTORY_PERMISSIONS.view]
+    anyOfPermissions: [INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]
   },
   {
     id: 'warehouses',
     featureKey: 'inventory.warehouses',
     label: 'Warehouses',
     to: '/inventory/warehouses',
-    anyOfPermissions: [INVENTORY_PERMISSIONS.view]
+    anyOfPermissions: [INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]
   },
   {
     id: 'balances',

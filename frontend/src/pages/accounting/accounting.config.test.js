@@ -67,6 +67,8 @@ describe('accounting config', () => {
     expect(txn.anyOfPermissions).toEqual(['accounting.view']);
     const cats = ACCOUNTING_TABS.find((tab) => tab.id === 'expense-categories');
     expect(cats.anyOfPermissions).toEqual(['accounting.view', 'accounting.manage']);
+    const cashAccounts = ACCOUNTING_TABS.find((tab) => tab.id === 'cash-accounts');
+    expect(cashAccounts.anyOfPermissions).toEqual(['accounting.view']);
   });
 });
 

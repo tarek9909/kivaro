@@ -102,8 +102,10 @@ export function CreateReturnModal({ open, onClose, dispatchRequest }) {
       open={open}
       onClose={onClose}
       size="md"
-      title="Record return"
-      description="Record stock that came back from the salesman. Returns reverse the dispatched stock for this customer line."
+      title="Record Stock Return"
+      description={dispatchRequest?.status === 'completed'
+        ? 'Record stock returned to inventory. This creates an immutable post-settlement adjustment, reduces open debt or creates customer credit, and issues a receipt; the posted settlement is never changed.'
+        : 'Record stock returned from salesman to inventory for a customer line.'}
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>
@@ -114,80 +116,81 @@ export function CreateReturnModal({ open, onClose, dispatchRequest }) {
             form="dispatch-return-form"
             isLoading={mutation.isPending}
           >
-            Record return
+            Record Return
           </Button>
         </>
       }
     >
       {items.length === 0 ? (
-        <p className="text-sm text-ink-300">
+        <p className="py-6 text-center text-sm text-ink-300">
           This dispatch request has no items, so there is nothing to return.
         </p>
       ) : (
         <form id="dispatch-return-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-          <Select
-            label="Item to return"
-            value={form.dispatch_item_id}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, dispatch_item_id: event.target.value }))
-            }
-            error={errors.dispatch_item_id}
-            required
-          >
-            <option value="">Select item</option>
-            {items.map((item) => {
-              const customer = customersById.get(Number(item.dispatch_customer_id));
-              const remainingForOption = getRemainingReturnable(item);
-              const customerLabel = customer?.customer_name || `customer #${item.dispatch_customer_id}`;
-              const itemLabel = item.item_name_snapshot || item.catalog_display_name || 'Dispatch line';
-              const fulfillmentLabel = item.fulfillment_type?.replaceAll('_', ' ') || 'sale offer';
-              return (
-                <option key={item.id} value={item.id}>
-                  {`${customerLabel} - ${itemLabel} (${fulfillmentLabel}; ${formatNumber(remainingForOption, {
-                    maximumFractionDigits: 4
-                  })} returnable)`}
-                </option>
-              );
-            })}
-          </Select>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+            <Select
+              label="Item to return"
+              value={form.dispatch_item_id}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, dispatch_item_id: event.target.value }))
+              }
+              error={errors.dispatch_item_id}
+              required
+            >
+              <option value="">Select item</option>
+              {items.map((item) => {
+                const customer = customersById.get(Number(item.dispatch_customer_id));
+                const remainingForOption = getRemainingReturnable(item);
+                const customerLabel = customer?.customer_name || `customer #${item.dispatch_customer_id}`;
+                const itemLabel = item.item_name_snapshot || item.catalog_display_name || 'Dispatch line';
+                const fulfillmentLabel = item.fulfillment_type?.replaceAll('_', ' ') || 'sale offer';
+                return (
+                  <option key={item.id} value={item.id}>
+                    {`${customerLabel} - ${itemLabel} (${fulfillmentLabel}; ${formatNumber(remainingForOption, {
+                      maximumFractionDigits: 4
+                    })} returnable)`}
+                  </option>
+                );
+              })}
+            </Select>
 
-          {selectedItem && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-ink-300">
-              Dispatched quantity:{' '}
-              <span className="font-mono text-ink-100">
-                {formatNumber(selectedItem.quantity, { maximumFractionDigits: 4 })}
-              </span>
-              {'  '}
-              Already returned:{' '}
-              <span className="font-mono text-ink-100">
-                {formatNumber(selectedItem.returned_quantity, { maximumFractionDigits: 4 })}
-              </span>
-              {'  '}
-              Remaining:{' '}
-              <span className="font-mono text-ink-100">
-                {formatNumber(remaining, { maximumFractionDigits: 4 })}
-              </span>
-            </div>
-          )}
+            {selectedItem && (
+              <div className="rounded-xl border border-white/10 bg-gradient-to-r from-white/[0.03] to-transparent p-3 text-xs space-y-1.5">
+                <div className="flex justify-between items-center text-ink-300">
+                  <span>Dispatched Quantity</span>
+                  <span className="font-mono text-ink-100">{formatNumber(selectedItem.quantity, { maximumFractionDigits: 4 })}</span>
+                </div>
+                <div className="flex justify-between items-center text-ink-300">
+                  <span>Already Returned</span>
+                  <span className="font-mono text-ink-100">{formatNumber(selectedItem.returned_quantity, { maximumFractionDigits: 4 })}</span>
+                </div>
+                <div className="flex justify-between items-center border-t border-white/10 pt-1.5 font-medium">
+                  <span className="text-ink-100">Max Returnable Remaining</span>
+                  <span className="font-mono text-emerald-400 font-bold">{formatNumber(remaining, { maximumFractionDigits: 4 })}</span>
+                </div>
+              </div>
+            )}
 
-          <Input
-            label="Returned quantity"
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.returned_quantity}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, returned_quantity: event.target.value }))
-            }
-            error={errors.returned_quantity}
-            required
-          />
-          <Textarea
-            label="Reason"
-            value={form.reason}
-            onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
-            rows={3}
-          />
+            <Input
+              label="Returned quantity"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={form.returned_quantity}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, returned_quantity: event.target.value }))
+              }
+              error={errors.returned_quantity}
+              required
+            />
+            <Textarea
+              label="Reason for return"
+              value={form.reason}
+              onChange={(event) => setForm((prev) => ({ ...prev, reason: event.target.value }))}
+              rows={2.5}
+              placeholder="Damaged stock, refused item, excess quantity..."
+            />
+          </div>
         </form>
       )}
     </Modal>

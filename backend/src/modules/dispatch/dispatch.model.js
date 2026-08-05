@@ -16,7 +16,13 @@ function listFilters(input, definitions) {
   for (const definition of definitions) {
     const value = input[definition.key];
     if (value === undefined || value === null || value === '') continue;
-    if (definition.operator === 'date_gte') {
+    if (definition.values) {
+      const values = definition.values[value];
+      if (!values) continue;
+      conditions.push(`${definition.column} IN (${values.map(() => '?').join(', ')})`);
+      params.push(...values);
+      continue;
+    } else if (definition.operator === 'date_gte') {
       conditions.push(`DATE(${definition.column}) >= ?`);
     } else if (definition.operator === 'date_lte') {
       conditions.push(`DATE(${definition.column}) <= ?`);
@@ -38,6 +44,18 @@ async function listDispatchRequests(input = {}) {
   const { conditions, params } = listFilters(input, [
     { key: 'store_id', column: 'dr.store_id' },
     { key: 'status', column: 'dr.status' },
+    {
+      key: 'workflow_tab',
+      column: 'dr.status',
+      values: {
+        all: null,
+        orders: ['draft', 'pending_approval', 'cancelled'],
+        deliveries: ['approved', 'delivery', 'partially_settled'],
+        completed: ['completed']
+      }
+    },
+    { key: 'lifecycle_status', column: 'dr.lifecycle_status' },
+    { key: 'origin', column: 'dr.origin' },
     { key: 'salesman_id', column: 'dr.salesman_id' },
     { key: 'warehouse_id', column: 'dr.warehouse_id' },
     { key: 'date_from', column: 'dr.request_date', operator: 'date_gte' },
@@ -127,20 +145,44 @@ async function lockDispatchRequest(connection, id) {
 async function createDispatchRequest(data, connection = null) {
   const result = await execute(connection,
     `INSERT INTO dispatch_requests (
-      store_id, dispatch_number, salesman_id, warehouse_id, request_date, status,
-      total_quantity, subtotal_amount, vat_amount, total_amount, total_collected, total_debt,
-      notes, created_by
-    ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 0, 0, 0, 0, 0, ?, ?)`,
+      store_id, origin, dispatch_number, salesman_id, warehouse_id, request_date, status,
+      lifecycle_status, total_quantity, subtotal_amount, vat_amount, total_amount,
+      total_collected, total_debt, notes, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, 'draft', 'pending', 0, 0, 0, 0, 0, 0, ?, ?)`,
     [
-      data.store_id, data.dispatch_number, data.salesman_id, data.warehouse_id,
+      data.store_id, data.origin || 'direct', data.dispatch_number, data.salesman_id, data.warehouse_id,
       data.request_date, nullable(data.notes), nullable(data.created_by)
     ]
   );
   return findDispatchRequestById(result.insertId, connection);
 }
 
+function mapStatusToLifecycle(status) {
+  switch (status) {
+    case 'draft':
+    case 'pending_approval':
+      return 'pending';
+    case 'approved':
+      return 'released';
+    case 'delivery':
+      return 'out_for_delivery';
+    case 'partially_settled':
+      return 'closeout_pending';
+    case 'completed':
+      return 'settled';
+    case 'cancelled':
+      return 'cancelled';
+    default:
+      return 'pending';
+  }
+}
+
 async function updateDispatchRequest(id, data, connection = null) {
-  const entries = Object.entries(data).filter(([, value]) => value !== undefined);
+  const payload = { ...data };
+  if (payload.status !== undefined && payload.lifecycle_status === undefined) {
+    payload.lifecycle_status = mapStatusToLifecycle(payload.status);
+  }
+  const entries = Object.entries(payload).filter(([, value]) => value !== undefined);
   if (entries.length) {
     await execute(connection,
       `UPDATE dispatch_requests SET ${entries.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`,
@@ -148,6 +190,13 @@ async function updateDispatchRequest(id, data, connection = null) {
     );
   }
   return findDispatchRequestById(id, connection);
+}
+
+async function updateDispatchCustomersFulfillmentStatus(dispatchId, fulfillmentStatus, connection = null) {
+  await execute(connection,
+    `UPDATE dispatch_customers SET fulfillment_status = ? WHERE dispatch_request_id = ?`,
+    [fulfillmentStatus, dispatchId]
+  );
 }
 
 async function getDispatchCustomers(dispatchId, connection = null) {
@@ -170,10 +219,11 @@ async function getDispatchCustomers(dispatchId, connection = null) {
 
 async function findDispatchCustomerById(id, connection = null) {
   const rows = await execute(connection,
-    `SELECT dc.*, dr.store_id, dr.salesman_id, dr.warehouse_id, dr.status AS dispatch_status,
+    `SELECT dc.*, dr.store_id, dr.salesman_id, s.user_id AS salesman_user_id, dr.warehouse_id, dr.status AS dispatch_status,
         c.name AS customer_name
      FROM dispatch_customers dc
      JOIN dispatch_requests dr ON dr.id = dc.dispatch_request_id
+     JOIN salesmen s ON s.id = dr.salesman_id
      JOIN customers c ON c.id = dc.customer_id
      WHERE dc.id = ?
      LIMIT 1`,
@@ -186,12 +236,15 @@ async function createDispatchCustomer(data, connection = null) {
   const result = await execute(connection,
     `INSERT INTO dispatch_customers (
       store_id, dispatch_request_id, customer_id, location_id, sublocation_id,
+      discount_type, discount_value, discount_amount,
       subtotal_amount, vat_amount, customer_total_amount, collected_amount, debt_amount,
-      payment_status, receipt_number, notes
-    ) VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 'pending', ?, ?)`,
+      payment_status, fulfillment_status, receipt_number, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 'pending', ?, ?, ?)`,
     [
-      data.store_id, data.dispatch_request_id, data.customer_id, data.location_id,
-      data.sublocation_id, nullable(data.receipt_number), nullable(data.notes)
+      data.store_id, data.dispatch_request_id, data.customer_id,
+      data.location_id, data.sublocation_id, nullable(data.discount_type), data.discount_value || 0,
+      data.discount_amount || 0, data.fulfillment_status || 'pending',
+      nullable(data.receipt_number), nullable(data.notes)
     ]
   );
   return findDispatchCustomerById(result.insertId, connection);
@@ -233,10 +286,11 @@ async function getDispatchItems(dispatchId, connection = null) {
 async function findDispatchItemById(id, connection = null, lock = false) {
   const suffix = connection && lock ? ' FOR UPDATE' : '';
   const rows = await execute(connection,
-    `SELECT di.*, dr.store_id, dr.warehouse_id, dr.status AS dispatch_status, dr.revision,
+    `SELECT di.*, dr.store_id, dr.salesman_id, s.user_id AS salesman_user_id, dr.warehouse_id, dr.status AS dispatch_status, dr.revision,
         dc.customer_id, dc.dispatch_request_id
      FROM dispatch_items di
      JOIN dispatch_requests dr ON dr.id = di.dispatch_request_id
+     JOIN salesmen s ON s.id = dr.salesman_id
      JOIN dispatch_customers dc ON dc.id = di.dispatch_customer_id
      WHERE di.id = ?
      LIMIT 1${suffix}`,
@@ -410,6 +464,33 @@ async function voidInvoicesForDispatchRevision(connection, dispatchId, revision,
 }
 
 async function createDocumentGeneration(connection, data) {
+  const isCustomerDocument = ['customer_receipt', 'customer_acceptance_consent'].includes(data.document_type);
+  const identityColumn = data.document_type === 'invoice'
+    ? 'invoice_id'
+    : isCustomerDocument
+      ? 'dispatch_customer_id'
+      : null;
+  const identityValue = data.document_type === 'invoice'
+    ? data.invoice_id
+    : isCustomerDocument
+      ? data.dispatch_customer_id
+      : null;
+
+  // Downloading or printing a current document repeatedly must not grow the
+  // audit table. recordDocumentGeneration holds the dispatch row lock, so this
+  // lookup and insert are safe even when two users request the same PDF.
+  const existingSql = identityColumn
+    ? `SELECT id FROM dispatch_document_generations
+       WHERE dispatch_request_id = ? AND revision = ? AND document_type = ? AND ${identityColumn} = ?
+       LIMIT 1`
+    : `SELECT id FROM dispatch_document_generations
+       WHERE dispatch_request_id = ? AND revision = ? AND document_type = ?
+       LIMIT 1`;
+  const existing = await execute(connection, existingSql, identityColumn
+    ? [data.dispatch_request_id, data.revision, data.document_type, identityValue]
+    : [data.dispatch_request_id, data.revision, data.document_type]);
+  if (existing[0]) return existing[0].id;
+
   const [result] = await connection.execute(
     `INSERT INTO dispatch_document_generations (
       store_id, dispatch_request_id, dispatch_customer_id, invoice_id, document_type,
@@ -430,16 +511,14 @@ async function getDocumentChecklist(dispatchId, revision, connection = null) {
          SELECT 1 FROM dispatch_document_generations
          WHERE dispatch_request_id = ? AND revision = ? AND document_type = 'customer_table'
        ) AS customer_table_generated,
-       EXISTS(
-         SELECT 1 FROM dispatch_document_generations
-         WHERE dispatch_request_id = ? AND revision = ? AND document_type = 'quantity_table'
-       ) AS quantity_table_generated,
-       (SELECT COUNT(*) FROM invoices WHERE dispatch_request_id = ? AND revision = ? AND status = 'issued') AS required_invoice_count,
-       (SELECT COUNT(DISTINCT invoice_id) FROM dispatch_document_generations
-        WHERE dispatch_request_id = ? AND revision = ? AND document_type = 'invoice') AS generated_invoice_count`,
+       (SELECT COUNT(*) FROM dispatch_customers WHERE dispatch_request_id = ?) AS required_receipt_count,
+       (SELECT COUNT(DISTINCT dispatch_customer_id) FROM dispatch_document_generations
+        WHERE dispatch_request_id = ? AND revision = ? AND document_type = 'customer_receipt') AS generated_delivery_receipt_count,
+       (SELECT COUNT(DISTINCT dispatch_customer_id) FROM dispatch_document_generations
+        WHERE dispatch_request_id = ? AND revision = ? AND document_type = 'customer_acceptance_consent') AS generated_acceptance_consent_count`,
     [
       dispatchId, revision,
-      dispatchId, revision,
+      dispatchId,
       dispatchId, revision,
       dispatchId, revision
     ]
@@ -447,26 +526,32 @@ async function getDocumentChecklist(dispatchId, revision, connection = null) {
   const checklist = rows[0] || {};
   return {
     customer_table_generated: Boolean(checklist.customer_table_generated),
-    quantity_table_generated: Boolean(checklist.quantity_table_generated),
-    required_invoice_count: Number(checklist.required_invoice_count || 0),
-    generated_invoice_count: Number(checklist.generated_invoice_count || 0),
-    ready_for_approval: Boolean(checklist.customer_table_generated)
-      && Boolean(checklist.quantity_table_generated)
-      && Number(checklist.required_invoice_count || 0) > 0
-      && Number(checklist.required_invoice_count || 0) === Number(checklist.generated_invoice_count || 0)
+    required_receipt_count: Number(checklist.required_receipt_count || 0),
+    generated_delivery_receipt_count: Number(checklist.generated_delivery_receipt_count || 0),
+    generated_acceptance_consent_count: Number(checklist.generated_acceptance_consent_count || 0),
+    delivery_receipts_generated: Number(checklist.required_receipt_count || 0) > 0
+      && Number(checklist.required_receipt_count || 0) === Number(checklist.generated_delivery_receipt_count || 0),
+    acceptance_consents_generated: Number(checklist.required_receipt_count || 0) > 0
+      && Number(checklist.required_receipt_count || 0) === Number(checklist.generated_acceptance_consent_count || 0),
+    // The customer/quantity list is the release document. Customer delivery
+    // documents are produced after stock is issued and gate the closeout.
+    ready_for_dispatch: Boolean(checklist.customer_table_generated),
+    delivery_documents_generated: Number(checklist.required_receipt_count || 0) > 0
+      && Number(checklist.required_receipt_count || 0) === Number(checklist.generated_delivery_receipt_count || 0)
+      && Number(checklist.required_receipt_count || 0) === Number(checklist.generated_acceptance_consent_count || 0)
   };
 }
 
 async function createDispatchLineAllocation(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO dispatch_line_allocations (
-      store_id, dispatch_item_id, warehouse_id, item_id, carton_stock_lot_id, open_carton_shelf_id,
+      store_id, dispatch_item_id, warehouse_id, item_id, carton_stock_lot_id, ready_shelf_stock_id,
       ready_stock_container_id, allocation_type, allocated_quantity, inventory_quantity,
       unit_cost, total_cost, status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.store_id, data.dispatch_item_id, data.warehouse_id, nullable(data.item_id),
-      nullable(data.carton_stock_lot_id), nullable(data.open_carton_shelf_id), nullable(data.ready_stock_container_id),
+      nullable(data.carton_stock_lot_id), nullable(data.ready_shelf_stock_id), nullable(data.ready_stock_container_id),
       data.allocation_type, data.allocated_quantity, data.inventory_quantity, data.unit_cost,
       data.total_cost, data.status || 'reserved'
     ]
@@ -550,6 +635,65 @@ async function createDispatchReturn(connection, data) {
   return result.insertId;
 }
 
+async function findIssuedInvoiceForDispatchCustomer(connection, dispatchCustomerId) {
+  const [rows] = await connection.execute(
+    `SELECT id FROM invoices
+     WHERE dispatch_customer_id = ? AND status = 'issued'
+     ORDER BY id DESC LIMIT 1`,
+    [dispatchCustomerId]
+  );
+  return rows[0] || null;
+}
+
+async function createReturnCreditNote(connection, data) {
+  const [result] = await connection.execute(
+    `INSERT INTO dispatch_return_credit_notes (
+      store_id, dispatch_return_id, dispatch_request_id, dispatch_customer_id,
+      invoice_id, customer_id, credit_note_number, credit_note_date,
+      subtotal_amount, vat_amount, total_amount, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.store_id, data.dispatch_return_id, data.dispatch_request_id,
+      data.dispatch_customer_id, nullable(data.invoice_id), data.customer_id,
+      data.credit_note_number, data.credit_note_date, data.subtotal_amount,
+      data.vat_amount, data.total_amount, nullable(data.created_by)
+    ]
+  );
+  return result.insertId;
+}
+
+async function getReturnCreditNoteById(id, connection = null) {
+  const rows = await execute(connection,
+    `SELECT crn.*, dr.dispatch_number, dr.salesman_id, s.user_id AS salesman_user_id,
+        c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address,
+        inv.invoice_number, ret.returned_quantity, ret.reason,
+        di.item_name_snapshot, di.unit_label_snapshot, di.unit_price
+     FROM dispatch_return_credit_notes crn
+     JOIN dispatch_returns ret ON ret.id = crn.dispatch_return_id
+     JOIN dispatch_requests dr ON dr.id = crn.dispatch_request_id
+     JOIN salesmen s ON s.id = dr.salesman_id
+     JOIN customers c ON c.id = crn.customer_id
+     JOIN dispatch_items di ON di.id = ret.dispatch_item_id
+     LEFT JOIN invoices inv ON inv.id = crn.invoice_id
+     WHERE crn.id = ? LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+async function listReturnCreditNotesForDispatch(dispatchId, connection = null) {
+  return execute(connection,
+    `SELECT crn.id, crn.credit_note_number, crn.credit_note_date, crn.total_amount,
+        crn.customer_id, c.name AS customer_name, ret.reason
+     FROM dispatch_return_credit_notes crn
+     JOIN dispatch_returns ret ON ret.id = crn.dispatch_return_id
+     JOIN customers c ON c.id = crn.customer_id
+     WHERE crn.dispatch_request_id = ?
+     ORDER BY crn.id DESC`,
+    [dispatchId]
+  );
+}
+
 async function createSettlement(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO dispatch_settlements (
@@ -584,19 +728,53 @@ async function listSettlementsByDispatch(dispatchId, connection = null) {
   );
 }
 
+async function deleteDraftSettlement(connection, id) {
+  const [result] = await connection.execute(
+    `DELETE FROM dispatch_settlements WHERE id = ? AND status = 'draft'`,
+    [id]
+  );
+  return result.affectedRows;
+}
+
+async function createTargetCreditRecord(data, connection = null) {
+  const result = await execute(connection,
+    `INSERT INTO delivery_target_credits (
+      store_id, dispatch_request_id, dispatch_customer_id, salesman_id, customer_id,
+      eligible_amount, reference_date, delivery_date, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.store_id, data.dispatch_request_id, nullable(data.dispatch_customer_id),
+      data.salesman_id, data.customer_id, data.eligible_amount || 0,
+      nullable(data.reference_date), nullable(data.delivery_date), data.status || 'pending'
+    ]
+  );
+  return result.insertId;
+}
+
+async function listTargetCreditsByDispatch(dispatchId, connection = null) {
+  return execute(connection,
+    `SELECT * FROM delivery_target_credits WHERE dispatch_request_id = ? ORDER BY id ASC`,
+    [dispatchId]
+  );
+}
+
 module.exports = {
   createDispatchCustomer,
   createDispatchItem,
   createDispatchLineAllocation,
   createDispatchRequest,
   createDispatchReturn,
+  createReturnCreditNote,
   createDocumentGeneration,
   createInvoice,
   createInvoiceLine,
   createSettlement,
+  createTargetCreditRecord,
+  deleteDraftSettlement,
   deleteDispatchItem,
   findDispatchCustomerById,
   findDispatchItemById,
+  findIssuedInvoiceForDispatchCustomer,
   findDispatchRequestById,
   findSalesmanByUserId,
   findSettlementById,
@@ -607,16 +785,20 @@ module.exports = {
   getInvoiceById,
   getInvoiceLines,
   getInvoicesForDispatch,
+  getReturnCreditNoteById,
   getLineAllocations,
   getReservedQuantityByLot,
   getReservedQuantityByReadyContainer,
   getReservedQuantityByShelf,
   listDispatchRequests,
   listInvoices,
+  listReturnCreditNotesForDispatch,
   listSettlementsByDispatch,
+  listTargetCreditsByDispatch,
   lockDispatchRequest,
   recalculateDispatchTotals,
   updateDispatchCustomer,
+  updateDispatchCustomersFulfillmentStatus,
   updateDispatchItem,
   updateDispatchLineAllocation,
   updateDispatchRequest,

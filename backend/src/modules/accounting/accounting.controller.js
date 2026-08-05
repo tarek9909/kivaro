@@ -54,6 +54,10 @@ module.exports = {
   getExpense,
   getSalesmanBalance,
   listCashAccounts: list(service.listCashAccounts, 'cash_accounts', 'Cash accounts fetched'),
+  listPaymentOptions: async (req, res) => {
+    const cash_accounts = await service.listPaymentOptions(req.query, req.user);
+    successResponse(res, { message: 'Cash-account payment options fetched', data: { cash_accounts } });
+  },
   listExpenseCategories: list(service.listExpenseCategories, 'expense_categories', 'Expense categories fetched'),
   listExpenses: list(service.listExpenses, 'expenses', 'Expenses fetched'),
   listFinancialTransactions: list(service.listFinancialTransactions, 'financial_transactions', 'Financial transactions fetched'),

@@ -133,6 +133,39 @@ async function listPayments(input) {
 }
 
 async function listCredits(input) {
+  if (input.available_for_application) {
+    const pagination = getPagination(input);
+    const conditions = ["cc.status IN ('available', 'partially_used')", 'cc.remaining_amount > 0'];
+    const params = [];
+    if (input.customer_id) {
+      conditions.push('cc.customer_id = ?');
+      params.push(input.customer_id);
+    }
+    if (input.store_id) {
+      conditions.push('cc.store_id = ?');
+      params.push(input.store_id);
+    }
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const [count] = await query(
+      `SELECT COUNT(*) AS total FROM customer_credits cc ${where}`,
+      params
+    );
+    const rows = await query(
+      `SELECT cc.id, cc.customer_id, c.name AS customer_name, cc.credit_number,
+        cc.credit_date, cc.original_amount, cc.used_amount, cc.remaining_amount, cc.status,
+        cc.reference_type, cc.reference_id, cc.notes, cc.store_id, cc.created_by, cc.created_at
+       FROM customer_credits cc
+       JOIN customers c ON c.id = cc.customer_id
+       ${where}
+       ORDER BY cc.credit_date ASC, cc.id ASC
+       ${input.allRows ? '' : 'LIMIT ? OFFSET ?'}`,
+      input.allRows ? params : [...params, pagination.limit, pagination.offset]
+    );
+    return {
+      rows,
+      meta: getPaginationMeta({ ...pagination, total: Number(count?.total || 0) })
+    };
+  }
   return listRecords({
     select: `SELECT cc.id, cc.customer_id, c.name AS customer_name, cc.credit_number,
       cc.credit_date, cc.original_amount, cc.used_amount, cc.remaining_amount, cc.status,
@@ -237,6 +270,18 @@ async function findReceiptById(id) {
   return rows[0] || null;
 }
 
+async function findPaymentById(id) {
+  const rows = await query(
+    `SELECT cp.*, c.name AS customer_name, s.full_name AS collected_by_salesman_name
+     FROM customer_payments cp
+     JOIN customers c ON c.id = cp.customer_id
+     LEFT JOIN salesmen s ON s.id = cp.collected_by_salesman_id
+     WHERE cp.id = ? LIMIT 1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 async function createDebt(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO customer_debts (
@@ -291,7 +336,7 @@ async function createPayment(connection, data) {
 }
 
 async function createPaymentAllocation(connection, data) {
-  await connection.execute(
+  const [result] = await connection.execute(
     `INSERT INTO customer_payment_allocations (
       customer_payment_id, customer_debt_id, allocated_amount
     ) VALUES (?, ?, ?)`,
@@ -301,6 +346,7 @@ async function createPaymentAllocation(connection, data) {
       data.allocated_amount
     ]
   );
+  return result.insertId;
 }
 
 async function createCustomerCredit(connection, data) {
@@ -474,6 +520,7 @@ module.exports = {
   findDebtById,
   lockDebtById,
   findOpenDebtsForCustomer,
+  findPaymentById,
   findReceiptById,
   getCustomerCreditBalance,
   lockAvailableCreditsForCustomer,

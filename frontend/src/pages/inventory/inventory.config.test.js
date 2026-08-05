@@ -4,6 +4,7 @@ import {
   INVENTORY_PERMISSIONS,
   INVENTORY_TABS,
   ITEM_KINDS,
+  ITEM_KIND_TABS,
   MOVEMENT_TYPES,
   STATUSES,
   STOCK_MODES,
@@ -25,8 +26,13 @@ describe('inventory config', () => {
 
   it('models items by kind and stock mode instead of variants', () => {
     expect(ITEM_KINDS.map((option) => option.value)).toEqual(['normal', 'packaging']);
+    expect(ITEM_KIND_TABS).toEqual([
+      { id: 'all', label: 'All items', value: '' },
+      { id: 'normal', label: 'Normal items', value: 'normal' },
+      { id: 'packaging', label: 'Package items', value: 'packaging' }
+    ]);
     expect(STOCK_MODES.map((option) => option.value)).toEqual([
-      'carton_weight',
+      'carton',
       'weight',
       'piece'
     ]);
@@ -77,9 +83,10 @@ describe('inventory config', () => {
 
   it('locks per-tab permissions to backend permission strings', () => {
     const permsFor = (id) => INVENTORY_TABS.find((tab) => tab.id === id)?.anyOfPermissions;
-    expect(permsFor('items')).toEqual(['inventory.view']);
-    expect(permsFor('categories')).toEqual(['inventory.view']);
-    expect(permsFor('warehouses')).toEqual(['inventory.view']);
+    const catalogPermissions = ['inventory.view', 'inventory.create', 'inventory.update', 'inventory.delete'];
+    expect(permsFor('items')).toEqual(catalogPermissions);
+    expect(permsFor('categories')).toEqual(catalogPermissions);
+    expect(permsFor('warehouses')).toEqual(catalogPermissions);
     expect(permsFor('balances')).toEqual(['inventory.view']);
     expect(permsFor('movements')).toEqual(['stock.movements']);
     expect(permsFor('adjustments')).toEqual(['stock.adjust', 'stock.movements']);
@@ -88,6 +95,9 @@ describe('inventory config', () => {
   it('exposes the parent guard permission set', () => {
     expect(INVENTORY_PARENT_PERMISSIONS).toEqual([
       'inventory.view',
+      'inventory.create',
+      'inventory.update',
+      'inventory.delete',
       'stock.movements',
       'stock.adjust'
     ]);
@@ -108,5 +118,11 @@ describe('pickFirstAllowedInventoryTab', () => {
   it('routes action-only users to their available stock tab', () => {
     expect(pickFirstAllowedInventoryTab(makeHas(['stock.movements']))).toBe('/inventory/movements');
     expect(pickFirstAllowedInventoryTab(makeHas(['stock.adjust']))).toBe('/inventory/adjustments');
+  });
+
+  it('routes catalog mutation-only users to the catalog they can manage', () => {
+    expect(pickFirstAllowedInventoryTab(makeHas(['inventory.create']))).toBe('/inventory/items');
+    expect(pickFirstAllowedInventoryTab(makeHas(['inventory.update']))).toBe('/inventory/items');
+    expect(pickFirstAllowedInventoryTab(makeHas(['inventory.delete']))).toBe('/inventory/items');
   });
 });

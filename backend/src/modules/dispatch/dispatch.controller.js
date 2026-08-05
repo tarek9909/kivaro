@@ -1,9 +1,13 @@
 const service = require('./dispatch.service');
 const settingsModel = require('../settings/settings.model');
+const ApiError = require('../../utils/ApiError');
 const {
   sendDispatchCustomerChecklistPdf,
-  sendDispatchQuantityPdf,
-  sendInvoicePdf
+  sendDispatchCustomerReceiptPdf,
+  sendDispatchCustomerAcceptanceConsentPdf,
+  sendDispatchCustomerDeliveryDocumentPdf,
+  sendInvoicePdf,
+  sendReturnCreditNotePdf
 } = require('../../utils/pdf');
 const { successResponse } = require('../../utils/response');
 
@@ -15,15 +19,6 @@ async function listDispatches(req, res) {
 async function createDispatch(req, res) {
   const dispatch_request = await service.createDispatchRequest(req.body, req.user.id, req.user);
   successResponse(res, { statusCode: 201, message: 'Dispatch draft created', data: { dispatch_request } });
-}
-
-async function createDispatchFromPos(req, res) {
-  const dispatch_request = await service.createDispatchFromPos(req.body, req.user.id, req.user);
-  successResponse(res, {
-    statusCode: 201,
-    message: 'Selected POS orders converted into a combined dispatch draft',
-    data: { dispatch_request }
-  });
 }
 
 async function getDispatch(req, res) {
@@ -106,18 +101,26 @@ async function getSettlement(req, res) {
   successResponse(res, { message: 'Settlement fetched', data: { dispatch_settlement } });
 }
 
-async function generateCustomerChecklist(req, res) {
-  const generated = await service.recordDocumentGeneration(req.params.id, 'customer_table', {}, req.user.id, req.user);
-  const dispatch = await service.getDispatchRequest(req.params.id, req.user);
-  const company = await settingsModel.getCompanyProfile(dispatch.store_id);
-  return sendDispatchCustomerChecklistPdf(res, dispatch, company || {});
+async function reopenCloseout(req, res) {
+  const dispatch_request = await service.reopenCloseout(req.params.id, req.user);
+  successResponse(res, { message: 'Draft delivery closeout reopened', data: { dispatch_request } });
 }
 
-async function generateQuantityTable(req, res) {
-  await service.recordDocumentGeneration(req.params.id, 'quantity_table', {}, req.user.id, req.user);
+async function recordDeliveredDocument(res, record) {
+  try {
+    await record();
+  } catch (error) {
+    // The PDF has already reached the HTTP response. Do not attempt a second
+    // error response; a repeat download safely retries idempotent tracking.
+    console.error('Document delivery audit recording failed:', error.message);
+  }
+}
+
+async function generateCustomerChecklist(req, res) {
   const dispatch = await service.getDispatchRequest(req.params.id, req.user);
   const company = await settingsModel.getCompanyProfile(dispatch.store_id);
-  return sendDispatchQuantityPdf(res, dispatch, company || {});
+  await sendDispatchCustomerChecklistPdf(res, dispatch, company || {});
+  await recordDeliveredDocument(res, () => service.recordDocumentGeneration(req.params.id, 'customer_table', {}, req.user.id, req.user));
 }
 
 async function listInvoices(req, res) {
@@ -132,9 +135,43 @@ async function getInvoice(req, res) {
 
 async function generateInvoicePdf(req, res) {
   const invoice = await service.getInvoice(req.params.id, req.user);
-  await service.recordDocumentGeneration(invoice.dispatch_request_id, 'invoice', { invoice_id: invoice.id }, req.user.id, req.user);
   const company = await settingsModel.getCompanyProfile(invoice.store_id);
-  return sendInvoicePdf(res, invoice, invoice.lines, company || {});
+  await sendInvoicePdf(res, invoice, invoice.lines, company || {});
+  await recordDeliveredDocument(res, () => service.recordDocumentGeneration(invoice.dispatch_request_id, 'invoice', { invoice_id: invoice.id }, req.user.id, req.user));
+}
+
+async function getReturnCreditNote(req, res) {
+  const return_credit_note = await service.getReturnCreditNote(req.params.id, req.user);
+  successResponse(res, { message: 'Return credit note fetched', data: { return_credit_note } });
+}
+
+async function generateReturnCreditNotePdf(req, res) {
+  const creditNote = await service.getReturnCreditNote(req.params.id, req.user);
+  const company = await settingsModel.getCompanyProfile(creditNote.store_id);
+  await sendReturnCreditNotePdf(res, creditNote, company || {});
+}
+
+async function generateCustomerDeliveryDocumentPdf(req, res) {
+  const customerId = Number(req.params.customerId);
+  const dispatchId = Number(req.params.id);
+  const part = req.query.part;
+  const dispatch = await service.getDispatchRequest(dispatchId, req.user);
+  const customer = (dispatch.customers || []).find((c) => Number(c.id) === customerId);
+  if (!customer) throw ApiError.notFound('Dispatch customer not found');
+  const company = await settingsModel.getCompanyProfile(dispatch.store_id);
+  const lines = (dispatch.items || []).filter((item) => Number(item.dispatch_customer_id) === customerId);
+  if (part === 'receipt') {
+    await sendDispatchCustomerReceiptPdf(res, dispatch, customer, lines, company || {});
+    await recordDeliveredDocument(res, () => service.recordDocumentGeneration(dispatchId, 'customer_receipt', { customer_id: customerId }, req.user.id, req.user));
+    return;
+  }
+  if (part === 'consent') {
+    await sendDispatchCustomerAcceptanceConsentPdf(res, dispatch, customer, company || {});
+    await recordDeliveredDocument(res, () => service.recordDocumentGeneration(dispatchId, 'customer_acceptance_consent', { customer_id: customerId }, req.user.id, req.user));
+    return;
+  }
+  await sendDispatchCustomerDeliveryDocumentPdf(res, dispatch, customer, lines, company || {});
+  await recordDeliveredDocument(res, () => service.recordDeliveryDocumentGeneration(dispatchId, customerId, req.user.id, req.user));
 }
 
 module.exports = {
@@ -144,21 +181,23 @@ module.exports = {
   cancelDispatch,
   createCloseout,
   createDispatch,
-  createDispatchFromPos,
   createReturn,
   deleteItem,
   dispatchStock,
   generateCustomerChecklist,
+  generateCustomerDeliveryDocumentPdf,
   generateInvoicePdf,
-  generateQuantityTable,
+  generateReturnCreditNotePdf,
   getDispatch,
   getInvoice,
+  getReturnCreditNote,
   getSettlement,
   listDispatches,
   listInvoices,
   listSettlements,
   postSettlement,
   reworkDispatch,
+  reopenCloseout,
   submitDispatch,
   updateItem,
   updateDispatch

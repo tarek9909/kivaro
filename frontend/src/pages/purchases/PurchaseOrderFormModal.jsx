@@ -262,7 +262,7 @@ export function PurchaseOrderFormModal({ open, onClose }) {
             onChange={(event) => handleField('supplier_id', event.target.value)}
             error={errors.supplier_id}
             required
-            description="Used for the automatic supplier payment on approval."
+            description="Supplier for this purchase order."
           >
             <option value="">Select supplier</option>
             {suppliers.map((supplier) => (

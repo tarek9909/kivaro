@@ -108,60 +108,65 @@ function WarehouseFormModal({ open, onClose, warehouse, locations, canPickLocati
       }
     >
       <form id="warehouse-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Name"
-            value={form.name}
-            onChange={(event) => handleChange('name', event.target.value)}
-            error={errors.name}
-            required
-          />
-          <Input
-            label="Code"
-            value={form.code}
-            onChange={(event) => handleChange('code', event.target.value)}
-            error={errors.code}
-            required
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={(event) => handleChange('name', event.target.value)}
+              error={errors.name}
+              required
+              placeholder="e.g. Main Central Warehouse"
+            />
+            <Input
+              label="Code"
+              value={form.code}
+              onChange={(event) => handleChange('code', event.target.value)}
+              error={errors.code}
+              required
+              placeholder="e.g. WH-MAIN"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Location"
+              value={form.location_id || ''}
+              onChange={(event) => handleChange('location_id', event.target.value)}
+              error={errors.location_id}
+              description={canPickLocations ? 'Optional sales location.' : 'Location access is needed to change this.'}
+              disabled={!canPickLocations}
+            >
+              <option value="">No location</option>
+              {warehouse?.location_id && !locations.some((location) => Number(location.id) === Number(warehouse.location_id)) && (
+                <option value={warehouse.location_id}>{warehouse.location_name || `Location ${warehouse.location_id}`}</option>
+              )}
+              {locations.map((location) => (
+                <option key={location.id} value={location.id}>
+                  {location.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="Status"
+              value={form.status}
+              onChange={(event) => handleChange('status', event.target.value)}
+              error={errors.status}
+            >
+              {STATUSES.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <Textarea
+            label="Address"
+            value={form.address || ''}
+            onChange={(event) => handleChange('address', event.target.value)}
+            rows={3}
+            placeholder="Street, building, or GPS coordinates..."
           />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Location"
-            value={form.location_id || ''}
-            onChange={(event) => handleChange('location_id', event.target.value)}
-            error={errors.location_id}
-            description={canPickLocations ? 'Optional sales location.' : 'Location access is needed to change this.'}
-            disabled={!canPickLocations}
-          >
-            <option value="">No location</option>
-            {warehouse?.location_id && !locations.some((location) => Number(location.id) === Number(warehouse.location_id)) && (
-              <option value={warehouse.location_id}>{warehouse.location_name || `Location ${warehouse.location_id}`}</option>
-            )}
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            label="Status"
-            value={form.status}
-            onChange={(event) => handleChange('status', event.target.value)}
-            error={errors.status}
-          >
-            {STATUSES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Textarea
-          label="Address"
-          value={form.address || ''}
-          onChange={(event) => handleChange('address', event.target.value)}
-          rows={3}
-        />
       </form>
     </Modal>
   );
@@ -173,7 +178,6 @@ export default function WarehousesTab() {
   const canUpdate = hasPermission(INVENTORY_PERMISSIONS.update);
   const canDelete = hasPermission(INVENTORY_PERMISSIONS.delete);
   const canPickLocations = hasPermission('locations.manage');
-  const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);

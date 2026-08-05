@@ -84,23 +84,28 @@ export default function CustomerDebtsTab() {
       {
         id: 'customer_name',
         header: 'Customer',
-        cell: (row) => (
-          <div className="min-w-0">
-            <p className="truncate font-medium text-ink-50">
-              {row.customer_name || `customer #${row.customer_id}`}
-            </p>
-            <p className="truncate text-xs text-ink-400">
-              {row.dispatch_request_id ? `Dispatch #${row.dispatch_request_id}` : ''}
-            </p>
-          </div>
-        )
+        cell: (row) => {
+          const matchedCustomer = customers.find((c) => Number(c.id) === Number(row.customer_id));
+          const displayName = row.customer_name || matchedCustomer?.name || (row.customer_id ? `Customer #${row.customer_id}` : '-');
+          const dispatchCode = row.dispatch_number || (row.dispatch_request_id ? `DISP-${row.dispatch_request_id}` : '');
+          return (
+            <div className="min-w-0">
+              <p className="truncate font-medium text-ink-50">{displayName}</p>
+              {dispatchCode && (
+                <p className="truncate font-mono text-xs text-ink-400">{dispatchCode}</p>
+              )}
+            </div>
+          );
+        }
       },
       {
         id: 'salesman_name',
         header: 'Salesman',
-        cell: (row) => (
-          <span className="text-sm text-ink-200">{row.salesman_name || '-'}</span>
-        )
+        cell: (row) => {
+          const matchedSalesman = salesmen.find((s) => Number(s.id) === Number(row.salesman_id));
+          const displayName = row.salesman_name || matchedSalesman?.name || matchedSalesman?.full_name || (row.salesman_id ? `Salesman #${row.salesman_id}` : '-');
+          return <span className="text-sm text-ink-200">{displayName}</span>;
+        }
       },
       {
         id: 'original_amount',
@@ -147,7 +152,7 @@ export default function CustomerDebtsTab() {
         )
       }
     ],
-    []
+    [customers, salesmen]
   );
 
   return (

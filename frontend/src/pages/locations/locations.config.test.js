@@ -47,9 +47,7 @@ describe('locations config', () => {
   it('declares tabs with stable IDs and per-tab permission gates', () => {
     expect(LOCATIONS_TABS.map((tab) => tab.id)).toEqual([
       'locations',
-      'sublocations',
-      'salesmen',
-      'targets'
+      'sublocations'
     ]);
     expect(
       LOCATIONS_TABS.find((tab) => tab.id === 'locations').anyOfPermissions
@@ -57,12 +55,6 @@ describe('locations config', () => {
     expect(
       LOCATIONS_TABS.find((tab) => tab.id === 'sublocations').anyOfPermissions
     ).toEqual(['locations.manage']);
-    expect(
-      LOCATIONS_TABS.find((tab) => tab.id === 'salesmen').anyOfPermissions
-    ).toEqual(['salesmen.manage']);
-    expect(
-      LOCATIONS_TABS.find((tab) => tab.id === 'targets').anyOfPermissions
-    ).toEqual(['targets.manage']);
   });
 });
 
@@ -92,15 +84,15 @@ describe('pickFirstAllowedLocationsTab', () => {
     );
   });
 
-  it('routes salesmen.manage-only users to /locations/salesmen', () => {
+  it('routes salesmen.manage-only users to the consolidated Salesmen hub', () => {
     expect(pickFirstAllowedLocationsTab(makeHas(['salesmen.manage']))).toBe(
-      '/locations/salesmen'
+      '/salesmen?tab=directory'
     );
   });
 
-  it('routes targets.manage-only users to /locations/targets', () => {
+  it('routes targets.manage-only users to the consolidated Salesmen hub', () => {
     expect(pickFirstAllowedLocationsTab(makeHas(['targets.manage']))).toBe(
-      '/locations/targets'
+      '/salesmen?tab=targets'
     );
   });
 

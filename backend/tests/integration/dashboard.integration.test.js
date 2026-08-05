@@ -31,7 +31,6 @@ describe('dashboard integration', () => {
         cash_balance: expect.any(Number),
         open_receivables: expect.any(Number),
         active_dispatches: expect.any(Number),
-        pending_pos_orders: expect.any(Number),
         raw_stock_value: expect.any(Number),
         packaging_stock_value: expect.any(Number),
         ready_stock_value: expect.any(Number),
@@ -42,7 +41,6 @@ describe('dashboard integration', () => {
       }),
       benchmarks: expect.any(Array),
       activity: expect.any(Array),
-      pending_pos_work: expect.any(Array),
       packaging_shortages: expect.any(Array),
       sales_chart: expect.any(Array),
       notifications: expect.any(Array)

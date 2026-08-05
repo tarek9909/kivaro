@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2 , SlidersHorizontal } from 'lucide-react';
+import { CheckCircle2, SlidersHorizontal, UserCheck, Calendar, Clock, Truck } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage } from '@/lib/errors.js';
@@ -35,13 +35,11 @@ function StatusBadge({ status }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
-function Field({ label, value }) {
+function SummaryMetric({ label, value, tone = 'text-ink-50' }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">
-        {label}
-      </span>
-      <span className="break-words text-sm text-ink-100">{value || '-'}</span>
+    <div className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-300">{label}</p>
+      <p className={`mt-1 font-mono text-lg font-bold ${tone}`}>{value}</p>
     </div>
   );
 }
@@ -82,7 +80,7 @@ export default function SalesmanBalancesTab() {
     enabled: Boolean(openBalanceId)
   });
 
-  const salesmenQuery = useSalesmenList(canPickSalesmen);
+  const salesmenQuery = useSalesmenList(canPickSalesmen || Boolean(openBalanceId));
   const salesmen = salesmenQuery.data?.data?.salesmen || [];
 
   const closeMutation = useMutation({
@@ -102,6 +100,21 @@ export default function SalesmanBalancesTab() {
   const meta = listQuery.data?.meta || {};
   const balance = detailQuery.data?.data?.salesman_balance;
 
+  const foundSalesman = salesmen.find((s) => Number(s.id) === Number(balance?.salesman_id));
+  const drawerSalesmanName =
+    balance?.salesman_name ||
+    balance?.salesman?.full_name ||
+    balance?.salesman?.name ||
+    foundSalesman?.full_name ||
+    foundSalesman?.name ||
+    (balance?.salesman_id ? `Salesman #${balance.salesman_id}` : '-');
+
+  const drawerDispatchCode =
+    balance?.dispatch_number ||
+    balance?.dispatch_request?.dispatch_number ||
+    balance?.dispatch_code ||
+    (balance?.dispatch_request_id ? `DISP-${balance.dispatch_request_id}` : '-');
+
   const columns = useMemo(
     () => [
       {
@@ -114,9 +127,11 @@ export default function SalesmanBalancesTab() {
       {
         id: 'salesman_name',
         header: 'Salesman',
-        cell: (row) => (
-          <span className="text-sm text-ink-100">{row.salesman_name || '-'}</span>
-        )
+        cell: (row) => {
+          const matchedSalesman = salesmen.find((s) => Number(s.id) === Number(row.salesman_id));
+          const displayName = row.salesman_name || matchedSalesman?.full_name || matchedSalesman?.name || (row.salesman_id ? `Salesman #${row.salesman_id}` : '-');
+          return <span className="text-sm font-medium text-ink-100">{displayName}</span>;
+        }
       },
       {
         id: 'expected_amount',
@@ -176,7 +191,7 @@ export default function SalesmanBalancesTab() {
         )
       }
     ],
-    [canManage]
+    [canManage, salesmen]
   );
 
   return (
@@ -201,64 +216,64 @@ export default function SalesmanBalancesTab() {
       >
         <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
           <Select
-          value={status}
-          onChange={(event) => {
-            setStatus(event.target.value);
-            setPage(1);
-          }}
-        >
-          {SALESMAN_BALANCE_STATUS_FILTER_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
-        {canPickSalesmen ? (
-          <Select
-            value={salesmanId}
+            value={status}
             onChange={(event) => {
-              setSalesmanId(event.target.value);
+              setStatus(event.target.value);
               setPage(1);
             }}
           >
-            <option value="">All salesmen</option>
-            {salesmen.map((salesman) => (
-              <option key={salesman.id} value={salesman.id}>
-                {salesman.full_name}
+            {SALESMAN_BALANCE_STATUS_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </Select>
-        ) : (
+          {canPickSalesmen ? (
+            <Select
+              value={salesmanId}
+              onChange={(event) => {
+                setSalesmanId(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All salesmen</option>
+              {salesmen.map((salesman) => (
+                <option key={salesman.id} value={salesman.id}>
+                  {salesman.full_name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <Input
+              label="Salesman ID"
+              type="number"
+              min="1"
+              value={salesmanId}
+              onChange={(event) => {
+                setSalesmanId(event.target.value);
+                setPage(1);
+              }}
+              description="Numeric only."
+            />
+          )}
           <Input
-            label="Salesman ID"
-            type="number"
-            min="1"
-            value={salesmanId}
+            label="From"
+            type="date"
+            value={dateFrom}
             onChange={(event) => {
-              setSalesmanId(event.target.value);
+              setDateFrom(event.target.value);
               setPage(1);
             }}
-            description="Numeric only."
           />
-        )}
-        <Input
-          label="From"
-          type="date"
-          value={dateFrom}
-          onChange={(event) => {
-            setDateFrom(event.target.value);
-            setPage(1);
-          }}
-        />
-        <Input
-          label="To"
-          type="date"
-          value={dateTo}
-          onChange={(event) => {
-            setDateTo(event.target.value);
-            setPage(1);
-          }}
-        />
+          <Input
+            label="To"
+            type="date"
+            value={dateTo}
+            onChange={(event) => {
+              setDateTo(event.target.value);
+              setPage(1);
+            }}
+          />
         </div>
       </div>
 
@@ -294,7 +309,7 @@ export default function SalesmanBalancesTab() {
         width="lg"
         title={
           balance
-            ? `Salesman balance ${formatDate(balance.balance_date)}`
+            ? `Salesman balance — ${drawerSalesmanName}`
             : 'Salesman balance'
         }
         description={balance ? `Created ${formatDateTime(balance.created_at)}` : undefined}
@@ -315,9 +330,13 @@ export default function SalesmanBalancesTab() {
         ) : !balance ? (
           <EmptyState title="Balance not found" />
         ) : (
-          <div className="space-y-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={balance.status} />
+          <div className="space-y-4">
+            {/* Toolbar Card */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="flex items-center gap-2.5">
+                <StatusBadge status={balance.status} />
+                <span className="text-xs text-ink-300 font-mono">Record #{balance.id}</span>
+              </div>
               {canManage && balance.status === 'open' && (
                 <Button
                   size="sm"
@@ -329,51 +348,84 @@ export default function SalesmanBalancesTab() {
               )}
             </div>
 
-            <section className="grid gap-3 sm:grid-cols-2">
-              <Field
-                label="Salesman"
-                value={balance.salesman_name || (balance.salesman_id ? `#${balance.salesman_id}` : null)}
-              />
-              <Field label="Balance date" value={formatDate(balance.balance_date)} />
-              <Field
-                label="Dispatch"
-                value={
-                  balance.dispatch_number ||
-                  (balance.dispatch_request_id ? `#${balance.dispatch_request_id}` : '-')
-                }
-              />
-              <Field
-                label="Closed"
-                value={
-                  balance.closed_at ? formatDateTime(balance.closed_at) : 'Not closed'
-                }
-              />
-            </section>
+            {/* Salesman & Logistics Card */}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+              <div className="border-b border-white/5 pb-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Salesman & Logistics</h4>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-500/10 text-brand-300 border border-brand-500/20">
+                    <UserCheck className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-400">Salesman</p>
+                    <p className="truncate font-medium text-ink-50">{drawerSalesmanName}</p>
+                  </div>
+                </div>
 
-            <section className="grid gap-3 sm:grid-cols-3">
-              <Field
-                label="Expected"
-                value={formatNumber(balance.expected_amount, { maximumFractionDigits: 4 })}
-              />
-              <Field
-                label="Collected"
-                value={formatNumber(balance.collected_amount, {
-                  maximumFractionDigits: 4
-                })}
-              />
-              <Field
-                label="Debt"
-                value={formatNumber(balance.debt_amount, { maximumFractionDigits: 4 })}
-              />
-            </section>
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-ink-200 border border-white/10">
+                    <Calendar className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-400">Balance Date</p>
+                    <p className="text-sm font-medium text-ink-50">{formatDate(balance.balance_date)}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-ink-200 border border-white/10">
+                    <Truck className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-400">Dispatch Order</p>
+                    <p className="font-mono text-sm font-medium text-brand-300">{drawerDispatchCode}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/5 text-ink-200 border border-white/10">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-400">Closed Status</p>
+                    <p className="text-sm font-medium text-ink-50">{balance.closed_at ? formatDateTime(balance.closed_at) : 'Not closed'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Financial Summary Card */}
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+              <div className="border-b border-white/5 pb-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Financial Balance</h4>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <SummaryMetric
+                  label="Expected Amount"
+                  value={formatNumber(balance.expected_amount, { maximumFractionDigits: 4 })}
+                />
+                <SummaryMetric
+                  label="Collected Amount"
+                  value={formatNumber(balance.collected_amount, { maximumFractionDigits: 4 })}
+                  tone="text-emerald-300"
+                />
+                <SummaryMetric
+                  label="Debt Amount"
+                  value={formatNumber(balance.debt_amount, { maximumFractionDigits: 4 })}
+                  tone={Number(balance.debt_amount) > 0 ? 'text-amber-300' : 'text-ink-300'}
+                />
+              </div>
+            </div>
 
             {balance.notes && (
-              <section>
-                <h3 className="font-display text-sm font-semibold text-ink-50">Notes</h3>
-                <p className="mt-1 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm text-ink-200 text-pretty">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Notes</h4>
+                <p className="text-sm text-ink-200 leading-relaxed text-pretty">
                   {balance.notes}
                 </p>
-              </section>
+              </div>
             )}
           </div>
         )}

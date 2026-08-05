@@ -14,10 +14,10 @@ const SUMMARY_METRICS = {
   commissions: [
     'target_amount',
     'sales_amount',
-    'base_salary',
     'total_commission',
     'total_payable'
   ],
+  cash_reconciliation: ['transaction_count', 'cash_in', 'cash_out', 'net_movement'],
   current_stock: [
     'quantity_on_hand',
     'quantity_reserved',
@@ -56,6 +56,7 @@ const SUMMARY_METRICS = {
     'receipt_total',
     'payment_total'
   ],
+  customer_profitability: ['net_sale_quantity', 'net_revenue', 'sales_cogs', 'gift_cogs', 'gross_profit'],
   debts: [
     'subtotal_amount',
     'vat_amount',
@@ -65,6 +66,8 @@ const SUMMARY_METRICS = {
     'debt_adjustment_amount',
     'outstanding_debt_amount'
   ],
+  delivery_closeouts: ['total_expected', 'total_collected', 'total_debt', 'total_returned_value', 'customer_count'],
+  discounts: ['discount_value', 'discount_amount', 'subtotal_amount', 'customer_total_amount'],
   dispatch_summary: [
     'customers_count',
     'total_quantity',
@@ -93,6 +96,8 @@ const SUMMARY_METRICS = {
     'debt_amount',
     'gift_cogs'
   ],
+  inventory_aging: ['remaining_cartons', 'remaining_inventory_value', 'age_days'],
+  order_pipeline: ['order_count', 'order_value', 'average_open_days'],
   packaging_operations: [
     'output_carton_count',
     'raw_quantity_kg',
@@ -109,14 +114,6 @@ const SUMMARY_METRICS = {
     'available_quantity',
     'shortage_quantity'
   ],
-  pos_orders: [
-    'sale_quantity',
-    'gift_quantity',
-    'sale_subtotal',
-    'sale_vat',
-    'sale_total',
-    'gift_line_count'
-  ],
   profit_loss: [
     'sales_revenue',
     'sales_vat',
@@ -126,6 +123,7 @@ const SUMMARY_METRICS = {
     'gross_profit_after_gifts',
     'operating_expenses',
     'commission_expenses',
+    'payroll_expenses',
     'debt_write_offs',
     'supplier_payments_cash_outflow',
     'total_expense',
@@ -141,6 +139,8 @@ const SUMMARY_METRICS = {
     'ordered_quantity',
     'received_quantity'
   ],
+  product_profitability: ['net_sale_quantity', 'net_revenue', 'sales_cogs', 'gift_cogs', 'gross_profit'],
+  returns: ['returned_quantity', 'returned_sales_value', 'returned_cost'],
   salesman_performance: [
     'dispatch_count',
     'delivered_customer_count',
@@ -151,12 +151,9 @@ const SUMMARY_METRICS = {
     'sales_cogs',
     'gift_quantity',
     'gift_cogs',
-    'gross_profit_after_gifts',
-    'pending_pos_orders',
-    'converted_pos_orders'
+    'gross_profit_after_gifts'
   ],
   salesman_target_progress: [
-    'base_salary',
     'target_amount',
     'achieved_sales_amount',
     'achievement_percentage'
@@ -178,7 +175,9 @@ const SUMMARY_METRICS = {
     'quantity_change',
     'reserved_quantity_change',
     'total_cost'
-  ]
+  ],
+  territory_profitability: ['customer_count', 'net_sale_quantity', 'net_revenue', 'sales_cogs', 'gift_cogs', 'gross_profit'],
+  vat_summary: ['invoice_count', 'taxable_sales', 'output_vat', 'gross_sales']
 };
 
 function buildSummary(rows = [], key) {
@@ -206,32 +205,44 @@ function report(method, key, message) {
       return sendCsv(res, key + '.csv', result.rows);
     }
 
-    const result = await method(req.query, req.user);
-    const summaryResult = await method({ ...req.query, allRows: true }, req.user);
+    const result = await method({ ...req.query, __summary_metrics: SUMMARY_METRICS[key] || [] }, req.user);
+    // Paged report models calculate totals in SQL from the same filtered
+    // subquery. Non-paged reports (for example P&L) retain their small,
+    // intentional all-row fallback.
+    const summary = result.summary || buildSummary(
+      (await method({ ...req.query, allRows: true }, req.user)).rows,
+      key
+    );
     return successResponse(res, {
       message,
       data: { [key]: result.rows },
       meta: {
         ...result.meta,
-        summary: buildSummary(summaryResult.rows, key)
+        summary
       }
     });
   };
 }
 
 module.exports = {
+  cashReconciliation: report(reports.cashReconciliation, 'cash_reconciliation', 'Cash reconciliation report fetched'),
   commissions: report(reports.commissions, 'commissions', 'Commissions report fetched'),
   currentStock: report(reports.currentStock, 'current_stock', 'Current stock report fetched'),
   customerBalances: report(reports.customerBalances, 'customer_balances', 'Customer balances report fetched'),
+  customerProfitability: report(reports.customerProfitability, 'customer_profitability', 'Customer profitability report fetched'),
   debts: report(reports.debts, 'debts', 'Debts report fetched'),
+  deliveryCloseouts: report(reports.deliveryCloseouts, 'delivery_closeouts', 'Delivery closeouts report fetched'),
+  discounts: report(reports.discounts, 'discounts', 'Discounts report fetched'),
   dispatchSummary: report(reports.dispatchSummary, 'dispatch_summary', 'Dispatch summary report fetched'),
   gifts: report(reports.gifts, 'gifts', 'Gift COGS report fetched'),
   invoices: report(reports.invoices, 'invoices', 'Invoices report fetched'),
+  inventoryAging: report(reports.inventoryAging, 'inventory_aging', 'Inventory aging report fetched'),
+  orderPipeline: report(reports.orderPipeline, 'order_pipeline', 'Order pipeline report fetched'),
   normalStock: report(reports.normalStock, 'normal_stock', 'Normal stock report fetched'),
   packagingOperations: report(reports.packagingOperations, 'packaging_operations', 'Packaging operations report fetched'),
   packagingShortages: report(reports.packagingShortages, 'packaging_shortages', 'Packaging shortages report fetched'),
   packagingStock: report(reports.packagingStock, 'packaging_stock', 'Packaging stock report fetched'),
-  posOrders: report(reports.posOrders, 'pos_orders', 'POS orders report fetched'),
+  productProfitability: report(reports.productProfitability, 'product_profitability', 'Product profitability report fetched'),
   profitLoss: report(reports.profitLoss, 'profit_loss', 'Profit/loss report fetched'),
   purchases: report(reports.purchases, 'purchases', 'Purchases report fetched'),
   readyStock: report(reports.readyStock, 'ready_stock', 'Ready stock report fetched'),
@@ -239,6 +250,9 @@ module.exports = {
   salesmanTargetProgress: report(reports.salesmanTargetProgress, 'salesman_target_progress', 'Salesman target progress report fetched'),
   sales: report(reports.sales, 'sales', 'Sales report fetched'),
   stockMovements: report(reports.stockMovements, 'stock_movements', 'Stock movements report fetched'),
+  territoryProfitability: report(reports.territoryProfitability, 'territory_profitability', 'Territory profitability report fetched'),
+  returns: report(reports.returns, 'returns', 'Returns report fetched'),
+  vatSummary: report(reports.vatSummary, 'vat_summary', 'VAT summary report fetched'),
   _private: {
     buildSummary,
     SUMMARY_METRICS

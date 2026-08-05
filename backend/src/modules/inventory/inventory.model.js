@@ -61,14 +61,8 @@ async function listWithCount(config) {
 function itemSelect(prefix = 'i') {
   return `${prefix}.id, ${prefix}.store_id, ${prefix}.category_id, ${prefix}.base_unit_id,
     ${prefix}.name, ${prefix}.code, ${prefix}.item_kind, ${prefix}.stock_mode,
-    ${prefix}.kg_per_carton, ${prefix}.loose_units_per_carton, ${prefix}.max_content_weight_kg,
-    CASE
-      WHEN ${prefix}.stock_mode = 'carton_weight' AND ${prefix}.loose_units_per_carton > 0
-      THEN ${prefix}.kg_per_carton / ${prefix}.loose_units_per_carton
-      ELSE NULL
-    END AS loose_unit_weight_kg,
+    ${prefix}.kg_per_carton, ${prefix}.max_content_weight_kg,
     ${prefix}.description, ${prefix}.default_cost, ${prefix}.default_selling_price,
-    ${prefix}.carton_selling_price, ${prefix}.loose_unit_selling_price,
     ${prefix}.reorder_level, ${prefix}.status, ${prefix}.created_by,
     ${prefix}.created_at, ${prefix}.updated_at`;
 }
@@ -259,10 +253,9 @@ async function createItem(data, connection = null) {
     connection,
     `INSERT INTO items (
       store_id, category_id, base_unit_id, name, code, item_kind, stock_mode,
-      kg_per_carton, loose_units_per_carton, max_content_weight_kg, description,
-      default_cost, default_selling_price, carton_selling_price, loose_unit_selling_price,
-      reorder_level, status, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      kg_per_carton, max_content_weight_kg, description,
+      default_cost, default_selling_price, reorder_level, status, created_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.store_id,
       data.category_id,
@@ -272,13 +265,10 @@ async function createItem(data, connection = null) {
       data.item_kind,
       data.stock_mode,
       nullable(data.kg_per_carton),
-      nullable(data.loose_units_per_carton),
       nullable(data.max_content_weight_kg),
       nullable(data.description),
       data.default_cost || 0,
       nullable(data.default_selling_price),
-      nullable(data.carton_selling_price),
-      nullable(data.loose_unit_selling_price),
       data.reorder_level || 0,
       data.status || 'active',
       nullable(data.created_by)
@@ -311,7 +301,6 @@ async function deactivateItem(id) {
 }
 
 async function hardDeleteItemCascade(id, connection = null) {
-  await connectionResult(connection, 'DELETE FROM open_carton_shelves WHERE item_id = ?', [id]);
   await connectionResult(connection, 'DELETE FROM carton_stock_lots WHERE item_id = ?', [id]);
   await connectionResult(connection, 'DELETE FROM item_stock_balances WHERE item_id = ?', [id]);
   const result = await connectionResult(connection, 'DELETE FROM items WHERE id = ?', [id]);
@@ -401,15 +390,13 @@ async function listStockBalances({ filters, pagination }) {
   return listWithCount({
     select: `SELECT b.id AS stock_balance_id, b.store_id, b.warehouse_id, w.name AS warehouse_name,
       b.item_id, i.name AS item_name, i.code AS item_code, i.item_kind, i.stock_mode,
-      i.kg_per_carton, i.loose_units_per_carton, i.max_content_weight_kg,
-      CASE WHEN i.stock_mode = 'carton_weight' AND i.loose_units_per_carton > 0
-        THEN i.kg_per_carton / i.loose_units_per_carton ELSE NULL END AS loose_unit_weight_kg,
+      i.kg_per_carton, i.max_content_weight_kg,
       u.symbol AS base_unit_symbol, u.unit_type AS base_unit_type,
       b.quantity_on_hand, b.quantity_reserved,
       (b.quantity_on_hand - b.quantity_reserved) AS quantity_available,
       b.average_cost, (b.quantity_on_hand * b.average_cost) AS stock_value,
+      CASE WHEN i.stock_mode = 'carton' THEN b.quantity_on_hand * i.kg_per_carton ELSE NULL END AS carton_weight_equivalent_kg,
       COALESCE(lots.sealed_cartons, 0) AS sealed_cartons,
-      COALESCE(shelves.open_loose_units, 0) AS open_loose_units,
       CASE WHEN i.reorder_level > 0 AND (b.quantity_on_hand - b.quantity_reserved) <= i.reorder_level
         THEN 'low' ELSE 'healthy' END AS stock_health,
       b.updated_at`,
@@ -421,13 +408,7 @@ async function listStockBalances({ filters, pagination }) {
         SELECT warehouse_id, item_id, SUM(remaining_cartons) AS sealed_cartons
         FROM carton_stock_lots
         GROUP BY warehouse_id, item_id
-      ) lots ON lots.warehouse_id = b.warehouse_id AND lots.item_id = b.item_id
-      LEFT JOIN (
-        SELECT warehouse_id, item_id, SUM(remaining_loose_units) AS open_loose_units
-        FROM open_carton_shelves
-        WHERE status = 'open'
-        GROUP BY warehouse_id, item_id
-      ) shelves ON shelves.warehouse_id = b.warehouse_id AND shelves.item_id = b.item_id`,
+      ) lots ON lots.warehouse_id = b.warehouse_id AND lots.item_id = b.item_id`,
     conditions,
     params,
     search: filters.search,
@@ -478,9 +459,9 @@ async function listStockMovements({ filters, pagination }) {
       sm.item_id, i.name AS item_name, i.code AS item_code, i.item_kind, i.stock_mode,
       sm.movement_type, sm.quantity_change, sm.quantity_before, sm.quantity_after,
       sm.reserved_quantity_change, sm.reserved_quantity_before, sm.reserved_quantity_after,
-      sm.unit_cost, sm.total_cost, sm.carton_stock_lot_id, sm.open_carton_shelf_id,
+      sm.unit_cost, sm.total_cost, sm.carton_stock_lot_id,
       sm.reference_type, sm.reference_id, sm.notes,
-      CASE WHEN i.stock_mode IN ('weight', 'carton_weight') THEN 'kg' ELSE u.symbol END AS stock_unit_symbol,
+      CASE WHEN i.stock_mode = 'weight' THEN 'kg' WHEN i.stock_mode = 'carton' THEN 'cartons' ELSE u.symbol END AS stock_unit_symbol,
       sm.created_by, sm.created_at`,
     from: 'item_stock_movements sm',
     joins: `JOIN warehouses w ON w.id = sm.warehouse_id
@@ -524,7 +505,7 @@ async function listCartonLots({ filters, pagination }) {
   return listWithCount({
     select: `SELECT l.id AS carton_lot_id, l.store_id, l.warehouse_id, w.name AS warehouse_name,
       l.item_id, i.name AS item_name, i.code AS item_code, l.received_cartons,
-      l.remaining_cartons, l.kg_per_carton, l.loose_units_per_carton, l.unit_cost_per_kg,
+      l.remaining_cartons, l.kg_per_carton, l.unit_cost_per_carton,
       l.source_type, l.source_id, l.received_at, l.created_by, l.created_at, l.updated_at`,
     from: 'carton_stock_lots l',
     joins: 'JOIN warehouses w ON w.id = l.warehouse_id JOIN items i ON i.id = l.item_id',
@@ -633,15 +614,15 @@ async function createItemStockMovement(connection, data) {
     `INSERT INTO item_stock_movements (
       store_id, warehouse_id, item_id, movement_type, quantity_change, quantity_before,
       quantity_after, reserved_quantity_change, reserved_quantity_before, reserved_quantity_after,
-      unit_cost, total_cost, carton_stock_lot_id, open_carton_shelf_id,
+      unit_cost, total_cost, carton_stock_lot_id,
       reference_type, reference_id, notes, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       nullable(data.store_id), data.warehouse_id, data.item_id, data.movement_type,
       data.quantity_change, data.quantity_before, data.quantity_after,
       data.reserved_quantity_change || 0, data.reserved_quantity_before || 0,
       data.reserved_quantity_after || 0, nullable(data.unit_cost), nullable(data.total_cost),
-      nullable(data.carton_stock_lot_id), nullable(data.open_carton_shelf_id),
+      nullable(data.carton_stock_lot_id),
       nullable(data.reference_type), nullable(data.reference_id), nullable(data.notes),
       nullable(data.created_by)
     ]
@@ -653,13 +634,13 @@ async function createCartonStockLot(connection, data) {
   const [result] = await connection.execute(
     `INSERT INTO carton_stock_lots (
       store_id, warehouse_id, item_id, received_cartons, remaining_cartons,
-      kg_per_carton, loose_units_per_carton, unit_cost_per_kg,
+      kg_per_carton, unit_cost_per_carton,
       source_type, source_id, received_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), ?)`,
     [
       nullable(data.store_id), data.warehouse_id, data.item_id,
       data.received_cartons, data.remaining_cartons, data.kg_per_carton,
-      data.loose_units_per_carton, data.unit_cost_per_kg,
+      data.unit_cost_per_carton,
       nullable(data.source_type), nullable(data.source_id), nullable(data.received_at),
       nullable(data.created_by)
     ]
@@ -670,10 +651,10 @@ async function createCartonStockLot(connection, data) {
 async function getCartonLotForUpdate(connection, lotId) {
   const [rows] = await connection.execute(
     `SELECT id, store_id, warehouse_id, item_id, received_cartons, remaining_cartons,
-      kg_per_carton, loose_units_per_carton, unit_cost_per_kg, source_type, source_id,
+      kg_per_carton, unit_cost_per_carton, source_type, source_id,
       received_at, created_by, created_at, updated_at,
       COALESCE((
-        SELECT SUM(dla.inventory_quantity) / carton_stock_lots.kg_per_carton
+        SELECT SUM(dla.inventory_quantity)
         FROM dispatch_line_allocations dla
         WHERE dla.carton_stock_lot_id = carton_stock_lots.id
           AND dla.allocation_type = 'carton_lot'
@@ -688,11 +669,11 @@ async function getCartonLotForUpdate(connection, lotId) {
 async function getAvailableCartonLotsForUpdate(connection, warehouseId, itemId) {
   const [rows] = await connection.execute(
     `SELECT l.id, l.store_id, l.warehouse_id, l.item_id, l.received_cartons, l.remaining_cartons,
-      l.kg_per_carton, l.loose_units_per_carton, l.unit_cost_per_kg, l.source_type, l.source_id,
+      l.kg_per_carton, l.unit_cost_per_carton, l.source_type, l.source_id,
       l.received_at, l.created_by, l.created_at, l.updated_at,
-      COALESCE(reserved.reserved_inventory_quantity, 0) / l.kg_per_carton AS reserved_cartons,
+      COALESCE(reserved.reserved_inventory_quantity, 0) AS reserved_cartons,
       GREATEST(
-        FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0) / l.kg_per_carton),
+        FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0)),
         0
       ) AS available_cartons
      FROM carton_stock_lots l
@@ -703,7 +684,7 @@ async function getAvailableCartonLotsForUpdate(connection, warehouseId, itemId) 
        GROUP BY carton_stock_lot_id
      ) reserved ON reserved.carton_stock_lot_id = l.id
      WHERE l.warehouse_id = ? AND l.item_id = ?
-       AND FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0) / l.kg_per_carton) > 0
+       AND (l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0)) > 0
      ORDER BY l.received_at ASC, l.id ASC
      FOR UPDATE`,
     [warehouseId, itemId]

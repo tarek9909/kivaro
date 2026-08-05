@@ -4,10 +4,6 @@ jest.mock('../src/modules/roles/roles.model', () => ({
   getRolePermissions: jest.fn()
 }));
 
-jest.mock('../src/modules/locations/locations.model', () => ({
-  createSalesman: jest.fn()
-}));
-
 jest.mock('../src/modules/users/users.model', () => ({
   createUser: jest.fn(),
   findUserById: jest.fn(),
@@ -24,7 +20,6 @@ jest.mock('../src/utils/transaction', () => ({
 }));
 
 const roleModel = require('../src/modules/roles/roles.model');
-const locationModel = require('../src/modules/locations/locations.model');
 const userModel = require('../src/modules/users/users.model');
 const service = require('../src/modules/users/users.service');
 
@@ -94,7 +89,7 @@ describe('users service role assignability', () => {
     );
   });
 
-  test('creates a linked salesman when requested for a salesman role', async () => {
+  test('rejects the retired shortcut for creating a linked salesman', async () => {
     roleModel.findRoleById.mockResolvedValue({
       id: 5,
       store_id: 1,
@@ -102,18 +97,7 @@ describe('users service role assignability', () => {
       status: 'active'
     });
     roleModel.getRolePermissions.mockResolvedValue([]);
-    userModel.createUser.mockResolvedValue({
-      id: 42,
-      role_id: 5,
-      store_id: 1,
-      full_name: 'Route Driver',
-      phone: '+96170000000',
-      email: 'driver@example.com',
-      status: 'active'
-    });
-    locationModel.createSalesman.mockResolvedValue({ id: 8, user_id: 42 });
-
-    await service.createUser(
+    await expect(service.createUser(
       {
         full_name: 'Route Driver',
         email: 'driver@example.com',
@@ -123,21 +107,11 @@ describe('users service role assignability', () => {
         create_real_salesman: true
       },
       { id: 9, store_id: 1, is_superadmin: false }
-    );
-
-    expect(userModel.createUser).toHaveBeenCalledWith(expect.objectContaining({
-      role_id: 5,
-      store_id: 1,
-      password_hash: expect.any(String)
-    }), mockTransactionConnection);
-    expect(locationModel.createSalesman).toHaveBeenCalledWith({
-      store_id: 1,
-      user_id: 42,
-      full_name: 'Route Driver',
-      phone: '+96170000000',
-      email: 'driver@example.com',
-      status: 'active'
-    }, mockTransactionConnection);
+    )).rejects.toMatchObject({
+      statusCode: 400,
+      errors: [expect.objectContaining({ field: 'create_real_salesman' })]
+    });
+    expect(userModel.createUser).not.toHaveBeenCalled();
   });
 
   test('rejects creating a real salesman for non-salesman roles', async () => {
@@ -160,10 +134,9 @@ describe('users service role assignability', () => {
     )).rejects.toMatchObject({
       statusCode: 400,
       errors: [
-        { field: 'create_real_salesman', message: 'Only users with the salesman role can be added as salesmen' }
+        { field: 'create_real_salesman', message: 'Create salesmen from the Salesmen workflow so salary, commission, territory, and lifecycle data are complete' }
       ]
     });
     expect(userModel.createUser).not.toHaveBeenCalled();
-    expect(locationModel.createSalesman).not.toHaveBeenCalled();
   });
 });

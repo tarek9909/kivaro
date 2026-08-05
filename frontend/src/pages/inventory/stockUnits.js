@@ -14,9 +14,10 @@ export function isPieceStock(row = {}) {
 
 export function getStockUnitLabel(row = {}) {
   const stockMode = getStockMode(row);
-  if (stockMode === 'carton_weight' || stockMode === 'weight') {
+  if (stockMode === 'weight') {
     return 'kg';
   }
+  if (stockMode === 'carton') return 'cartons';
   if (stockMode === 'piece') {
     return row.stock_unit_symbol || row.base_unit_symbol || row.unit_symbol || 'pc';
   }
@@ -42,4 +43,10 @@ export function formatStockQuantity(value, row = {}) {
   const unit = getStockUnitLabel(row);
   const formatted = formatNumber(value, getStockQuantityFormat(row));
   return unit ? `${formatted} ${unit}` : formatted;
+}
+
+export function formatCartonStockSummary(value, row = {}) {
+  const cartons = Number(value || 0);
+  const kilograms = cartons * Number(row.kg_per_carton || 0);
+  return `${formatNumber(cartons, { maximumFractionDigits: 0 })} cartons · ${formatNumber(kilograms, { maximumFractionDigits: 4 })} kg total`;
 }

@@ -28,7 +28,9 @@ function formatCartonChange(row) {
 export default function StockMovementsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(INVENTORY_PERMISSIONS.movements);
-  const canLoadInventoryOptions = hasPermission(INVENTORY_PERMISSIONS.view);
+  const canLoadInventoryOptions = hasPermission(INVENTORY_PERMISSIONS.view)
+    || hasPermission(INVENTORY_PERMISSIONS.movements)
+    || hasPermission(INVENTORY_PERMISSIONS.adjust);
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [warehouseId, setWarehouseId] = useState('');
@@ -108,9 +110,9 @@ export default function StockMovementsTab() {
       },
       {
         id: 'carton_change',
-        header: 'Carton / loose',
+        header: 'Cartons',
         align: 'right',
-        cell: (row) => getStockMode(row) === 'carton_weight'
+        cell: (row) => getStockMode(row) === 'carton'
           ? <span className="font-mono text-xs text-ink-200">{formatCartonChange(row)}</span>
           : <span className="text-xs text-ink-400">-</span>
       },

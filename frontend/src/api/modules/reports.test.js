@@ -20,25 +20,34 @@ function buildClientStub() {
 }
 
 const EXPECTED_PATHS = {
+  cashReconciliation: '/reports/cash-reconciliation',
   commissions: '/reports/commissions',
   currentStock: '/reports/current-stock',
   customerBalances: '/reports/customer-balances',
+  customerProfitability: '/reports/customer-profitability',
   debts: '/reports/debts',
+  deliveryCloseouts: '/reports/delivery-closeouts',
+  discounts: '/reports/discounts',
   dispatchSummary: '/reports/dispatch-summary',
   gifts: '/reports/gifts',
+  inventoryAging: '/reports/inventory-aging',
   invoices: '/reports/invoices',
   normalStock: '/reports/normal-stock',
+  orderPipeline: '/reports/order-pipeline',
   packagingOperations: '/reports/packaging-operations',
   packagingShortages: '/reports/packaging-shortages',
   packagingStock: '/reports/packaging-stock',
-  posOrders: '/reports/pos-orders',
+  productProfitability: '/reports/product-profitability',
   profitLoss: '/reports/profit-loss',
   purchases: '/reports/purchases',
   readyStock: '/reports/ready-stock',
+  returns: '/reports/returns',
   salesmanPerformance: '/reports/salesman-performance',
   salesmanTargetProgress: '/reports/salesman-target-progress',
   sales: '/reports/sales',
-  stockMovements: '/reports/stock-movements'
+  stockMovements: '/reports/stock-movements',
+  territoryProfitability: '/reports/territory-profitability',
+  vatSummary: '/reports/vat-summary'
 };
 
 describe('reports API module', () => {

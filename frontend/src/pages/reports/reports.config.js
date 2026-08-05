@@ -22,14 +22,23 @@ export const REPORT_KEYS = [
   'sales',
   'invoices',
   'gifts',
-  'posOrders',
   'customerBalances',
+  'customerProfitability',
   'salesmanPerformance',
   'salesmanTargetProgress',
   'debts',
   'purchases',
   'commissions',
-  'profitLoss'
+  'profitLoss',
+  'cashReconciliation',
+  'deliveryCloseouts',
+  'discounts',
+  'returns',
+  'vatSummary',
+  'productProfitability',
+  'orderPipeline',
+  'inventoryAging',
+  'territoryProfitability'
 ];
 
 export const REPORTS_REGISTRY = {
@@ -132,15 +141,6 @@ export const REPORTS_REGISTRY = {
     csvFilename: 'gift-cogs.csv',
     filters: ['search', 'salesman', 'customer', 'item', 'packaging_group', 'fulfillment_type', 'date_from', 'date_to']
   },
-  posOrders: {
-    id: 'pos-orders',
-    label: 'Mini POS orders',
-    eyebrow: 'Mini POS',
-    description: 'Pending, converted, and cancelled salesman orders without stock reservation.',
-    rowsKey: 'pos_orders',
-    csvFilename: 'mini-pos-orders.csv',
-    filters: ['search', 'pos_status', 'salesman', 'customer', 'warehouse', 'location', 'sublocation', 'date_from', 'date_to']
-  },
   customerBalances: {
     id: 'customer-balances',
     label: 'Customer balances',
@@ -150,11 +150,16 @@ export const REPORTS_REGISTRY = {
     csvFilename: 'customer-balances.csv',
     filters: ['search', 'customer', 'salesman', 'location', 'sublocation']
   },
+  customerProfitability: {
+    id: 'customer-profitability', label: 'Customer profitability', eyebrow: 'Profitability',
+    description: 'Delivered revenue, COGS, gift cost, and gross profit by customer.',
+    rowsKey: 'customer_profitability', csvFilename: 'customer-profitability.csv', filters: ['search', 'salesman', 'customer', 'location', 'sublocation', 'date_from', 'date_to']
+  },
   salesmanPerformance: {
     id: 'salesman-performance',
     label: 'Salesman performance',
     eyebrow: 'Sales',
-    description: 'Delivered customers, revenue, COGS, gifts, collections, and Mini POS work.',
+    description: 'Delivered customers, revenue, COGS, gifts, and collections.',
     rowsKey: 'salesman_performance',
     csvFilename: 'salesman-performance.csv',
     filters: ['search', 'salesman', 'date_from', 'date_to']
@@ -163,7 +168,7 @@ export const REPORTS_REGISTRY = {
     id: 'salesman-target-progress',
     label: 'Salesman target progress',
     eyebrow: 'Sales',
-    description: 'Target versus achieved sales by territory and period.',
+    description: 'Target versus collected cash by territory and period.',
     rowsKey: 'salesman_target_progress',
     csvFilename: 'salesman-target-progress.csv',
     filters: ['search', 'salesman', 'location', 'sublocation', 'date_from', 'date_to']
@@ -190,7 +195,7 @@ export const REPORTS_REGISTRY = {
     id: 'commissions',
     label: 'Commissions',
     eyebrow: 'Sales',
-    description: 'Commission calculations, salary context, and payment progress.',
+    description: 'Commission calculations and payment progress. Monthly salaries are shown in Monthly payroll.',
     rowsKey: 'commissions',
     csvFilename: 'commissions.csv',
     filters: ['search', 'commission_status', 'salesman', 'sublocation', 'date_from', 'date_to']
@@ -203,6 +208,51 @@ export const REPORTS_REGISTRY = {
     rowsKey: 'profit_loss',
     csvFilename: 'profit-and-loss.csv',
     filters: ['date_from', 'date_to']
+  },
+  cashReconciliation: {
+    id: 'cash-reconciliation', label: 'Cash reconciliation', eyebrow: 'Finance',
+    description: 'Cash movements by account and day, including inflows, outflows, and net movement.',
+    rowsKey: 'cash_reconciliation', csvFilename: 'cash-reconciliation.csv', filters: ['search', 'cash_account', 'date_from', 'date_to']
+  },
+  deliveryCloseouts: {
+    id: 'delivery-closeouts', label: 'Delivery closeouts', eyebrow: 'Delivery',
+    description: 'Closeout collections, debt, returns, cash account, and customer reconciliation.',
+    rowsKey: 'delivery_closeouts', csvFilename: 'delivery-closeouts.csv', filters: ['search', 'salesman', 'warehouse', 'date_from', 'date_to']
+  },
+  discounts: {
+    id: 'discounts', label: 'Discounts', eyebrow: 'Revenue',
+    description: 'Customer discounts applied to orders, with their financial impact.',
+    rowsKey: 'discounts', csvFilename: 'discounts.csv', filters: ['search', 'salesman', 'customer', 'warehouse', 'date_from', 'date_to']
+  },
+  returns: {
+    id: 'returns', label: 'Returns', eyebrow: 'Delivery',
+    description: 'Returned delivery lines, reasons, restored sales value, cost, and post-settlement exceptions for reviewed adjustments.',
+    rowsKey: 'returns', csvFilename: 'returns.csv', filters: ['search', 'salesman', 'customer', 'warehouse', 'item', 'post_settlement_exception', 'date_from', 'date_to']
+  },
+  vatSummary: {
+    id: 'vat-summary', label: 'VAT summary', eyebrow: 'Tax',
+    description: 'Issued invoices and return credit notes, netted by day for taxable sales, output VAT, and gross sales.',
+    rowsKey: 'vat_summary', csvFilename: 'vat-summary.csv', filters: ['invoice_status', 'salesman', 'customer', 'warehouse', 'date_from', 'date_to']
+  },
+  productProfitability: {
+    id: 'product-profitability', label: 'Product profitability', eyebrow: 'Profitability',
+    description: 'Delivered product revenue, COGS, gifts, and gross profit.',
+    rowsKey: 'product_profitability', csvFilename: 'product-profitability.csv', filters: ['search', 'salesman', 'customer', 'item', 'packaging_group', 'date_from', 'date_to']
+  },
+  orderPipeline: {
+    id: 'order-pipeline', label: 'Order pipeline', eyebrow: 'Delivery',
+    description: 'Order value and aging across draft, approval, delivery, and closeout states.',
+    rowsKey: 'order_pipeline', csvFilename: 'order-pipeline.csv', filters: ['dispatch_status', 'salesman', 'warehouse', 'date_from', 'date_to']
+  },
+  inventoryAging: {
+    id: 'inventory-aging', label: 'Inventory aging', eyebrow: 'Inventory',
+    description: 'Remaining carton lots by age, warehouse, and inventory value.',
+    rowsKey: 'inventory_aging', csvFilename: 'inventory-aging.csv', filters: ['search', 'warehouse', 'item', 'date_from', 'date_to']
+  },
+  territoryProfitability: {
+    id: 'territory-profitability', label: 'Territory profitability', eyebrow: 'Profitability',
+    description: 'Delivered revenue, COGS, gift cost, and gross profit by territory.',
+    rowsKey: 'territory_profitability', csvFilename: 'territory-profitability.csv', filters: ['search', 'salesman', 'location', 'sublocation', 'date_from', 'date_to']
   }
 };
 
@@ -237,8 +287,7 @@ export const DISPATCH_STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft' },
   { value: 'pending_approval', label: 'Pending approval' },
   { value: 'approved', label: 'Approved' },
-  { value: 'dispatched', label: 'Dispatched' },
-  { value: 'partially_settled', label: 'Partially settled' },
+  { value: 'delivery', label: 'Delivery' },
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' }
 ];
@@ -285,7 +334,7 @@ export const STOCK_HEALTH_OPTIONS = [
 
 export const STOCK_MODE_OPTIONS = [
   { value: '', label: 'All stock modes' },
-  { value: 'carton_weight', label: 'Carton weight' },
+  { value: 'carton', label: 'Carton stock' },
   { value: 'weight', label: 'Weight' },
   { value: 'piece', label: 'Piece' }
 ];
@@ -351,14 +400,6 @@ export const INVOICE_STATUS_OPTIONS = [
   { value: '', label: 'All invoice statuses' },
   { value: 'issued', label: 'Issued' },
   { value: 'voided', label: 'Voided' },
-  { value: 'cancelled', label: 'Cancelled' }
-];
-
-export const POS_STATUS_OPTIONS = [
-  { value: '', label: 'All Mini POS statuses' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'converted', label: 'Converted' },
   { value: 'cancelled', label: 'Cancelled' },
-  { value: 'rejected', label: 'Rejected' }
+  { value: 'return_credit', label: 'Return credit notes' }
 ];

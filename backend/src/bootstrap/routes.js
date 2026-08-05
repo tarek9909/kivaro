@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const config = require('./env');
 const { authenticate } = require('../middleware/auth.middleware');
 const { requireAnyPermission } = require('../middleware/permission.middleware');
 const docsRoutes = require('../docs/docs.routes');
@@ -111,8 +112,10 @@ router.post(
 
     fs.writeFileSync(filePath, fileBuffer);
 
-    // Build fully qualified URL
-    const publicBaseUrl = 'https://api.kivaro.vip';
+    // The public API origin is deployment-specific.  Falling back to the
+    // request origin keeps local and proxied deployments usable without a
+    // hard-coded production hostname.
+    const publicBaseUrl = (config.publicBaseUrl || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
     const url = `${publicBaseUrl}/uploads/${uniqueFilename}`;
 
     res.json({

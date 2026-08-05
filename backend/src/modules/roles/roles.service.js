@@ -3,6 +3,31 @@ const { getPagination, getPaginationMeta } = require('../../utils/pagination');
 const { withTransaction } = require('../../utils/transaction');
 const roleModel = require('./roles.model');
 
+const DELIVERY_WORKFLOW_PERMISSION_KEYS = new Set([
+  'delivery.release',
+  'delivery.dispatch',
+  'delivery.record_returns',
+  'delivery.closeout',
+  'dispatch.settle',
+  'finance.settle_deliveries'
+]);
+const DELIVERY_DOCUMENT_PERMISSION_KEYS = new Set(['dispatch.print', 'invoices.print']);
+
+function assertDeliveryWorkflowCanPrint(permissions) {
+  const permissionKeys = new Set(permissions.map((permission) => permission.permission_key));
+  const hasDeliveryWorkflowPermission = [...DELIVERY_WORKFLOW_PERMISSION_KEYS]
+    .some((key) => permissionKeys.has(key));
+  const canPrintRequiredDocuments = [...DELIVERY_DOCUMENT_PERMISSION_KEYS]
+    .some((key) => permissionKeys.has(key));
+
+  if (hasDeliveryWorkflowPermission && !canPrintRequiredDocuments) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'permission_ids',
+      message: 'Delivery workflow permissions require dispatch.print or invoices.print so required documents can be downloaded.'
+    }]);
+  }
+}
+
 async function getRole(id, actor = {}) {
   const role = await roleModel.findRoleById(id);
 
@@ -117,6 +142,8 @@ async function replaceRolePermissions(roleId, permissionIds, actor = {}) {
   if (!actor.is_superadmin && permissions.some((permission) => permission.permission_key === 'superadmin.manage')) {
     throw ApiError.forbidden('You do not have permission to assign platform access');
   }
+
+  assertDeliveryWorkflowCanPrint(permissions);
 
   await withTransaction(async (connection) => {
     await roleModel.replaceRolePermissions(connection, roleId, uniquePermissionIds);

@@ -5,7 +5,7 @@ import { api } from '@/api/index.js';
 import { useDebouncedValue } from '@/lib/useDebouncedValue.js';
 import { Badge, Button, DataTable, Input, Pagination, Select } from '@/components/ui/index.js';
 import { formatNumber } from '@/lib/formatters.js';
-import { ITEM_KINDS, STOCK_MODE_LABELS, STOCK_MODES } from './inventory.config.js';
+import { ITEM_KINDS, ITEM_KIND_TABS, STOCK_MODE_LABELS, STOCK_MODES } from './inventory.config.js';
 import { formatStockQuantity, getStockMode } from './stockUnits.js';
 import { useItemsOptions, useWarehousesOptions } from './useInventoryOptions.js';
 
@@ -105,10 +105,10 @@ export default function StockBalancesTab() {
         id: 'carton_state',
         header: 'Carton state',
         cell: (row) => {
-          if (getStockMode(row) !== 'carton_weight') return <span className="text-xs text-ink-400">-</span>;
-          const openUnits = numericValue(row.open_loose_units);
+          if (getStockMode(row) !== 'carton') return <span className="text-xs text-ink-400">-</span>;
           const sealedCartons = numericValue(row.sealed_cartons);
-          return <span className="text-xs text-ink-200">{formatNumber(sealedCartons, { maximumFractionDigits: 0 })} sealed · {formatNumber(openUnits, { maximumFractionDigits: 0 })} loose</span>;
+          const kg = numericValue(row.carton_weight_equivalent_kg);
+          return <span className="text-xs text-ink-200">{formatNumber(sealedCartons, { maximumFractionDigits: 0 })} cartons · {formatNumber(kg, { maximumFractionDigits: 4 })} kg equivalent</span>;
         }
       },
       {
@@ -137,6 +137,22 @@ export default function StockBalancesTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex w-full gap-1 rounded-xl border border-white/10 bg-ink-950/40 p-1 sm:w-fit">
+        {ITEM_KIND_TABS.map((tab) => (
+          <Button
+            key={tab.id}
+            size="sm"
+            variant={itemKind === tab.value ? 'primary' : 'ghost'}
+            onClick={() => {
+              setItemKind(tab.value);
+              setPage(1);
+            }}
+          >
+            {tab.label}
+          </Button>
+        ))}
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
           <p className="text-xs uppercase text-ink-400">Balance rows</p>

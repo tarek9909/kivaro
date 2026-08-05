@@ -56,6 +56,12 @@ module.exports = {
     })
   }),
   idSchema: z.object({ params: idParam }),
+  paymentOptionsSchema: z.object({
+    query: z.object({
+      direction: z.enum(['incoming', 'outgoing']).default('incoming'),
+      store_id: z.coerce.number().int().positive().optional()
+    })
+  }),
   cashAccountUpdateSchema: z.object({
     params: idParam,
     body: z.object({

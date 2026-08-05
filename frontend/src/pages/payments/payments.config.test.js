@@ -73,56 +73,34 @@ describe('payments config', () => {
     ).toEqual(['accounting.view', 'accounting.manage']);
     expect(
       PAYMENTS_TABS.find((tab) => tab.id === 'customer-credits').anyOfPermissions
-    ).toEqual(['accounting.view']);
+    ).toEqual(['debts.manage', 'accounting.view', 'accounting.manage']);
     expect(
       PAYMENTS_TABS.find((tab) => tab.id === 'receipts').anyOfPermissions
-    ).toEqual(['dispatch.print']);
-  });
-});
-
-describe('getDebtStatusTone', () => {
-  it('maps each status to a glassmorphism tone', () => {
-    expect(getDebtStatusTone('pending')).toBe('info');
-    expect(getDebtStatusTone('partially_paid')).toBe('warn');
-    expect(getDebtStatusTone('paid')).toBe('success');
-    expect(getDebtStatusTone('written_off')).toBe('neutral');
-    expect(getDebtStatusTone('cancelled')).toBe('danger');
-    expect(getDebtStatusTone('mystery')).toBe('neutral');
-  });
-});
-
-describe('getAvailableDebtActions', () => {
-  it('returns an empty set for missing input', () => {
-    expect(getAvailableDebtActions(undefined)).toEqual(new Set());
-    expect(getAvailableDebtActions(null)).toEqual(new Set());
+    ).toEqual(['dispatch.print', 'debts.manage', 'accounting.view', 'accounting.manage']);
   });
 
-  it('offers pay/updateStatus for a pending debt', () => {
+  it('offers payment only for a pending debt', () => {
     expect(getAvailableDebtActions({ status: 'pending' })).toEqual(
-      new Set(['pay', 'updateStatus'])
+      new Set(['pay'])
     );
   });
 
-  it('offers pay/updateStatus for a partially paid debt', () => {
+  it('offers payment only for a partially paid debt', () => {
     expect(getAvailableDebtActions({ status: 'partially_paid' })).toEqual(
-      new Set(['pay', 'updateStatus'])
+      new Set(['pay'])
     );
   });
 
-  it('offers updateStatus only on a paid debt (no further payments)', () => {
-    expect(getAvailableDebtActions({ status: 'paid' })).toEqual(new Set(['updateStatus']));
+  it('offers no unsupported status action on a paid debt', () => {
+    expect(getAvailableDebtActions({ status: 'paid' })).toEqual(new Set());
   });
 
-  it('offers updateStatus only on a written off debt', () => {
-    expect(getAvailableDebtActions({ status: 'written_off' })).toEqual(
-      new Set(['updateStatus'])
-    );
+  it('offers no unsupported status action on a written off debt', () => {
+    expect(getAvailableDebtActions({ status: 'written_off' })).toEqual(new Set());
   });
 
-  it('offers updateStatus only on a cancelled debt', () => {
-    expect(getAvailableDebtActions({ status: 'cancelled' })).toEqual(
-      new Set(['updateStatus'])
-    );
+  it('offers no unsupported status action on a cancelled debt', () => {
+    expect(getAvailableDebtActions({ status: 'cancelled' })).toEqual(new Set());
   });
 });
 

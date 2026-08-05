@@ -15,6 +15,7 @@ export function createPackagingApi(client) {
   const readyStock = createReadOnlyResourceApi(client, '/ready-stock', {
     only: ['list']
   });
+  const readyShelfStock = createReadOnlyResourceApi(client, '/ready-shelf-stock', { only: ['list'] });
   const saleCatalog = createResourceApi(client, '/sale-catalog', {
     only: ['list', 'create', 'get', 'update']
   });
@@ -31,6 +32,10 @@ export function createPackagingApi(client) {
     },
     operations,
     readyStock,
+    readyShelfStock: {
+      ...readyShelfStock,
+      transferToGift: (id, quantity, options) => client.post(`/ready-shelf-stock/${id}/transfer-to-gift`, { quantity }, options)
+    },
     saleCatalog: {
       ...saleCatalog,
       listPos: (params, options) => client.get('/sale-catalog/pos', { ...options, params })

@@ -140,9 +140,9 @@ export const Select = forwardRef(function Select(
           aria-haspopup="listbox"
           aria-expanded={isOpen}
           className={cn(
-            'group flex h-10 w-full min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-ink-50 transition text-left focus:outline-none focus:border-brand-400/70 focus:bg-white/[0.07]',
+            'premium-input-container group flex h-10 w-full min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-ink-50 text-left focus:outline-none focus:border-brand-400/70 focus:bg-white/[0.07]',
             isOpen && 'border-brand-400/70 bg-white/[0.07]',
-            isDisabled && 'cursor-not-allowed opacity-60',
+            isDisabled && 'is-disabled cursor-not-allowed',
             error && 'border-rose-400/60 focus:border-rose-400/80',
             className
           )}

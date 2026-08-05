@@ -66,13 +66,13 @@ function assertUnitCompatible(baseUnit, storeId, unitType) {
 }
 
 function assertUnitMatchesStockMode(unit, configuration) {
-  const expectedUnitType = configuration.stock_mode === 'piece' ? 'quantity' : 'weight';
+  const expectedUnitType = ['piece', 'carton'].includes(configuration.stock_mode) ? 'quantity' : 'weight';
   if (unit.unit_type !== expectedUnitType) {
     throw validationError(
       'base_unit_id',
-      configuration.stock_mode === 'piece'
-        ? 'Piece stock mode requires a quantity unit'
-        : 'Weight and carton-weight stock modes require a weight unit'
+      ['piece', 'carton'].includes(configuration.stock_mode)
+        ? 'Piece and carton stock modes require a quantity unit'
+        : 'Weight stock mode requires a weight unit'
     );
   }
   if (configuration.item_kind === 'packaging' && unit.symbol !== 'pc') {
@@ -85,57 +85,39 @@ function itemConfiguration(current, updates = {}) {
     item_kind: updates.item_kind === undefined ? current?.item_kind : updates.item_kind,
     stock_mode: updates.stock_mode === undefined ? current?.stock_mode : updates.stock_mode,
     kg_per_carton: updates.kg_per_carton === undefined ? current?.kg_per_carton : updates.kg_per_carton,
-    loose_units_per_carton: updates.loose_units_per_carton === undefined
-      ? current?.loose_units_per_carton
-      : updates.loose_units_per_carton,
     max_content_weight_kg: updates.max_content_weight_kg === undefined
       ? current?.max_content_weight_kg
       : updates.max_content_weight_kg,
-    carton_selling_price: updates.carton_selling_price === undefined
-      ? current?.carton_selling_price
-      : updates.carton_selling_price,
-    loose_unit_selling_price: updates.loose_unit_selling_price === undefined
-      ? current?.loose_unit_selling_price
-      : updates.loose_unit_selling_price
   };
 
   if (!['normal', 'packaging'].includes(next.item_kind)) {
     throw validationError('item_kind', 'Item kind must be normal or packaging');
   }
-  if (!['carton_weight', 'weight', 'piece'].includes(next.stock_mode)) {
-    throw validationError('stock_mode', 'Stock mode must be carton_weight, weight, or piece');
+  if (!['carton', 'weight', 'piece'].includes(next.stock_mode)) {
+    throw validationError('stock_mode', 'Stock mode must be carton, weight, or piece');
   }
   if (next.item_kind === 'packaging' && next.stock_mode !== 'piece') {
     throw validationError('stock_mode', 'Packaging items must use piece stock mode');
   }
-  if (next.item_kind === 'normal' && next.stock_mode === 'carton_weight') {
+  if (next.item_kind === 'normal' && next.stock_mode === 'carton') {
     if (decimal(next.kg_per_carton).lte(0)) {
-      throw validationError('kg_per_carton', 'Carton-weight items require kg per carton');
-    }
-    if (decimal(next.loose_units_per_carton).lte(0) || !decimal(next.loose_units_per_carton).isInteger()) {
-      throw validationError('loose_units_per_carton', 'Carton-weight items require a whole-number loose unit count per carton');
+      throw validationError('kg_per_carton', 'Carton items require kg per carton');
     }
   }
   if (next.item_kind === 'packaging' && decimal(next.max_content_weight_kg).lt(0)) {
     throw validationError('max_content_weight_kg', 'Packaging capacity cannot be negative');
   }
 
-  // Capacity belongs to packaging; carton configuration belongs only to normal carton-weight items.
+  // Capacity belongs to packaging; carton configuration belongs only to normal carton items.
   if (next.item_kind !== 'packaging') next.max_content_weight_kg = null;
-  if (next.stock_mode !== 'carton_weight') {
+  if (next.stock_mode !== 'carton') {
     next.kg_per_carton = null;
-    next.loose_units_per_carton = null;
-    next.carton_selling_price = null;
-    next.loose_unit_selling_price = null;
   }
   if (next.item_kind === 'packaging') {
     next.kg_per_carton = null;
-    next.loose_units_per_carton = null;
     if (next.max_content_weight_kg === undefined || next.max_content_weight_kg === null) {
       next.max_content_weight_kg = 0;
     }
-    next.carton_selling_price = null;
-    next.loose_unit_selling_price = null;
   }
   return next;
 }
@@ -145,7 +127,6 @@ function hasStockConfigurationChange(current, next, updates) {
     'item_kind',
     'stock_mode',
     'kg_per_carton',
-    'loose_units_per_carton',
     'max_content_weight_kg',
     'base_unit_id'
   ];
@@ -164,9 +145,9 @@ function initialStockInput(data, configuration) {
   if (quantity.gt(0) && cartons.gt(0)) {
     throw validationError('initial_quantity', 'Send initial quantity or initial cartons, not both');
   }
-  if (configuration.stock_mode === 'carton_weight') {
+  if (configuration.stock_mode === 'carton') {
     if (quantity.gt(0)) {
-      throw validationError('initial_quantity', 'Carton-weight items must receive initial stock by carton count');
+      throw validationError('initial_quantity', 'Carton items must receive initial stock by carton count');
     }
     if (!cartons.isInteger()) {
       throw validationError('initial_cartons', 'Initial carton count must be a whole number');
@@ -476,9 +457,9 @@ async function receiveStock(data, userId, audit, actor = {}) {
   if (warehouse.status !== 'active') throw validationError('warehouse_id', 'Warehouse must be active');
 
   const result = await withTransaction(async (connection) => {
-    if (item.stock_mode === 'carton_weight') {
+    if (item.stock_mode === 'carton') {
       if (!scoped.carton_count || scoped.quantity) {
-        throw validationError('carton_count', 'Carton-weight receipts require carton count only');
+        throw validationError('carton_count', 'Carton receipts require carton count only');
       }
       return stockService.receiveCartonStock(connection, {
         storeId: warehouse.store_id,
@@ -529,7 +510,6 @@ async function adjustStock(data, userId, audit, actor = {}) {
         ? undefined
         : toCanonicalQuantity(item, scoped.quantity_change, 'quantity_change'),
       cartonCountChange: scoped.carton_count_change,
-      looseUnitsChange: scoped.loose_units_change,
       unitCost: scoped.unit_cost,
       costPerCarton: scoped.cost_per_carton,
       movementType: 'stock_adjustment',

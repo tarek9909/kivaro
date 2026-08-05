@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/index.js';
-import { useAuthStore } from '@/app/stores/authStore.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import {
   Button,
@@ -11,8 +10,7 @@ import {
   Select,
   Textarea
 } from '@/components/ui/index.js';
-import { useCashAccountsList } from '@/pages/accounting/useAccountingOptions.js';
-import { ACCOUNTING_PERMISSIONS } from '@/pages/accounting/accounting.config.js';
+import { useCashAccountPaymentOptions } from '@/pages/accounting/useAccountingOptions.js';
 import { formatNumber } from '@/lib/formatters.js';
 import { PAYMENT_METHODS } from './commissions.config.js';
 
@@ -35,8 +33,6 @@ function emptyForm() {
 }
 
 export function CommissionPayModal({ open, onClose, commission }) {
-  const hasPermission = useAuthStore((state) => state.hasPermission);
-  const canPickCashAccounts = hasPermission(ACCOUNTING_PERMISSIONS.view);
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState(emptyForm);
@@ -48,7 +44,7 @@ export function CommissionPayModal({ open, onClose, commission }) {
     setErrors({});
   }, [open, commission?.id]);
 
-  const cashAccountsQuery = useCashAccountsList(open && canPickCashAccounts, { cash_flow_direction: 'outgoing' });
+  const cashAccountsQuery = useCashAccountPaymentOptions('outgoing', open);
   const cashAccounts = cashAccountsQuery.data?.data?.cash_accounts || [];
 
   const mutation = useMutation({
@@ -176,33 +172,20 @@ export function CommissionPayModal({ open, onClose, commission }) {
             onChange={(event) => handleChange('reference_number', event.target.value)}
             error={errors.reference_number}
           />
-          {canPickCashAccounts ? (
-            <Select
-              label="Cash account"
-              value={form.cash_account_id}
-              onChange={(event) => handleChange('cash_account_id', event.target.value)}
-              error={errors.cash_account_id}
-              required
-            >
-              <option value="">Select cash account</option>
-              {cashAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.account_name || `Account #${account.id}`}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <Input
-              label="Cash account ID"
-              type="number"
-              min="1"
-              value={form.cash_account_id}
-              onChange={(event) => handleChange('cash_account_id', event.target.value)}
-              error={errors.cash_account_id}
-              required
-              description="Numeric only."
-            />
-          )}
+          <Select
+            label="Cash account"
+            value={form.cash_account_id}
+            onChange={(event) => handleChange('cash_account_id', event.target.value)}
+            error={errors.cash_account_id}
+            required
+          >
+            <option value="">Select cash account</option>
+            {cashAccounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.display_name || `Account #${account.id}`}
+              </option>
+            ))}
+          </Select>
         </div>
         <Textarea
           label="Notes"

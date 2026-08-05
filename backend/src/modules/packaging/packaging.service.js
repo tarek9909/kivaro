@@ -10,7 +10,7 @@ const storeConfigService = require('../../services/storeConfig.service');
 const model = require('./packaging.model');
 
 const COMPONENT_ROLES = ['outer_sellable', 'inner_sellable', 'consumable'];
-const NORMAL_ENTRY_TYPES = ['normal_carton', 'normal_loose_unit', 'normal_weight', 'normal_piece'];
+const NORMAL_ENTRY_TYPES = ['normal_carton', 'normal_weight', 'normal_piece'];
 const READY_ENTRY_TYPES = ['ready_outer_carton', 'ready_inner_unit'];
 
 function positive(value, field) {
@@ -63,10 +63,10 @@ async function assertNormalInputItem(itemId, storeId, connection = null) {
       message: 'A packaging group input must be a normal item'
     }]);
   }
-  if (!['carton_weight', 'weight'].includes(item.stock_mode)) {
+  if (!['carton', 'weight'].includes(item.stock_mode)) {
     throw ApiError.badRequest('Validation failed', [{
       field: 'input_item_id',
-      message: 'Packaging input must use carton-weight or weight stock mode'
+      message: 'Packaging input must use carton or weight stock mode'
     }]);
   }
   return item;
@@ -149,10 +149,10 @@ async function validateFlatComponents(components, storeId, connection = null) {
 
   const groupCapacity = decimal(inner[0].quantity_per_outer).mul(inner[0].item.max_content_weight_kg || 0);
   const outerCapacity = decimal(outer[0].item.max_content_weight_kg || 0);
-  if (outerCapacity.gt(0) && outerCapacity.lt(groupCapacity)) {
+  if (outerCapacity.lte(0) || !outerCapacity.eq(groupCapacity)) {
     throw ApiError.badRequest('Validation failed', [{
       field: 'components',
-      message: 'Outer package capacity is lower than the derived inner capacity'
+      message: 'Outer package capacity must exactly equal the combined inner package capacity'
     }]);
   }
 
@@ -185,29 +185,13 @@ function calculateInputRequirement(inputItem, innerBagCapacityKg, innerQuantityP
   const bagCapacity = decimal(innerBagCapacityKg);
   const innerQuantity = wholePositive(innerQuantityPerOuter, 'inner_quantity_per_outer');
   const rawQuantityKg = bagCapacity.mul(innerQuantity).mul(outputCount);
-  if (inputItem.stock_mode === 'weight') {
-    return {
-      output_carton_count: outputCount,
-      raw_quantity_kg: rawQuantityKg,
-      loose_units_required: null,
-      loose_unit_weight_kg: null
-    };
+  if (!['carton', 'weight'].includes(inputItem.stock_mode)) {
+    throw ApiError.badRequest('Packaging input must use carton or weight stock mode');
   }
-  if (inputItem.stock_mode !== 'carton_weight') {
-    throw ApiError.badRequest('Packaging input must use carton-weight or weight stock mode');
-  }
-  const cartonKg = positive(inputItem.kg_per_carton, 'input_item_id');
-  const looseUnitsPerCarton = wholePositive(inputItem.loose_units_per_carton, 'input_item_id');
-  const looseUnitWeight = cartonKg.div(looseUnitsPerCarton);
-  if (!looseUnitWeight.eq(bagCapacity)) {
-    throw ApiError.badRequest('Carton input loose-unit weight must exactly match the group inner-bag capacity');
-  }
-  const looseUnitsRequired = outputCount.mul(innerQuantity);
   return {
     output_carton_count: outputCount,
     raw_quantity_kg: rawQuantityKg,
-    loose_units_required: looseUnitsRequired,
-    loose_unit_weight_kg: looseUnitWeight
+    inner_packages_required: outputCount.mul(innerQuantity)
   };
 }
 
@@ -281,19 +265,50 @@ async function buildPackagingPreview(groupId, data, actor = {}, connection = nul
     inner.quantity_per_outer,
     data.output_carton_count
   );
+  const remainderComponentId = data.remainder_component_item_id || inner.item.id;
+  if (Number(remainderComponentId) !== Number(inner.item.id)) {
+    throw ApiError.badRequest('Validation failed', [{
+      field: 'remainder_component_item_id',
+      message: 'The remainder container must be this group\'s designated inner packaging item'
+    }]);
+  }
   const inputBalance = await getBalanceSnapshot(warehouseId, inputItem.id, connection, lock);
-
-  const rawTotalCost = decimal(inputRequirement.raw_quantity_kg).mul(inputBalance.average_cost || 0);
+  const shelfInput = { warehouse_id: warehouseId, input_item_id: inputItem.id, packaging_group_id: group.id, packaging_item_id: inner.item.id };
+  const shelfRows = connection && lock
+    ? await model.lockReusableShelfStocks(connection, shelfInput)
+    : (await model.listReadyShelfStocks({ ...shelfInput, state: 'reusable', allRows: true })).rows;
+  const remainderRows = connection && lock
+    ? await model.lockReusableShelfRemainders(connection, shelfInput)
+    : await query(`SELECT * FROM packaging_shelf_remainders WHERE warehouse_id = ? AND input_item_id = ? AND packaging_group_id = ? AND remaining_kg > 0 ORDER BY created_at ASC, id ASC`, [warehouseId, inputItem.id, group.id]);
+  const packagesRequired = decimal(inputRequirement.inner_packages_required);
+  const reusableAvailable = shelfRows.reduce((sum, row) => sum.plus(decimal(row.quantity)), decimal(0));
+  const reusablePackagesUsed = reusableAvailable.gte(packagesRequired) ? packagesRequired : reusableAvailable;
+  const kgAfterReusable = packagesRequired.minus(reusablePackagesUsed).mul(inner.item.max_content_weight_kg);
+  const remainderAvailable = remainderRows.reduce((sum, row) => sum.plus(decimal(row.remaining_kg)), decimal(0));
+  const unpackedKgUsed = remainderAvailable.gte(kgAfterReusable) ? kgAfterReusable : remainderAvailable;
+  const newRawKgNeeded = kgAfterReusable.minus(unpackedKgUsed);
+  const cartonsConsumed = inputItem.stock_mode === 'carton'
+    ? (newRawKgNeeded.eq(0) ? decimal(0) : newRawKgNeeded.div(positive(inputItem.kg_per_carton, 'input_item_id')).ceil())
+    : decimal(0);
+  const rawKgConsumed = inputItem.stock_mode === 'carton' ? cartonsConsumed.mul(inputItem.kg_per_carton) : newRawKgNeeded;
+  const cartonSurplusKg = rawKgConsumed.minus(newRawKgNeeded);
+  const newShelfPackages = cartonSurplusKg.div(inner.item.max_content_weight_kg).floor();
+  const newUnpackedRemainderKg = cartonSurplusKg.minus(newShelfPackages.mul(inner.item.max_content_weight_kg));
+  const rawTotalCost = inputItem.stock_mode === 'carton'
+    ? cartonsConsumed.mul(inputBalance.average_cost || 0)
+    : newRawKgNeeded.mul(inputBalance.average_cost || 0);
   const componentPreviews = [];
   const shortages = [shortageFor({
     label: inputItem.name,
-    required: inputRequirement.raw_quantity_kg,
+    required: inputItem.stock_mode === 'carton' ? cartonsConsumed : newRawKgNeeded,
     available: inputBalance.available_quantity,
-    unit: 'kg'
+    unit: inputItem.stock_mode === 'carton' ? 'cartons' : 'kg'
   })];
   let packagingCost = decimal(0);
   for (const component of components) {
-    const required = decimal(component.quantity_per_outer).mul(inputRequirement.output_carton_count);
+    const required = component.component_role === 'inner_sellable'
+      ? packagesRequired.minus(reusablePackagesUsed)
+      : decimal(component.quantity_per_outer).mul(inputRequirement.output_carton_count);
     const balance = await getBalanceSnapshot(warehouseId, component.item.id, connection, lock);
     const totalCost = required.mul(balance.average_cost || 0);
     packagingCost = packagingCost.plus(totalCost);
@@ -318,12 +333,16 @@ async function buildPackagingPreview(groupId, data, actor = {}, connection = nul
       item_id: inputItem.id,
       item_name: inputItem.name,
       stock_mode: inputItem.stock_mode,
-      raw_quantity_kg: toMoney(inputRequirement.raw_quantity_kg),
-      loose_units_required: inputRequirement.loose_units_required === null ? null : toMoney(inputRequirement.loose_units_required),
-      loose_unit_weight_kg: inputRequirement.loose_unit_weight_kg === null ? null : toMoney(inputRequirement.loose_unit_weight_kg),
+      raw_quantity_kg: toMoney(rawKgConsumed),
+      raw_kg_needed_after_reuse: toMoney(newRawKgNeeded),
+      cartons_consumed: toMoney(cartonsConsumed),
       unit_cost: toMoney(inputBalance.average_cost || 0),
       total_cost: toMoney(rawTotalCost),
-      available_quantity_kg: toMoney(inputBalance.available_quantity)
+      available_quantity: toMoney(inputBalance.available_quantity),
+      reusable_shelf_packages_used: toMoney(reusablePackagesUsed),
+      unpacked_shelf_kg_used: toMoney(unpackedKgUsed),
+      new_shelf_packages: toMoney(newShelfPackages),
+      new_unpacked_shelf_kg: toMoney(newUnpackedRemainderKg)
     },
     components: componentPreviews.map(({ component, balance, required, totalCost: componentCost }) =>
       publicComponent(component, balance, required, componentCost)
@@ -348,12 +367,14 @@ async function buildPackagingPreview(groupId, data, actor = {}, connection = nul
     can_complete: shortages.every((entry) => entry.available),
     _configuration: configuration,
     _component_previews: componentPreviews,
-    _input_requirement: inputRequirement
+    _input_requirement: { ...inputRequirement, reusablePackagesUsed, unpackedKgUsed, newRawKgNeeded, cartonsConsumed, rawKgConsumed, newShelfPackages, newUnpackedRemainderKg },
+    _shelf_rows: shelfRows,
+    _remainder_rows: remainderRows
   };
 }
 
 function removePrivatePreviewFields(preview) {
-  const { _configuration, _component_previews, _input_requirement, ...publicPreview } = preview;
+  const { _configuration, _component_previews, _input_requirement, _shelf_rows, _remainder_rows, ...publicPreview } = preview;
   return publicPreview;
 }
 
@@ -392,10 +413,8 @@ function inputSnapshot(preview) {
     item_name: item.name,
     stock_mode: item.stock_mode,
     kg_per_carton: item.kg_per_carton,
-    loose_units_per_carton: item.loose_units_per_carton,
     raw_quantity_kg: input.raw_quantity_kg,
-    loose_units_required: input.loose_units_required,
-    loose_unit_weight_kg: input.loose_unit_weight_kg,
+    cartons_consumed: input.cartons_consumed,
     unit_cost: input.unit_cost
   };
 }
@@ -460,6 +479,27 @@ async function previewGroup(id, data, actor = {}) {
   return removePrivatePreviewFields(await buildPackagingPreview(id, data, actor));
 }
 
+async function listReadyShelfStock(input = {}, actor = {}) {
+  const result = await model.listReadyShelfStocks(scopedQuery(input, actor));
+  return result;
+}
+
+async function transferShelfStockToGift(id, quantityValue, userId, actor = {}) {
+  const amount = wholePositive(quantityValue, 'quantity');
+  return withTransaction(async (connection) => {
+    const [rows] = await connection.execute('SELECT * FROM ready_shelf_stocks WHERE id = ? LIMIT 1 FOR UPDATE', [id]);
+    const source = rows[0];
+    assertRowInScope(source, actor, 'Shelf stock not found');
+    if (source.state !== 'reusable' || decimal(source.quantity).lt(amount)) throw ApiError.conflict('Insufficient reusable shelf stock');
+    const remaining = decimal(source.quantity).minus(amount);
+    await model.updateReadyShelfStock(connection, source.id, { quantity: toMoney(remaining) });
+    await model.createReadyShelfStockMovement(connection, { store_id: source.store_id, warehouse_id: source.warehouse_id, ready_shelf_stock_id: source.id, movement_type: 'state_transfer', quantity_change: toMoney(amount.negated()), quantity_before: source.quantity, quantity_after: toMoney(remaining), state_before: 'reusable', state_after: 'reusable', reference_type: 'shelf_stock_transfer', reference_id: source.id, created_by: userId });
+    const giftId = await model.createReadyShelfStock(connection, { ...source, packaging_operation_id: source.packaging_operation_id, quantity: toMoney(amount), total_cost: 0, remaining_cost: 0, state: 'gift' });
+    await model.createReadyShelfStockMovement(connection, { store_id: source.store_id, warehouse_id: source.warehouse_id, ready_shelf_stock_id: giftId, movement_type: 'state_transfer', quantity_change: toMoney(amount), quantity_before: 0, quantity_after: toMoney(amount), state_before: 'gift', state_after: 'gift', reference_type: 'shelf_stock_transfer', reference_id: source.id, created_by: userId });
+    return { reusable_shelf_stock_id: source.id, gift_shelf_stock_id: giftId, quantity: toMoney(amount) };
+  });
+}
+
 async function completePackaging(id, data, userId, actor = {}) {
   return withTransaction(async (connection) => {
     const preview = await buildPackagingPreview(id, data, actor, connection, true);
@@ -494,18 +534,18 @@ async function completePackaging(id, data, userId, actor = {}) {
       notes: data.notes || `Packaging operation ${operationId}`,
       createdBy: userId
     };
-    if (preview.input_item.stock_mode === 'carton_weight') {
-      await stockService.consumeCartonLooseUnits(connection, {
+    if (preview.input_item.stock_mode === 'carton' && preview._input_requirement.cartonsConsumed.gt(0)) {
+      await stockService.consumeSealedCartons(connection, {
         ...commonStockInput,
         itemId: preview.input_item.id,
-        looseUnits: preview._input_requirement.loose_units_required,
+        cartonCount: preview._input_requirement.cartonsConsumed,
         item: preview.input_item
       });
-    } else {
+    } else if (preview.input_item.stock_mode === 'weight' && preview._input_requirement.newRawKgNeeded.gt(0)) {
       await stockService.decreaseItemStock(connection, {
         ...commonStockInput,
         itemId: preview.input_item.id,
-        quantity: preview._input_requirement.raw_quantity_kg,
+        quantity: preview._input_requirement.newRawKgNeeded,
         item: preview.input_item
       });
     }
@@ -546,6 +586,54 @@ async function completePackaging(id, data, userId, actor = {}) {
           quantity_per_outer: component.quantity_per_outer,
           unit_cost: toMoney(componentPreview.balance.average_cost || 0)
         }
+      });
+    }
+
+    let remainingReusablePackages = decimal(preview._input_requirement.reusablePackagesUsed);
+    for (const shelf of preview._shelf_rows) {
+      if (remainingReusablePackages.lte(0)) break;
+      const used = decimal(shelf.quantity).gte(remainingReusablePackages)
+        ? remainingReusablePackages : decimal(shelf.quantity);
+      const nextQuantity = decimal(shelf.quantity).minus(used);
+      await model.updateReadyShelfStock(connection, shelf.id, { quantity: toMoney(nextQuantity) });
+      await model.createReadyShelfStockMovement(connection, {
+        store_id: preview.group.store_id, warehouse_id: preview.warehouse_id, ready_shelf_stock_id: shelf.id, movement_type: 'packaging_consume', quantity_change: toMoney(used.negated()),
+        quantity_before: shelf.quantity, quantity_after: toMoney(nextQuantity), state_before: 'reusable', state_after: 'reusable',
+        reference_type: 'packaging_operation', reference_id: operationId, notes: data.notes, created_by: userId
+      });
+      remainingReusablePackages = remainingReusablePackages.minus(used);
+    }
+    let remainingUnpackedKg = decimal(preview._input_requirement.unpackedKgUsed);
+    for (const remainder of preview._remainder_rows) {
+      if (remainingUnpackedKg.lte(0)) break;
+      const used = decimal(remainder.remaining_kg).gte(remainingUnpackedKg)
+        ? remainingUnpackedKg : decimal(remainder.remaining_kg);
+      await model.updatePackagingShelfRemainder(connection, remainder.id, {
+        remaining_kg: toMoney(decimal(remainder.remaining_kg).minus(used))
+      });
+      remainingUnpackedKg = remainingUnpackedKg.minus(used);
+    }
+
+    if (preview._input_requirement.newShelfPackages.gt(0)) {
+      const shelfCost = decimal(preview.costs.total_cost).mul(preview._input_requirement.newShelfPackages)
+        .div(decimal(preview.output.inner_quantity_per_outer).mul(preview.output_carton_count).plus(preview._input_requirement.newShelfPackages));
+      const shelfId = await model.createReadyShelfStock(connection, {
+        store_id: preview.group.store_id, packaging_operation_id: operationId, packaging_group_id: preview.group.id,
+        warehouse_id: preview.warehouse_id, input_item_id: preview.input_item.id, packaging_item_id: preview._configuration.inner.item.id,
+        unit_weight_kg: preview._configuration.inner.item.max_content_weight_kg,
+        quantity: toMoney(preview._input_requirement.newShelfPackages), total_cost: toMoney(shelfCost), remaining_cost: toMoney(shelfCost), state: 'reusable'
+      });
+      await model.createReadyShelfStockMovement(connection, {
+        store_id: preview.group.store_id, warehouse_id: preview.warehouse_id, ready_shelf_stock_id: shelfId, movement_type: 'production', quantity_change: toMoney(preview._input_requirement.newShelfPackages),
+        quantity_before: 0, quantity_after: toMoney(preview._input_requirement.newShelfPackages), state_before: 'reusable', state_after: 'reusable',
+        reference_type: 'packaging_operation', reference_id: operationId, notes: data.notes, created_by: userId
+      });
+    }
+    if (preview._input_requirement.newUnpackedRemainderKg.gt(0)) {
+      await model.createPackagingShelfRemainder(connection, {
+        store_id: preview.group.store_id, source_packaging_operation_id: operationId, packaging_group_id: preview.group.id,
+        warehouse_id: preview.warehouse_id, input_item_id: preview.input_item.id,
+        remaining_kg: toMoney(preview._input_requirement.newUnpackedRemainderKg), remaining_cost: 0
       });
     }
 
@@ -611,8 +699,7 @@ async function validateCatalogTarget(data, storeId, connection = null) {
       throw ApiError.badRequest('Validation failed', [{ field: 'item_id', message: 'Normal sale offers require a normal item' }]);
     }
     const expected = {
-      normal_carton: 'carton_weight',
-      normal_loose_unit: 'carton_weight',
+      normal_carton: 'carton',
       normal_weight: 'weight',
       normal_piece: 'piece'
     }[data.entry_type];
@@ -642,7 +729,6 @@ function defaultCatalogName(entryType, target) {
   if (target.item) {
     const label = {
       normal_carton: 'Carton',
-      normal_loose_unit: 'Loose unit',
       normal_weight: 'Kg',
       normal_piece: 'Piece'
     }[entryType];
@@ -654,7 +740,6 @@ function defaultCatalogName(entryType, target) {
 function defaultCatalogUnit(entryType) {
   return {
     normal_carton: 'carton',
-    normal_loose_unit: 'unit',
     normal_weight: 'kg',
     normal_piece: 'piece',
     ready_outer_carton: 'carton',
@@ -701,7 +786,7 @@ async function saleEntryAvailability(entry, warehouseId) {
     if (entry.entry_type === 'normal_carton') {
       const rows = await query(
         `SELECT COALESCE(SUM(GREATEST(
-           FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0) / l.kg_per_carton),
+           FLOOR(l.remaining_cartons - COALESCE(reserved.reserved_inventory_quantity, 0)),
            0
          )), 0) AS quantity
          FROM carton_stock_lots l
@@ -718,11 +803,6 @@ async function saleEntryAvailability(entry, warehouseId) {
       return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
     }
     const balance = await getBalanceSnapshot(warehouseId, entry.item_id);
-    if (entry.entry_type === 'normal_loose_unit') {
-      const unitWeight = decimal(entry.kg_per_carton).div(entry.loose_units_per_carton);
-      const quantity = unitWeight.eq(0) ? decimal(0) : balance.available_quantity.div(unitWeight).floor();
-      return { available_quantity: toMoney(quantity), available: quantity.gt(0) };
-    }
     return {
       available_quantity: toMoney(balance.available_quantity),
       available: balance.available_quantity.gt(0)
@@ -820,9 +900,11 @@ module.exports = {
   listOperations: async (input, actor = {}) => model.listOperations(scopedQuery(input, actor)),
   listPosCatalog,
   listReadyStock: async (input, actor = {}) => model.listReadyStockContainers(scopedQuery(input, actor)),
+  listReadyShelfStock,
   listSaleCatalogEntries,
   previewGroup,
   replaceComponents,
+  transferShelfStockToGift,
   updateGroup,
   updateSaleCatalogEntry,
   _private: {

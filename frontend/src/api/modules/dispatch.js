@@ -13,7 +13,6 @@ export function createDispatchApi(client) {
   return {
     requests: {
       ...dispatchRequests,
-      createFromPos: (payload, options) => client.post('/dispatch-requests/from-pos', payload, options),
       addCustomer: (id, payload, options) => client.post(`/dispatch-requests/${id}/customers`, payload, options),
       submit: (id, options) => client.post(`/dispatch-requests/${id}/submit`, undefined, options),
       rework: (id, payload, options) => client.post(`/dispatch-requests/${id}/rework`, payload, options),
@@ -36,7 +35,7 @@ export function createDispatchApi(client) {
         ...options,
         responseType: 'blob'
       }),
-      quantityTablePdf: (id, options) => client.get(`/dispatch-requests/${id}/documents/quantity-table`, {
+      deliveryDocumentPdf: (dispatchId, customerId, options) => client.get(`/dispatch-requests/${dispatchId}/customers/${customerId}/delivery-document-pdf`, {
         ...options,
         responseType: 'blob'
       })
@@ -49,8 +48,16 @@ export function createDispatchApi(client) {
         responseType: 'blob'
       })
     },
+    returnCreditNotes: {
+      get: (id, options) => client.get(`/return-credit-notes/${id}`, options),
+      pdf: (id, options) => client.get(`/return-credit-notes/${id}/pdf`, {
+        ...options,
+        responseType: 'blob'
+      })
+    },
     settlements: {
       get: (id, options) => client.get(`/dispatch-settlements/${id}`, options),
+      reopen: (id, options) => client.post(`/dispatch-settlements/${id}/reopen`, undefined, options),
       post: (id, payload, options) => client.post(`/dispatch-settlements/${id}/post`, payload, options)
     }
   };

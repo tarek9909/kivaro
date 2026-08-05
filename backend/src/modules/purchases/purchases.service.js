@@ -35,7 +35,7 @@ function assertCanonicalInventoryItem(item, field = 'items.item_id') {
       { field, message: 'Item is not configured for canonical inventory' }
     ]);
   }
-  if (!['carton_weight', 'weight', 'piece'].includes(item.stock_mode)) {
+  if (!['carton', 'weight', 'piece'].includes(item.stock_mode)) {
     throw validationError(field, 'Item stock mode is invalid');
   }
   if (item.item_kind === 'packaging' && item.stock_mode !== 'piece') {
@@ -76,9 +76,9 @@ function costInput(value, field) {
 }
 
 function normalizeItemQuantity(item, quantity, field) {
-  const value = numericInput(quantity, field, { whole: item?.stock_mode === 'piece' });
-  if (item?.stock_mode === 'carton_weight') {
-    throw validationError(field, 'Carton-weight items use carton count, not loose kg quantity');
+  const value = numericInput(quantity, field, { whole: ['piece', 'carton'].includes(item?.stock_mode) });
+  if (item?.stock_mode === 'carton') {
+    throw validationError(field, 'Carton items use carton count, not kg quantity');
   }
 
   if (item?.stock_mode === 'weight') {
@@ -101,7 +101,7 @@ function normalizeItemUnitCost(item, unitCost) {
 }
 
 function orderLineValues(item, line, index) {
-  if (item.stock_mode === 'carton_weight') {
+  if (item.stock_mode === 'carton') {
     const cartonCount = numericInput(
       valueFromAliases(line, 'carton_count', 'ordered_quantity', `items.${index}.carton_count`),
       `items.${index}.carton_count`,
@@ -142,7 +142,7 @@ function orderLineValues(item, line, index) {
 }
 
 function receiptLineValues(item, poItem, line, index) {
-  if (item.stock_mode === 'carton_weight') {
+  if (item.stock_mode === 'carton') {
     const cartonCount = numericInput(
       valueFromAliases(line, 'carton_count', 'received_quantity', `items.${index}.carton_count`),
       `items.${index}.carton_count`,
@@ -407,19 +407,6 @@ async function approvePurchaseOrder(id, userId, actor = {}) {
   if (purchaseOrder.approved_at) {
     throw ApiError.conflict('Purchase order is already approved');
   }
-  if (!purchaseOrder.supplier_id) {
-    throw ApiError.conflict('Purchase order must have a supplier before automatic payment can be recorded');
-  }
-  if (!purchaseOrder.cash_account_id) {
-    throw ApiError.conflict('Purchase order must have a cash account before automatic payment can be recorded');
-  }
-
-  const cashAccount = await accountingModel.findCashAccountById(purchaseOrder.cash_account_id);
-  if (!cashAccount) {
-    throw ApiError.conflict('Purchase order cash account no longer exists');
-  }
-  assertSameStore(cashAccount, purchaseOrder.store_id, 'cash_account_id', 'Cash account does not belong to this store');
-  assertActive(cashAccount, 'cash_account_id', 'Cash account');
 
   await withTransaction(async (connection) => {
     const lockedPurchaseOrder = await purchaseModel.lockPurchaseOrder(connection, id);
@@ -432,33 +419,6 @@ async function approvePurchaseOrder(id, userId, actor = {}) {
     }
 
     await purchaseModel.approvePurchaseOrder(connection, id, userId);
-    const amount = decimal(lockedPurchaseOrder.total_amount || 0).minus(lockedPurchaseOrder.amount_paid || 0);
-    if (amount.gt(0)) {
-      const paymentId = await purchaseModel.createSupplierPaymentRecord(connection, {
-        store_id: lockedPurchaseOrder.store_id,
-        supplier_id: lockedPurchaseOrder.supplier_id,
-        purchase_order_id: lockedPurchaseOrder.id,
-        payment_date: new Date().toISOString().slice(0, 10),
-        amount: toMoney(amount),
-        payment_method: lockedPurchaseOrder.payment_method || 'cash',
-        reference_number: lockedPurchaseOrder.po_number,
-        cash_account_id: lockedPurchaseOrder.cash_account_id,
-        notes: `Auto payment for approved purchase order ${lockedPurchaseOrder.po_number}`,
-        created_by: userId
-      });
-      await purchaseModel.incrementPurchaseOrderPaid(connection, lockedPurchaseOrder.id, toMoney(amount));
-      await accountingModel.createFinancialTransaction(connection, {
-        store_id: lockedPurchaseOrder.store_id,
-        cash_account_id: lockedPurchaseOrder.cash_account_id,
-        transaction_type: 'supplier_payment',
-        direction: 'out',
-        amount: toMoney(amount),
-        reference_type: 'supplier_payment',
-        reference_id: paymentId,
-        description: `Auto payment for approved purchase order ${lockedPurchaseOrder.po_number}`,
-        created_by: userId
-      });
-    }
   });
   return getPurchaseOrder(id, actor);
 }
@@ -558,7 +518,7 @@ async function receivePurchaseOrder(id, data, userId, audit = {}, actor = {}) {
       );
       poItem.received_quantity = toMoney(decimal(poItem.received_quantity).plus(values.stored_quantity));
 
-      if (stockItem.stock_mode === 'carton_weight') {
+      if (stockItem.stock_mode === 'carton') {
         await stockService.receiveCartonStock(connection, {
           storeId: scopedOrder.store_id,
           warehouseId: purchaseOrder.warehouse_id,

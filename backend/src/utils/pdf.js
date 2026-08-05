@@ -22,14 +22,15 @@ function formatMoney(value) {
   });
 }
 
-function sendPdf(res, filename, build) {
+function renderPdf(build) {
   const doc = new PDFDocument({ margin: 40, size: 'A4', bufferPages: true });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-
-  doc.pipe(res);
-  build(doc);
+  return new Promise((resolve, reject) => {
+    doc.on('error', reject);
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    build(doc);
 
   // Global Footer Pass
   const range = doc.bufferedPageRange();
@@ -37,15 +38,49 @@ function sendPdf(res, filename, build) {
     doc.switchToPage(i);
     
     // Draw footer line
-    doc.moveTo(40, 800).lineTo(555, 800).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
+    doc.moveTo(40, 780).lineTo(555, 780).strokeColor('#e2e8f0').lineWidth(0.5).stroke();
     
     // Draw footer text
     doc.font('Helvetica').fontSize(7.5).fillColor('#94a3b8');
-    doc.text('Kivaro Charcoal ERP', 40, 808, { align: 'left' });
-    doc.text(`Page ${i + 1} of ${range.count}`, 40, 808, { align: 'right', width: 515 });
+    doc.text('Kivaro Charcoal ERP', 40, 788, { align: 'left' });
+    doc.text(`Page ${i + 1} of ${range.count}`, 40, 788, { align: 'right', width: 515 });
   }
 
-  doc.end();
+    doc.end();
+  });
+}
+
+async function sendPdf(res, filename, build) {
+  const pdf = await renderPdf(build);
+  if (res.destroyed || res.writableEnded) {
+    throw new Error('PDF response is no longer writable');
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Content-Length', pdf.length);
+  if (typeof res.once !== 'function') {
+    res.end(pdf);
+    return pdf;
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve(pdf);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error instanceof Error ? error : new Error('PDF response failed'));
+    };
+    res.once('finish', finish);
+    res.once('error', fail);
+    res.once('close', () => {
+      if (!res.writableFinished) fail(new Error('PDF response closed before completion'));
+    });
+    res.end(pdf);
+  });
 }
 
 function drawHeaderBlock(doc, title, subtitle) {
@@ -381,17 +416,82 @@ function sendCustomerReceiptPdf(res, receipt) {
   });
 }
 
+function sendCustomerDebtPdf(res, debt) {
+  return sendPdf(res, `customer-debt-${debt.debt_number || debt.id}.pdf`, (doc) => {
+    drawHeaderBlock(doc, 'Customer Debt Statement', `Debt ${debt.debt_number || debt.id}`);
+    drawMetadataGrid(doc, [
+      { label: 'Customer', value: debt.customer_name || debt.customer_id },
+      { label: 'Debt date', value: debt.debt_date },
+      { label: 'Dispatch', value: debt.dispatch_number || debt.dispatch_request_id || '-' },
+      { label: 'Status', value: debt.status },
+      { label: 'Original amount', value: `$${formatMoney(debt.original_amount)}` },
+      { label: 'Paid amount', value: `$${formatMoney(debt.paid_amount)}` },
+      { label: 'Remaining amount', value: `$${formatMoney(debt.remaining_amount)}` },
+      { label: 'Due date', value: debt.due_date || '-' }
+    ]);
+  });
+}
+
+function sendCustomerPaymentPdf(res, payment) {
+  return sendPdf(res, `customer-payment-${payment.payment_number || payment.id}.pdf`, (doc) => {
+    drawHeaderBlock(doc, 'Customer Payment Receipt', `Payment ${payment.payment_number || payment.id}`);
+    drawMetadataGrid(doc, [
+      { label: 'Customer', value: payment.customer_name || payment.customer_id },
+      { label: 'Payment date', value: payment.payment_date },
+      { label: 'Amount', value: `$${formatMoney(payment.amount)}` },
+      { label: 'Method', value: payment.payment_method || '-' },
+      { label: 'Reference', value: payment.reference_number || '-' },
+      { label: 'Collected by', value: payment.collected_by_salesman_name || '-' }
+    ]);
+  });
+}
+
 function customerLines(dispatch, customerId) {
   return (dispatch.items || []).filter((item) => Number(item.dispatch_customer_id) === Number(customerId));
 }
 
+function totalForLines(lines, field) {
+  return lines.reduce((total, line) => total + Number(line[field] || 0), 0);
+}
+
+function aggregateDispatchQuantities(dispatch) {
+  const grouped = new Map();
+  for (const line of dispatch.items || []) {
+    const name = line.item_name_snapshot || line.catalog_display_name || '-';
+    const unit = line.unit_label_snapshot || 'unit';
+    const type = line.line_type === 'free_gift' ? 'Gift' : 'Sale';
+    const key = [line.sale_catalog_entry_id || name, name, unit, type].join('|');
+    const current = grouped.get(key) || { item_name: name, unit, type, quantity: 0 };
+    current.quantity += Number(line.quantity || 0);
+    grouped.set(key, current);
+  }
+  return [...grouped.values()].sort((left, right) => (
+    left.item_name.localeCompare(right.item_name) || left.unit.localeCompare(right.unit) || left.type.localeCompare(right.type)
+  ));
+}
+
 function sendDispatchCustomerChecklistPdf(res, dispatch, company = {}) {
-  return sendPdf(res, `dispatch-${dispatch.dispatch_number || dispatch.id}-customer-checklist.pdf`, (doc) => {
-    drawCompanyHeader(doc, company, 'Customer Checklist', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
+  return sendPdf(res, `dispatch-${dispatch.dispatch_number || dispatch.id}-customers-quantities.pdf`, (doc) => {
+    drawCompanyHeader(doc, company, 'Customer & Quantity List', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
+    sectionTitle(doc, 'Customer Delivery Summary');
+    drawRows(doc, (dispatch.customers || []).map((customer) => {
+      const lines = customerLines(dispatch, customer.id);
+      return {
+        customer_name: customer.customer_name || `Customer #${customer.customer_id}`,
+        item_count: lines.length,
+        quantity: totalForLines(lines, 'quantity'),
+        total: totalForLines(lines, 'line_total')
+      };
+    }), [
+      { label: 'Customer', width: 230, value: (row) => row.customer_name },
+      { label: 'Lines', width: 70, align: 'right', value: (row) => row.item_count },
+      { label: 'Total Qty', width: 90, align: 'right', value: (row) => row.quantity },
+      { label: 'Order Total', width: 125, align: 'right', value: (row) => `$${formatMoney(row.total)}` }
+    ]);
     (dispatch.customers || []).forEach((customer, index) => {
       if (index > 0) {
         doc.addPage();
-        drawCompanyHeader(doc, company, 'Customer Checklist', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
+        drawCompanyHeader(doc, company, 'Customer & Quantity List', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
       }
       sectionTitle(doc, customer.customer_name);
       drawMetadataGrid(doc, [
@@ -400,13 +500,17 @@ function sendDispatchCustomerChecklistPdf(res, dispatch, company = {}) {
         { label: 'Invoice', value: customer.invoice_number || '-' },
         { label: 'Phone', value: customer.customer_phone || '-' }
       ]);
-      drawRows(doc, customerLines(dispatch, customer.id), [
+      const lines = customerLines(dispatch, customer.id);
+      drawRows(doc, lines, [
         { label: 'Item', width: 225, value: (row) => row.item_name_snapshot || row.catalog_display_name || '-' },
         { label: 'Type', width: 85, value: (row) => row.line_type === 'free_gift' ? 'Gift' : 'Sale' },
         { label: 'Qty', width: 65, align: 'right', value: (row) => row.quantity },
         { label: 'Unit', width: 65, value: (row) => row.unit_label_snapshot },
         { label: 'Check', width: 75, value: () => '________' }
       ]);
+      doc.moveDown(0.5);
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155')
+        .text(`Customer order total: $${formatMoney(totalForLines(lines, 'line_total'))}`, { align: 'right' });
     });
   });
 }
@@ -415,13 +519,16 @@ function sendDispatchQuantityPdf(res, dispatch, company = {}) {
   return sendPdf(res, `dispatch-${dispatch.dispatch_number || dispatch.id}-quantities.pdf`, (doc) => {
     drawCompanyHeader(doc, company, 'Quantity-only Dispatch Table', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
     sectionTitle(doc, 'Delivery Quantities');
-    drawRows(doc, dispatch.items || [], [
-      { label: 'Customer', width: 120, value: (row) => (dispatch.customers || []).find((customer) => Number(customer.id) === Number(row.dispatch_customer_id))?.customer_name || '-' },
-      { label: 'Item', width: 220, value: (row) => row.item_name_snapshot || row.catalog_display_name || '-' },
-      { label: 'Gift', width: 55, value: (row) => row.line_type === 'free_gift' ? 'Yes' : 'No' },
-      { label: 'Qty', width: 60, align: 'right', value: (row) => row.quantity },
-      { label: 'Unit', width: 60, value: (row) => row.unit_label_snapshot }
+    const rows = aggregateDispatchQuantities(dispatch);
+    drawRows(doc, rows, [
+      { label: 'Item / Offer', width: 275, value: (row) => row.item_name },
+      { label: 'Type', width: 75, value: (row) => row.type },
+      { label: 'Total Qty', width: 95, align: 'right', value: (row) => row.quantity },
+      { label: 'Unit', width: 70, value: (row) => row.unit }
     ]);
+    doc.moveDown(0.5);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155')
+      .text(`Total lines: ${(dispatch.items || []).length}   |   Total quantity: ${totalForLines(rows, 'quantity')}`, { align: 'right' });
   });
 }
 
@@ -456,12 +563,130 @@ function sendInvoicePdf(res, invoice, lines = [], company = {}) {
   });
 }
 
+function sendReturnCreditNotePdf(res, creditNote, company = {}) {
+  return sendPdf(res, `return-credit-note-${creditNote.credit_note_number || creditNote.id}.pdf`, (doc) => {
+    drawCompanyHeader(doc, company, 'Return Credit Note', `Credit Note ${creditNote.credit_note_number || creditNote.id}`);
+    sectionTitle(doc, 'Credit Note Details');
+    drawMetadataGrid(doc, [
+      { label: 'Credit note number', value: creditNote.credit_note_number },
+      { label: 'Credit note date', value: creditNote.credit_note_date },
+      { label: 'Customer', value: creditNote.customer_name },
+      { label: 'Dispatch', value: creditNote.dispatch_number },
+      { label: 'Invoice', value: creditNote.invoice_number || '-' },
+      { label: 'Reason', value: creditNote.reason || '-' }
+    ]);
+    sectionTitle(doc, 'Returned Line');
+    drawRows(doc, [creditNote], [
+      { label: 'Description', width: 245, value: (row) => row.item_name_snapshot || '-' },
+      { label: 'Quantity', width: 85, align: 'right', value: (row) => row.returned_quantity },
+      { label: 'Unit', width: 80, value: (row) => row.unit_label_snapshot || 'unit' },
+      { label: 'Credit', width: 105, align: 'right', value: (row) => `$${formatMoney(row.total_amount)}` }
+    ]);
+    sectionTitle(doc, 'Credit Total');
+    drawMetadataGrid(doc, [
+      { label: 'Subtotal credit', value: `$${formatMoney(creditNote.subtotal_amount)}` },
+      { label: 'VAT credit', value: `$${formatMoney(creditNote.vat_amount)}` },
+      { label: 'Total credit', value: `$${formatMoney(creditNote.total_amount)}` }
+    ]);
+  });
+}
+
+function drawDispatchCustomerOrderInformation(doc, dispatch, customer) {
+  sectionTitle(doc, 'Customer & Order Information');
+  const fields = [
+    { label: 'Customer', value: customer.customer_name || `Customer #${customer.customer_id}` },
+    { label: 'Territory', value: [customer.location_name, customer.sublocation_name].filter(Boolean).join(' · ') || '-' },
+    { label: 'Delivery Date', value: dispatch.dispatched_at || dispatch.delivery_date || dispatch.request_date || '-' },
+    { label: 'Dispatch #', value: dispatch.dispatch_number || `#${dispatch.id}` },
+    { label: 'Salesman', value: dispatch.salesman_name || '-' },
+    { label: 'Warehouse', value: dispatch.warehouse_name || '-' }
+  ];
+  const columnWidth = 245;
+  let y = doc.y;
+  for (let index = 0; index < fields.length; index += 2) {
+    const left = fields[index];
+    const right = fields[index + 1];
+    doc.font('Helvetica').fontSize(8.5);
+    const height = Math.max(
+      doc.heightOfString(`${left.label}: ${formatValue(left.value)}`, { width: columnWidth }),
+      right ? doc.heightOfString(`${right.label}: ${formatValue(right.value)}`, { width: columnWidth }) : 0,
+      16
+    );
+    doc.fillColor('#1e293b').text(`${left.label}: ${formatValue(left.value)}`, 40, y, { width: columnWidth });
+    if (right) {
+      doc.text(`${right.label}: ${formatValue(right.value)}`, 300, y, { width: columnWidth });
+    }
+    y += height + 4;
+  }
+  doc.y = y + 10;
+}
+
+function drawDispatchCustomerReceiptPage(doc, dispatch, customer, lines, company) {
+    drawCompanyHeader(doc, company, 'Delivery Receipt', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
+    drawDispatchCustomerOrderInformation(doc, dispatch, customer);
+    sectionTitle(doc, 'Delivered Items');
+    drawRows(doc, lines, [
+      { label: 'Description', width: 210, value: (row) => row.item_name_snapshot || row.catalog_display_name || '-' },
+      { label: 'Type', width: 65, value: (row) => row.line_type === 'free_gift' ? 'Gift' : 'Sale' },
+      { label: 'Qty', width: 65, align: 'right', value: (row) => row.quantity },
+      { label: 'Unit', width: 65, value: (row) => row.unit_label_snapshot || 'unit' },
+      { label: 'Line Total', width: 95, align: 'right', value: (row) => row.line_type === 'free_gift' ? '$0.00' : `$${formatMoney(row.line_total)}` }
+    ]);
+}
+
+function drawDispatchCustomerConsentPage(doc, dispatch, customer, company) {
+    drawCompanyHeader(doc, company, 'Acceptance & Consent', `Dispatch ${dispatch.dispatch_number || dispatch.id}`);
+    drawDispatchCustomerOrderInformation(doc, dispatch, customer);
+    sectionTitle(doc, 'Acceptance & Consent Confirmation');
+    doc.moveDown(0.5);
+    doc.font('Helvetica-Oblique').fontSize(9).fillColor('#334155');
+    doc.text(
+      'I, the undersigned customer / authorized representative, hereby confirm that I have received and inspected the delivered goods listed above in full and in good condition. I agree to the quantities, pricing, and terms specified.',
+      48,
+      doc.y,
+      { width: 500 }
+    );
+    doc.moveDown(2);
+    const ySig = doc.y;
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#475569');
+    doc.text('Customer Signature: _______________________', 48, ySig);
+    doc.text('Date: ________________', 340, ySig);
+}
+
+function sendDispatchCustomerReceiptPdf(res, dispatch, customer, lines = [], company = {}) {
+  return sendPdf(res, `delivery-receipt-${customer.id}.pdf`, (doc) => {
+    drawDispatchCustomerReceiptPage(doc, dispatch, customer, lines, company);
+  });
+}
+
+function sendDispatchCustomerAcceptanceConsentPdf(res, dispatch, customer, company = {}) {
+  return sendPdf(res, `acceptance-consent-${customer.id}.pdf`, (doc) => {
+    drawDispatchCustomerConsentPage(doc, dispatch, customer, company);
+  });
+}
+
+function sendDispatchCustomerDeliveryDocumentPdf(res, dispatch, customer, lines = [], company = {}) {
+  return sendPdf(res, `delivery-document-${customer.id}.pdf`, (doc) => {
+    drawDispatchCustomerReceiptPage(doc, dispatch, customer, lines, company);
+    // The consent is deliberately a second page even when the receipt is short.
+    doc.addPage();
+    drawDispatchCustomerConsentPage(doc, dispatch, customer, company);
+  });
+}
+
 module.exports = {
   sendCustomerReceiptPdf,
+  sendCustomerDebtPdf,
+  sendCustomerPaymentPdf,
   sendDispatchCustomerChecklistPdf,
   sendDispatchCustomerReceiptsPdf,
+  sendDispatchCustomerReceiptPdf,
+  sendDispatchCustomerAcceptanceConsentPdf,
+  sendDispatchCustomerDeliveryDocumentPdf,
   sendDispatchQuantityPdf,
   sendDispatchSummaryPdf,
   sendInvoicePdf,
-  sendPdf
+  sendReturnCreditNotePdf,
+  sendPdf,
+  renderPdf
 };

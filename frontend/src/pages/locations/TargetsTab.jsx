@@ -19,7 +19,7 @@ import {
   getTargetStatusTone
 } from './locations.config.js';
 import { useLocationsList } from './useLocationsOptions.js';
-import { LocationTargetFormModal } from './LocationTargetFormModal.jsx';
+import { TargetWizardModal } from './TargetWizardModal.jsx';
 import { TargetDrawer } from './TargetDrawer.jsx';
 
 function StatusBadge({ status }) {
@@ -42,7 +42,6 @@ export default function TargetsTab() {
   const [limit] = useState(20);
 
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState(null);
   const [openTargetId, setOpenTargetId] = useState(null);
 
   const queryParams = useMemo(() => {
@@ -112,11 +111,6 @@ export default function TargetsTab() {
             <Button variant="secondary" size="sm" onClick={() => setOpenTargetId(row.id)}>
               View
             </Button>
-            {canManage && row.status !== 'closed' && (
-              <Button variant="ghost" size="sm" onClick={() => setEditing(row)}>
-                Edit
-              </Button>
-            )}
           </div>
         )
       }
@@ -240,12 +234,7 @@ export default function TargetsTab() {
         }
       />
 
-      <LocationTargetFormModal open={creating} onClose={() => setCreating(false)} />
-      <LocationTargetFormModal
-        open={Boolean(editing)}
-        onClose={() => setEditing(null)}
-        target={editing || undefined}
-      />
+      <TargetWizardModal open={creating} onClose={() => setCreating(false)} />
       <TargetDrawer
         open={Boolean(openTargetId)}
         onClose={() => setOpenTargetId(null)}

@@ -43,6 +43,11 @@ async function complete(req, res) {
   successResponse(res, { statusCode: 201, message: 'Packaging completed', data: result });
 }
 
+async function transferShelfStockToGift(req, res) {
+  const shelf_stock = await service.transferShelfStockToGift(req.params.id, req.body.quantity, req.user.id, req.user);
+  successResponse(res, { message: 'Reusable shelf stock transferred to free gifts', data: { shelf_stock } });
+}
+
 async function getOperation(req, res) {
   const packaging_operation = await service.getOperation(req.params.id, req.user);
   successResponse(res, { message: 'Packaging operation fetched', data: { packaging_operation } });
@@ -76,8 +81,10 @@ module.exports = {
   listOperations: list(service.listOperations, 'packaging_operations', 'Packaging operations fetched'),
   listPosCatalog: list(service.listPosCatalog, 'sale_catalog_entries', 'POS catalog fetched'),
   listReadyStock: list(service.listReadyStock, 'ready_stock_containers', 'Ready stock fetched'),
+  listReadyShelfStock: list(service.listReadyShelfStock, 'ready_shelf_stocks', 'Shelf stock fetched'),
   preview,
   replaceComponents,
+  transferShelfStockToGift,
   updateCatalogEntry,
   updateGroup
 };

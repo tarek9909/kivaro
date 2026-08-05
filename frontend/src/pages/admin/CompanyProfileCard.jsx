@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Building2, Image, Loader2, Save, Trash2, Upload } from 'lucide-react';
 import { api, httpClient } from '@/api/index.js';
+import { cn } from '@/lib/cn.js';
 import {
   Button,
   GlassPanel,
@@ -182,9 +183,19 @@ export function CompanyProfileCard({ canEdit = false }) {
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-ink-300">Company Logo</label>
               
-              <div className="flex flex-col sm:flex-row items-center gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+              <div className={cn(
+                'flex flex-col sm:flex-row items-center gap-4 rounded-xl p-4 transition-all duration-300',
+                canEdit 
+                  ? 'border border-dashed border-white/20 bg-white/[0.02] hover:border-brand-500/30 hover:bg-white/[0.04]' 
+                  : 'border border-white/5 bg-white/[0.01]'
+              )}>
                 {/* Logo Preview */}
-                <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-black/20 overflow-hidden group">
+                <div className={cn(
+                  'relative flex h-24 w-24 shrink-0 items-center justify-center rounded-lg border overflow-hidden group transition-all duration-300',
+                  form.logo_url 
+                    ? 'border-white/10 bg-black/30' 
+                    : 'border-dashed border-white/10 bg-black/10'
+                )}>
                   {form.logo_url ? (
                     <>
                       <img src={form.logo_url} alt="Logo preview" className="h-full w-full object-contain" />
@@ -203,8 +214,8 @@ export function CompanyProfileCard({ canEdit = false }) {
                     </>
                   ) : (
                     <div className="flex flex-col items-center text-ink-400">
-                      <Image className="h-8 w-8 opacity-40" />
-                      <span className="text-[10px] mt-1">No Logo</span>
+                      <Image className="h-8 w-8 opacity-30" />
+                      <span className="text-[10px] mt-1 font-medium tracking-wide">No Logo</span>
                     </div>
                   )}
                 </div>
@@ -212,8 +223,20 @@ export function CompanyProfileCard({ canEdit = false }) {
                 {/* Upload Action controls */}
                 <div className="flex-1 text-center sm:text-left space-y-2">
                   <div className="text-xs text-ink-300">
-                    <p className="font-semibold text-ink-50">Upload your brand logo</p>
-                    <p className="text-[10px] text-ink-400 mt-0.5">Supports PNG, JPG, WEBP, or GIF. Max size 2MB.</p>
+                    <p className="font-semibold text-ink-50">
+                      {canEdit 
+                        ? 'Upload your brand logo' 
+                        : form.logo_url 
+                          ? 'Company logo details' 
+                          : 'No company logo configured'}
+                    </p>
+                    <p className="text-[10px] text-ink-400 mt-0.5">
+                      {canEdit 
+                        ? 'Supports PNG, JPG, WEBP, or GIF. Max size 2MB.' 
+                        : form.logo_url 
+                          ? 'This logo will appear on receipts, documents, and reports.' 
+                          : 'A logo has not been uploaded yet. Standard placeholders will be used.'}
+                    </p>
                   </div>
                   
                   {canEdit && (

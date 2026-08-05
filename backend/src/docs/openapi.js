@@ -292,10 +292,10 @@ const openapiSpec = {
     '/salesmen/export': {
       get: protectedOperation({
         tags: ['Locations'],
-        summary: 'Export salesman performance, POS orders, invoices, delivered customers, or revenue as CSV',
+        summary: 'Export salesman performance, invoices, delivered customers, or revenue as CSV',
         permission: 'salesmen.manage + reports.export',
         parameters: [
-          { name: 'dataset', in: 'query', schema: { type: 'string', enum: ['performance', 'orders', 'invoices', 'delivered_customers', 'revenue'], default: 'performance' } },
+          { name: 'dataset', in: 'query', schema: { type: 'string', enum: ['performance', 'invoices', 'delivered_customers', 'revenue'], default: 'performance' } },
           { name: 'salesman_id', in: 'query', schema: { type: 'integer', minimum: 1 } },
           { name: 'date_from', in: 'query', schema: { type: 'string', format: 'date' } },
           { name: 'date_to', in: 'query', schema: { type: 'string', format: 'date' } },
@@ -326,34 +326,31 @@ const openapiSpec = {
       })
     },
     '/packaging-groups': {
-      get: protectedOperation({ tags: ['Packaging'], summary: 'List flat packaging templates', permission: 'inventory.view', parameters: paginationParams }),
+      get: protectedOperation({ tags: ['Packaging'], summary: 'List flat packaging templates', permission: 'inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust', parameters: paginationParams }),
       post: protectedOperation({ tags: ['Packaging'], summary: 'Create a flat packaging template with a saved normal input item', method: 'post', permission: 'inventory.create', body: { type: 'object' } })
     },
     '/packaging-groups/{id}/components': {
       put: protectedOperation({ tags: ['Packaging'], summary: 'Replace outer, inner, and optional consumable template components', method: 'put', permission: 'inventory.update', parameters: [idParam], body: { type: 'object' } })
     },
     '/packaging-groups/{id}/preview': {
-      post: protectedOperation({ tags: ['Packaging'], summary: 'Preview server-calculated raw input, material shortages, capacity, and WAC cost', method: 'post', permission: 'inventory.view', parameters: [idParam], body: { type: 'object' } })
+      post: protectedOperation({ tags: ['Packaging'], summary: 'Preview server-calculated raw input, material shortages, capacity, and WAC cost', method: 'post', permission: 'inventory.view or inventory.create or stock.adjust', parameters: [idParam], body: { type: 'object' } })
     },
     '/packaging-groups/{id}/complete': {
       post: protectedOperation({ tags: ['Packaging'], summary: 'Atomically consume inputs and create ready packaged containers', method: 'post', permission: 'inventory.create or stock.adjust', parameters: [idParam], body: { type: 'object' } })
     },
     '/packaging-operations': {
-      get: protectedOperation({ tags: ['Packaging'], summary: 'List completed packaging operations and composition snapshots', permission: 'inventory.view', parameters: paginationParams })
+      get: protectedOperation({ tags: ['Packaging'], summary: 'List completed packaging operations and composition snapshots', permission: 'inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust', parameters: paginationParams })
     },
     '/ready-stock': {
-      get: protectedOperation({ tags: ['Packaging'], summary: 'List ready packaged container availability', permission: 'inventory.view', parameters: paginationParams })
+      get: protectedOperation({ tags: ['Packaging'], summary: 'List ready packaged container availability', permission: 'inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust', parameters: paginationParams })
     },
     '/sale-catalog': {
-      get: protectedOperation({ tags: ['Packaging'], summary: 'List normal and ready-stock sellable offers', permission: 'inventory.view or dispatch.create', parameters: paginationParams }),
+      get: protectedOperation({ tags: ['Packaging'], summary: 'List normal and ready-stock sellable offers', permission: 'inventory.view or inventory.create or inventory.update or inventory.delete or stock.adjust or dispatch.create', parameters: paginationParams }),
       post: protectedOperation({ tags: ['Packaging'], summary: 'Configure a sellable offer price, VAT, and POS activation', method: 'post', permission: 'inventory.create', body: { type: 'object' } })
     },
     '/dispatch-requests': {
       get: protectedOperation({ tags: ['Dispatch'], summary: 'List dispatch requests', permission: 'dispatch.view', parameters: paginationParams }),
       post: protectedOperation({ tags: ['Dispatch'], summary: 'Create a compact item-based dispatch draft', method: 'post', permission: 'dispatch.create', body: { type: 'object' } })
-    },
-    '/dispatch-requests/from-pos': {
-      post: protectedOperation({ tags: ['Mini POS'], summary: 'Combine selected available orders from one salesman into a dispatch draft', method: 'post', permission: 'pos.accept', body: { type: 'object' } })
     },
     '/dispatch-requests/{id}/submit': {
       post: protectedOperation({ tags: ['Dispatch'], summary: 'Submit a draft and issue one current-revision invoice per customer', method: 'post', permission: 'dispatch.create', parameters: [idParam] })
@@ -362,16 +359,22 @@ const openapiSpec = {
       post: protectedOperation({ tags: ['Dispatch'], summary: 'Void the current invoices and return the dispatch to a new draft revision', method: 'post', permission: 'dispatch.create', parameters: [idParam], body: { type: 'object' } })
     },
     '/dispatch-requests/{id}/documents/customer-table': {
-      get: protectedOperation({ tags: ['Dispatch'], summary: 'Generate/download the current-revision customer checklist PDF', permission: 'dispatch.print', parameters: [idParam], responses: { 200: pdfResponse } })
+      get: protectedOperation({ tags: ['Dispatch'], summary: 'Generate/download the current-revision customer and quantity list PDF', permission: 'dispatch.print', parameters: [idParam], responses: { 200: pdfResponse } })
     },
-    '/dispatch-requests/{id}/documents/quantity-table': {
-      get: protectedOperation({ tags: ['Dispatch'], summary: 'Generate/download the current-revision quantity-only PDF', permission: 'dispatch.print', parameters: [idParam], responses: { 200: pdfResponse } })
+    '/dispatch-requests/{id}/customers/{customerId}/delivery-document-pdf': {
+      get: protectedOperation({
+        tags: ['Dispatch'],
+        summary: 'Generate/download a customer receipt, consent, or a combined two-page receipt-and-consent PDF',
+        permission: 'dispatch.print',
+        parameters: [idParam, { name: 'customerId', in: 'path', required: true, schema: { type: 'integer' } }, { name: 'part', in: 'query', schema: { type: 'string', enum: ['receipt', 'consent'] }, description: 'Omit for the combined two-page PDF.' }],
+        responses: { 200: pdfResponse }
+      })
     },
     '/dispatch-requests/{id}/approve': {
-      post: protectedOperation({ tags: ['Dispatch'], summary: 'Check document gate and reserve exact normal or ready-stock sources', method: 'post', permission: 'dispatch.approve', parameters: [idParam] })
+      post: protectedOperation({ tags: ['Dispatch'], summary: 'Reserve exact normal or ready-stock sources for a submitted order', method: 'post', permission: 'dispatch.approve', parameters: [idParam] })
     },
     '/dispatch-requests/{id}/dispatch': {
-      post: protectedOperation({ tags: ['Dispatch'], summary: 'Move dispatch stock out of inventory', method: 'post', permission: 'dispatch.approve', parameters: [idParam] })
+      post: protectedOperation({ tags: ['Dispatch'], summary: 'Move dispatch stock out of inventory after the customer and quantity list is generated', method: 'post', permission: 'dispatch.approve', parameters: [idParam] })
     },
     '/dispatch-requests/{id}/settlements': {
       get: protectedOperation({ tags: ['Dispatch'], summary: 'List submitted delivery closeouts and settlements', permission: 'dispatch.view', parameters: [idParam] })
@@ -389,27 +392,26 @@ const openapiSpec = {
       get: protectedOperation({ tags: ['Invoices'], summary: 'Generate/download a current issued invoice PDF and record the download', permission: 'invoices.print', parameters: [idParam], responses: { 200: pdfResponse } })
     },
     '/pos/catalog': {
-      get: protectedOperation({ tags: ['Mini POS'], summary: 'List active available offers without exposing stock quantities', permission: 'pos.own_orders', parameters: paginationParams })
-    },
-    '/pos/orders': {
-      get: protectedOperation({ tags: ['Mini POS'], summary: 'List own pending/history orders', permission: 'pos.own_orders', parameters: paginationParams }),
-      post: protectedOperation({ tags: ['Mini POS'], summary: 'Create a pending non-reserving POS order', method: 'post', permission: 'pos.own_orders', body: { type: 'object' } })
+      get: protectedOperation({ tags: ['Mini POS'], summary: 'List active available offers without exposing stock quantities', permission: 'pos.create_own or pos.create_for_salesman', parameters: paginationParams })
     },
     '/pos/workspace': {
-      get: protectedOperation({ tags: ['Mini POS'], summary: 'Get the linked salesman’s own dispatch, closeout, debt, KPI, target, commission, territory, and POS history workspace', permission: 'salesman_workspace.view', parameters: paginationParams })
-    },
-    '/pos/review': {
-      get: protectedOperation({ tags: ['Mini POS'], summary: 'Review pending POS work grouped by salesman with authoritative shortages', permission: 'pos.review', parameters: paginationParams })
+      get: protectedOperation({ tags: ['Mini POS'], summary: 'Get a salesman workspace from direct dispatch, debt, target, and commission records.', permission: 'salesman_workspace.view', parameters: paginationParams })
     },
     '/customer-debts': {
-      get: protectedOperation({ tags: ['Payments'], summary: 'List customer debts', permission: 'debts.manage', parameters: paginationParams })
+      get: protectedOperation({ tags: ['Payments'], summary: 'List customer debts', permission: 'debts.manage or accounting.manage', parameters: paginationParams })
     },
     '/customer-debts/{id}/payments': {
-      post: protectedOperation({ tags: ['Payments'], summary: 'Record customer debt payment', method: 'post', permission: 'debts.manage', parameters: [idParam], body: { type: 'object' } })
+      post: protectedOperation({ tags: ['Payments'], summary: 'Record a received amount against one customer debt; the balance status is set automatically', method: 'post', permission: 'debts.manage', parameters: [idParam], body: { type: 'object' } })
+    },
+    '/customer-debts/{id}/print': {
+      get: protectedOperation({ tags: ['Payments'], summary: 'Return a customer debt statement as JSON or PDF with format=pdf', permission: 'debts.manage', parameters: [idParam, { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'pdf'] } }] })
     },
     '/customer-payments': {
-      get: protectedOperation({ tags: ['Payments'], summary: 'List customer payments', permission: 'accounting.view', parameters: paginationParams }),
-      post: protectedOperation({ tags: ['Payments'], summary: 'Create customer payment and receipt', method: 'post', permission: 'accounting.manage', body: { type: 'object' } })
+      get: protectedOperation({ tags: ['Payments'], summary: 'List customer payments', permission: 'accounting.view or accounting.manage', parameters: paginationParams }),
+      post: protectedOperation({ tags: ['Payments'], summary: 'Record and allocate a direct customer payment, creating customer credit for any overpayment', method: 'post', permission: 'accounting.manage', body: { type: 'object' } })
+    },
+    '/customer-payments/{id}/print': {
+      get: protectedOperation({ tags: ['Payments'], summary: 'Return a customer payment receipt as JSON or PDF with format=pdf', permission: 'accounting.view or accounting.manage', parameters: [idParam, { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'pdf'] } }] })
     },
     '/customer-receipts/{id}/print': {
       get: protectedOperation({
@@ -421,10 +423,10 @@ const openapiSpec = {
       })
     },
     '/expense-categories': {
-      get: protectedOperation({ tags: ['Accounting'], summary: 'List expense categories', permission: 'accounting.view', parameters: paginationParams })
+      get: protectedOperation({ tags: ['Accounting'], summary: 'List expense categories', permission: 'accounting.view or accounting.manage', parameters: paginationParams })
     },
     '/expenses': {
-      get: protectedOperation({ tags: ['Accounting'], summary: 'List expenses', permission: 'accounting.view', parameters: paginationParams }),
+      get: protectedOperation({ tags: ['Accounting'], summary: 'List expenses', permission: 'accounting.view or accounting.manage', parameters: paginationParams }),
       post: protectedOperation({ tags: ['Accounting'], summary: 'Create expense and financial transaction', method: 'post', permission: 'accounting.manage', body: { type: 'object' } })
     },
     '/cash-accounts': {

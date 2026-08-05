@@ -54,7 +54,7 @@ describe('commissions config', () => {
   });
 
   it('declares commissions tabs with stable IDs and permission gates', () => {
-    expect(COMMISSIONS_TABS.map((tab) => tab.id)).toEqual(['rules', 'calculations']);
+    expect(COMMISSIONS_TABS.map((tab) => tab.id)).toEqual(['rules', 'calculations', 'payroll']);
     for (const tab of COMMISSIONS_TABS) {
       expect(tab.anyOfPermissions).toEqual(['commissions.manage']);
     }

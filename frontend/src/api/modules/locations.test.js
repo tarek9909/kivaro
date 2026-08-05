@@ -61,22 +61,16 @@ describe('locations API module', () => {
     ]);
   });
 
-  it('exposes locationTargets CRUD without remove and a sublocation target action', () => {
+  it('exposes target-bundle creation and assignment editing alongside target reads', () => {
     const client = buildClientStub();
     const api = createLocationsApi(client);
     expect(Object.keys(api.locationTargets).sort()).toEqual([
-      'create',
-      'createSublocationTarget',
+      'createBundle',
       'get',
       'list',
-      'update'
+      'setup',
+      'updateAssignment'
     ]);
-  });
-
-  it('exposes only generateSalesmanTargets on sublocationTargets', () => {
-    const client = buildClientStub();
-    const api = createLocationsApi(client);
-    expect(Object.keys(api.sublocationTargets)).toEqual(['generateSalesmanTargets']);
   });
 
   it('routes assign and unassign to the correct endpoints', async () => {
@@ -133,31 +127,6 @@ describe('locations API module', () => {
     });
   });
 
-  it('hits /location-targets/:id/sublocation-targets when adding a sublocation target', async () => {
-    const client = buildClientStub();
-    const api = createLocationsApi(client);
-    await api.locationTargets.createSublocationTarget(4, {
-      sublocation_id: 11,
-      target_amount: 250,
-      status: 'draft'
-    });
-    expect(client.calls[0]).toEqual({
-      method: 'post',
-      path: '/location-targets/4/sublocation-targets',
-      rest: [{ sublocation_id: 11, target_amount: 250, status: 'draft' }, undefined]
-    });
-  });
-
-  it('POSTs to generate-salesman-targets without a body', async () => {
-    const client = buildClientStub();
-    const api = createLocationsApi(client);
-    await api.sublocationTargets.generateSalesmanTargets(8);
-    expect(client.calls[0]).toEqual({
-      method: 'post',
-      path: '/sublocation-targets/8/generate-salesman-targets',
-      rest: [undefined, undefined]
-    });
-  });
 
   it('reads a location\'s sublocations via GET /locations/:id/sublocations', async () => {
     const client = buildClientStub();

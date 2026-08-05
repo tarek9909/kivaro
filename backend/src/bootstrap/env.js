@@ -24,6 +24,7 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32).default('development_secret_change_me_for_real_usage'),
   JWT_EXPIRES_IN: z.string().min(1).default('1d'),
   CORS_ORIGIN: z.string().min(1).default('*'),
+  PUBLIC_BASE_URL: z.string().url().optional(),
   REQUEST_BODY_LIMIT: z.string().min(1).default('3mb'),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10000),
@@ -43,11 +44,13 @@ if (!parsed.success) {
 
 const values = parsed.data;
 
-if (
-  values.NODE_ENV === 'production' &&
-  values.JWT_SECRET === 'development_secret_change_me_for_real_usage'
-) {
-  throw new Error('JWT_SECRET must be configured in production.');
+if (values.NODE_ENV === 'production') {
+  if (values.JWT_SECRET === 'development_secret_change_me_for_real_usage' || values.JWT_SECRET.includes('replace_this_')) {
+    throw new Error('JWT_SECRET must be configured in production.');
+  }
+  if (values.CORS_ORIGIN === '*') {
+    throw new Error('CORS_ORIGIN must name the production web origin.');
+  }
 }
 
 module.exports = {
@@ -61,6 +64,7 @@ module.exports = {
     expiresIn: values.JWT_EXPIRES_IN
   },
   corsOrigin: values.CORS_ORIGIN,
+  publicBaseUrl: values.PUBLIC_BASE_URL,
   requestBodyLimit: values.REQUEST_BODY_LIMIT,
   rateLimit: {
     api: {

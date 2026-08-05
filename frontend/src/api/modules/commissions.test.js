@@ -31,12 +31,11 @@ describe('commissions API module', () => {
     ]);
   });
 
-  it('exposes calculation list/get plus calculate/approve/pay (no update or remove)', () => {
+  it('exposes calculation list/get plus approve/pay (no update or remove)', () => {
     const client = buildClientStub();
     const api = createCommissionsApi(client);
     expect(Object.keys(api.calculations).sort()).toEqual([
       'approve',
-      'calculate',
       'get',
       'list',
       'pay'
@@ -48,7 +47,6 @@ describe('commissions API module', () => {
     const api = createCommissionsApi(client);
     await api.calculations.list({ status: 'draft' });
     await api.calculations.get(7);
-    await api.calculations.calculate({ salesman_target_id: 12 });
     await api.calculations.approve(7);
     await api.calculations.pay(7, {
       payment_date: '2026-05-27',
@@ -57,11 +55,6 @@ describe('commissions API module', () => {
     expect(client.calls).toEqual([
       { method: 'get', path: '/commissions', rest: [{ params: { status: 'draft' } }] },
       { method: 'get', path: '/commissions/7', rest: [undefined] },
-      {
-        method: 'post',
-        path: '/commissions/calculate',
-        rest: [{ salesman_target_id: 12 }, undefined]
-      },
       { method: 'post', path: '/commissions/7/approve', rest: [undefined, undefined] },
       {
         method: 'post',

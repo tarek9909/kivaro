@@ -11,6 +11,7 @@ const reportQuery = z.object({
   search: z.string().trim().max(200).optional(),
   status: z.string().trim().max(50).optional(),
   store_id: id.optional(),
+  cash_account_id: id.optional(),
   warehouse_id: id.optional(),
   item_id: id.optional(),
   packaging_group_id: id.optional(),
@@ -21,7 +22,7 @@ const reportQuery = z.object({
   location_id: id.optional(),
   sublocation_id: id.optional(),
   item_kind: z.enum(['normal', 'packaging']).optional(),
-  stock_mode: z.enum(['carton_weight', 'weight', 'piece']).optional(),
+  stock_mode: z.enum(['carton', 'weight', 'piece']).optional(),
   stock_health: z.enum(['healthy', 'low']).optional(),
   ready_status: z.enum(['full', 'partial', 'depleted', 'cancelled']).optional(),
   component_role: z.enum(['raw_input', 'outer_sellable', 'inner_sellable', 'consumable']).optional(),
@@ -37,8 +38,8 @@ const reportQuery = z.object({
     'ready_outer_carton',
     'ready_inner_unit'
   ]).optional(),
-  invoice_status: z.enum(['issued', 'voided', 'cancelled']).optional(),
-  pos_status: z.enum(['pending', 'accepted', 'cancelled', 'converted', 'rejected']).optional(),
+  invoice_status: z.enum(['issued', 'voided', 'cancelled', 'return_credit']).optional(),
+  post_settlement_exception: z.coerce.boolean().optional(),
   date_from: isoDate.optional(),
   date_to: isoDate.optional(),
   format: z.enum(['json', 'csv']).optional()

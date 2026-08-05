@@ -6,8 +6,10 @@ jest.mock('../src/modules/payments/payments.model', () => ({
   createReceipt: jest.fn()
 }));
 
+const mockConnection = { execute: jest.fn() };
+
 jest.mock('../src/utils/transaction', () => ({
-  withTransaction: jest.fn((callback) => callback({}))
+  withTransaction: jest.fn((callback) => callback(mockConnection))
 }));
 
 const model = require('../src/modules/payments/payments.model');
@@ -16,6 +18,7 @@ const service = require('../src/modules/payments/payments.service');
 describe('customer credit application', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockConnection.execute.mockResolvedValue([[]]);
   });
 
   test('consumes available credits FIFO and updates the debt/receipt atomically', async () => {
@@ -64,5 +67,36 @@ describe('customer credit application', () => {
       receipt_type: 'credit',
       paid_amount: '6.0000'
     }));
+  });
+
+  test('earns pending delivery target credit only when the debt is fully closed', async () => {
+    model.lockDebtById.mockResolvedValue({
+      id: 8,
+      store_id: 1,
+      customer_id: 3,
+      dispatch_request_id: 2,
+      dispatch_customer_id: 4,
+      subtotal_amount: '10.0000',
+      vat_amount: '0.0000',
+      original_amount: '10.0000',
+      paid_amount: '0.0000',
+      remaining_amount: '10.0000',
+      status: 'pending'
+    });
+    model.lockAvailableCreditsForCustomer.mockResolvedValue([
+      { id: 1, remaining_amount: '10.0000', used_amount: '0.0000' }
+    ]);
+    model.createReceipt.mockResolvedValue(32);
+
+    await service.applyCreditToDebt(8, { amount: '10.0000', apply_date: '2026-08-01' }, 9, {
+      id: 9,
+      store_id: 1,
+      is_superadmin: false
+    });
+
+    expect(mockConnection.execute).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE delivery_target_credits"),
+      ['2026-08-01', 1, 4]
+    );
   });
 });

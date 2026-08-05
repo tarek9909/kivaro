@@ -23,6 +23,7 @@ function outputPayload(form) {
 
 export function PackagingOperationsTab() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
+  const canPreview = hasPermission('inventory.view') || hasPermission('inventory.create') || hasPermission('stock.adjust');
   const canComplete = hasPermission('inventory.create') || hasPermission('stock.adjust');
   const queryClient = useQueryClient();
   const [form, setForm] = useState({ group_id: '', warehouse_id: '', output_carton_count: '', notes: '' });
@@ -156,19 +157,19 @@ export function PackagingOperationsTab() {
         <GlassPanelBody>
           <form onSubmit={previewOperation} className="space-y-4" noValidate>
             <div className="grid gap-4 md:grid-cols-3">
-              <Select label="Packaging group" value={form.group_id} onChange={(event) => change('group_id', event.target.value)} error={errors.group_id} disabled={!canComplete}>
+              <Select label="Packaging group" value={form.group_id} onChange={(event) => change('group_id', event.target.value)} error={errors.group_id} disabled={!canPreview}>
                 <option value="">Select active group</option>
                 {groups.map((group) => <option key={group.id} value={group.id}>{group.name} ({group.code})</option>)}
               </Select>
-              <Select label="Warehouse" value={form.warehouse_id} onChange={(event) => change('warehouse_id', event.target.value)} description="Leave blank to use the group default." disabled={!canComplete}>
+              <Select label="Warehouse" value={form.warehouse_id} onChange={(event) => change('warehouse_id', event.target.value)} description="Leave blank to use the group default." disabled={!canPreview}>
                 <option value="">Group default warehouse</option>
                 {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}</option>)}
               </Select>
-              <Input label="Outer cartons to produce" type="number" min="1" step="1" inputMode="numeric" value={form.output_carton_count} onChange={(event) => change('output_carton_count', event.target.value)} error={errors.output_carton_count} disabled={!canComplete} />
+              <Input label="Outer cartons to produce" type="number" min="1" step="1" inputMode="numeric" value={form.output_carton_count} onChange={(event) => change('output_carton_count', event.target.value)} error={errors.output_carton_count} disabled={!canPreview} />
             </div>
-            <Textarea label="Operation notes" rows={2} value={form.notes} onChange={(event) => change('notes', event.target.value)} disabled={!canComplete} />
+            <Textarea label="Operation notes" rows={2} value={form.notes} onChange={(event) => change('notes', event.target.value)} disabled={!canPreview} />
             <div className="flex justify-end">
-              <Button type="submit" leftIcon={Eye} isLoading={previewMutation.isPending} disabled={!canComplete}>Preview consumption and output</Button>
+              <Button type="submit" leftIcon={Eye} isLoading={previewMutation.isPending} disabled={!canPreview}>Preview consumption and output</Button>
             </div>
           </form>
         </GlassPanelBody>
@@ -210,6 +211,7 @@ export function PackagingOperationsTab() {
         preview={preview}
         onComplete={completePreview}
         isCompleting={completeMutation.isPending}
+        canComplete={canComplete}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { Plus, Search, ShieldAlert, Truck , SlidersHorizontal } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
@@ -23,7 +24,8 @@ import {
   DISPATCH_PARENT_PERMISSIONS,
   DISPATCH_PERMISSIONS,
   DISPATCH_STATUSES,
-  DISPATCH_STATUS_FILTER_OPTIONS,
+  DISPATCH_WORKFLOW_TABS,
+  getDispatchStatusFilterOptions,
   getDispatchStatusTone
 } from './dispatch.config.js';
 import { DispatchRequestFormModal } from './DispatchRequestFormModal.jsx';
@@ -39,6 +41,7 @@ function StatusBadge({ status }) {
 }
 
 export default function DispatchRequestsPage() {
+  const navigate = useNavigate();
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canBrowse = DISPATCH_PARENT_PERMISSIONS.some((permission) => hasPermission(permission));
   const canCreate = hasPermission(DISPATCH_PERMISSIONS.create);
@@ -57,10 +60,16 @@ export default function DispatchRequestsPage() {
   const [creating, setCreating] = useState(false);
   const [openDispatchId, setOpenDispatchId] = useState(null);
 
+  const [workflowTab, setWorkflowTab] = useState('all');
   const debouncedSearch = useDebouncedValue(search, 300);
 
+  const statusFilterOptions = useMemo(
+    () => getDispatchStatusFilterOptions(workflowTab),
+    [workflowTab]
+  );
+
   const queryParams = useMemo(() => {
-    const params = { page, limit };
+    const params = { page, limit, workflow_tab: workflowTab };
     if (debouncedSearch) params.search = debouncedSearch;
     if (status) params.status = status;
     if (salesmanId) params.salesman_id = salesmanId;
@@ -68,7 +77,7 @@ export default function DispatchRequestsPage() {
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
     return params;
-  }, [debouncedSearch, status, salesmanId, warehouseId, dateFrom, dateTo, page, limit]);
+  }, [debouncedSearch, workflowTab, status, salesmanId, warehouseId, dateFrom, dateTo, page, limit]);
 
   const listQuery = useQuery({
     queryKey: ['dispatch', 'requests', queryParams],
@@ -103,7 +112,15 @@ export default function DispatchRequestsPage() {
         id: 'salesman_name',
         header: 'Salesman',
         cell: (row) => (
-          <span className="text-sm text-ink-200">{row.salesman_name || '-'}</span>
+          row.salesman_id ? (
+            <button
+              type="button"
+              className="text-left text-sm text-brand-200 hover:text-brand-100 hover:underline"
+              onClick={() => navigate(`/salesmen?tab=workspace&salesman_id=${row.salesman_id}`)}
+            >
+              {row.salesman_name || `Salesman #${row.salesman_id}`}
+            </button>
+          ) : <span className="text-sm text-ink-200">-</span>
         )
       },
       {
@@ -156,7 +173,7 @@ export default function DispatchRequestsPage() {
         )
       }
     ],
-    []
+    [navigate]
   );
 
   const restrictedDescription = (() => {
@@ -168,10 +185,21 @@ export default function DispatchRequestsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
-          New dispatch
-        </Button>
+      <div className="flex w-full gap-1 rounded-xl border border-white/10 bg-ink-950/40 p-1 sm:w-fit">
+        {DISPATCH_WORKFLOW_TABS.map((tab) => (
+          <Button
+            key={tab.id}
+            size="sm"
+            variant={workflowTab === tab.id ? 'primary' : 'ghost'}
+            onClick={() => {
+              setWorkflowTab(tab.id);
+              setStatus('');
+              setPage(1);
+            }}
+          >
+            {tab.label}
+          </Button>
+        ))}
       </div>
 
       {!canBrowse ? (
@@ -204,7 +232,7 @@ export default function DispatchRequestsPage() {
                 setPage(1);
               }}
             >
-              {DISPATCH_STATUS_FILTER_OPTIONS.map((option) => (
+              {statusFilterOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>

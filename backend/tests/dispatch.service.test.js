@@ -13,6 +13,7 @@ jest.mock('../src/modules/dispatch/dispatch.model', () => ({
   deleteDispatchItem: jest.fn(),
   getDispatchCustomers: jest.fn(),
   getDispatchItems: jest.fn(),
+  getDispatchPosOrderLinks: jest.fn().mockResolvedValue([]),
   getDocumentChecklist: jest.fn(),
   getInvoiceById: jest.fn(),
   getInvoicesForDispatch: jest.fn(),
@@ -22,6 +23,8 @@ jest.mock('../src/modules/dispatch/dispatch.model', () => ({
   recalculateDispatchTotals: jest.fn(),
   updateDispatchItem: jest.fn(),
   updateDispatchRequest: jest.fn(),
+  updateDispatchCustomer: jest.fn(),
+  updateDispatchCustomersFulfillmentStatus: jest.fn(),
   voidInvoicesForDispatchRevision: jest.fn()
 }));
 
@@ -40,7 +43,11 @@ jest.mock('../src/modules/accounting/accounting.model', () => ({}));
 jest.mock('../src/modules/packaging/packaging.service', () => ({
   assertCatalogOffer: jest.fn()
 }));
-jest.mock('../src/modules/packaging/packaging.model', () => ({}));
+jest.mock('../src/modules/packaging/packaging.model', () => ({
+  createReadyStockMovement: jest.fn(),
+  lockReadyStockContainer: jest.fn(),
+  updateReadyStockContainer: jest.fn()
+}));
 jest.mock('../src/modules/pos/pos.service', () => ({}));
 jest.mock('../src/services/storeConfig.service', () => ({}));
 
@@ -49,7 +56,10 @@ jest.mock('../src/utils/transaction', () => ({
 }));
 
 const model = require('../src/modules/dispatch/dispatch.model');
+const inventoryModel = require('../src/modules/inventory/inventory.model');
+const stockService = require('../src/modules/inventory/stock.service');
 const packagingService = require('../src/modules/packaging/packaging.service');
+const packagingModel = require('../src/modules/packaging/packaging.model');
 const service = require('../src/modules/dispatch/dispatch.service');
 
 const actor = { id: 9, store_id: 1 };
@@ -125,9 +135,9 @@ function configureDispatchReadback(current = dispatch({ status: 'pending_approva
   model.getInvoicesForDispatch.mockResolvedValue([]);
   model.getDocumentChecklist.mockResolvedValue({
     customer_table_generated: false,
-    quantity_table_generated: false,
-    required_invoice_count: 1,
-    generated_invoice_count: 0,
+    required_receipt_count: 1,
+    generated_delivery_receipt_count: 0,
+    generated_acceptance_consent_count: 0,
     ready_for_approval: false
   });
 }
@@ -255,24 +265,72 @@ describe('typed dispatch lines, invoices, and document gating', () => {
     }), mockConnection);
   });
 
-  test('blocks approval until the current revision has every required document', async () => {
+  test('approves without requiring document downloads', async () => {
     model.lockDispatchRequest.mockResolvedValue(dispatch({ status: 'pending_approval', revision: 3 }));
-    model.getDocumentChecklist.mockResolvedValue({
-      customer_table_generated: true,
-      quantity_table_generated: true,
-      required_invoice_count: 2,
-      generated_invoice_count: 1,
-      ready_for_approval: false
+    inventoryModel.findItemById.mockResolvedValue({
+      id: 30,
+      store_id: 1,
+      status: 'active',
+      stock_mode: 'piece'
     });
+    stockService.reserveItemStock.mockResolvedValue({ average_cost: '2.0000' });
+    model.createDispatchLineAllocation.mockResolvedValue(701);
+    model.updateDispatchItem.mockResolvedValue({});
 
-    await expect(service.approveDispatch(41, 9, actor)).rejects.toMatchObject({
+    await service.approveDispatch(41, 9, actor);
+
+    expect(model.updateDispatchRequest).toHaveBeenCalledWith(41, expect.objectContaining({
+      status: 'approved',
+      approved_by: 9
+    }), mockConnection);
+    // The only checklist read comes from the returned detail payload, after
+    // approval is complete; it is not an approval gate.
+    expect(model.getDocumentChecklist.mock.invocationCallOrder[0]).toBeGreaterThan(
+      model.updateDispatchRequest.mock.invocationCallOrder[0]
+    );
+  });
+
+  test('requires the customer and quantity list before issuing delivery', async () => {
+    model.lockDispatchRequest.mockResolvedValue(dispatch({ status: 'approved', revision: 3 }));
+    model.getDocumentChecklist.mockResolvedValue({ ready_for_dispatch: false });
+
+    await expect(service.dispatchStock(41, 9, actor)).rejects.toMatchObject({
       statusCode: 409,
-      message: expect.stringContaining('Generate the customer table')
+      message: expect.stringContaining('customer and quantity list')
     });
 
-    expect(model.getDispatchCustomers).not.toHaveBeenCalled();
-    expect(model.createDispatchLineAllocation).not.toHaveBeenCalled();
-    expect(model.updateDispatchRequest).not.toHaveBeenCalled();
+    expect(model.getDispatchItems).not.toHaveBeenCalled();
+  });
+
+  test('requires the combined delivery document before closeout', async () => {
+    model.findDispatchRequestById.mockResolvedValue(dispatch({ status: 'delivery' }));
+    model.lockDispatchRequest.mockResolvedValue(dispatch({ status: 'delivery', revision: 3 }));
+    model.getDocumentChecklist.mockResolvedValue({ delivery_documents_generated: false });
+
+    await expect(service.createCloseout(41, { settlement_date: '2026-07-22', customers: [] }, 9, {
+      ...actor,
+      permissions: ['delivery.closeout']
+    })).rejects.toMatchObject({
+      statusCode: 409,
+      message: expect.stringContaining('combined delivery receipt and consent')
+    });
+  });
+
+  test('records receipt and consent together for one delivery PDF', async () => {
+    model.lockDispatchRequest.mockResolvedValue(dispatch({ status: 'delivery', revision: 3 }));
+    model.getDispatchCustomers.mockResolvedValue([dispatchCustomer()]);
+
+    await service.recordDeliveryDocumentGeneration(41, 31, 9, actor);
+
+    expect(model.createDocumentGeneration).toHaveBeenCalledTimes(2);
+    expect(model.createDocumentGeneration).toHaveBeenNthCalledWith(1, mockConnection, expect.objectContaining({
+      document_type: 'customer_receipt',
+      file_name: 'delivery-document-31.pdf'
+    }));
+    expect(model.createDocumentGeneration).toHaveBeenNthCalledWith(2, mockConnection, expect.objectContaining({
+      document_type: 'customer_acceptance_consent',
+      file_name: 'delivery-document-31.pdf'
+    }));
   });
 
   test('voids the current invoice revision before returning a submitted dispatch to draft', async () => {
@@ -349,6 +407,45 @@ describe('ready-stock source allocation', () => {
     expect(model.updateDispatchItem).toHaveBeenCalledWith(61, {
       unit_cost: '0.9800'
     }, mockConnection);
+  });
+
+  test('consumes a ready carton when MySQL returns its allocated quantity as a string', async () => {
+    packagingModel.lockReadyStockContainer.mockResolvedValue({
+      id: 900,
+      remaining_inner_quantity: '15.0000',
+      initial_inner_quantity: '15.0000',
+      remaining_cost: '14.7000',
+      status: 'full'
+    });
+
+    await service._private.consumeReadyAllocation(
+      mockConnection,
+      {
+        id: 701,
+        store_id: 1,
+        warehouse_id: 2,
+        ready_stock_container_id: 900,
+        allocated_quantity: '1.0000',
+        total_cost: '14.7000'
+      },
+      dispatchLine({
+        id: 61,
+        item_id: null,
+        fulfillment_type: 'ready_outer_carton',
+        line_type: 'sale'
+      }),
+      9
+    );
+
+    expect(packagingModel.updateReadyStockContainer).toHaveBeenCalledWith(mockConnection, 900, {
+      remaining_inner_quantity: 0,
+      remaining_cost: 0,
+      status: 'depleted'
+    });
+    expect(packagingModel.createReadyStockMovement).toHaveBeenCalledWith(mockConnection, expect.objectContaining({
+      inner_quantity_change: '-15.0000',
+      cost_change: '-14.7000'
+    }));
   });
 });
 

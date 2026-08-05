@@ -26,7 +26,7 @@ function territoryKey(territory) {
  * Customers created in Mini POS are intentionally limited to the signed-in
  * salesman's own territories.  The backend repeats this validation.
  */
-export function PosCustomerModal({ open, onClose, territories = [], onCreated }) {
+export function PosCustomerModal({ open, onClose, territories = [], salesmanId = '', onCreated }) {
   const queryClient = useQueryClient();
   const [form, setForm] = useState(emptyForm);
   const [errors, setErrors] = useState({});
@@ -81,6 +81,7 @@ export function PosCustomerModal({ open, onClose, territories = [], onCreated })
     mutation.mutate({
       customer_code: form.customer_code.trim() || null,
       name: form.name.trim(),
+      ...(salesmanId ? { salesman_id: Number(salesmanId) } : {}),
       phone: form.phone.trim() || null,
       secondary_phone: form.secondary_phone.trim() || null,
       location_id: Number(territory.location_id),
@@ -96,7 +97,7 @@ export function PosCustomerModal({ open, onClose, territories = [], onCreated })
       open={open}
       onClose={onClose}
       title="New Mini POS customer"
-      description="The customer is automatically assigned to you and must be placed in one of your assigned territories."
+      description="The customer is assigned to the selected salesman's sublocation automatically."
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>
@@ -126,22 +127,31 @@ export function PosCustomerModal({ open, onClose, territories = [], onCreated })
           <Input label="Secondary phone" value={form.secondary_phone} onChange={(event) => update('secondary_phone', event.target.value)} />
         </div>
 
-        <Select
-          label="Your territory"
-          value={form.territory_key}
-          onChange={(event) => update('territory_key', event.target.value)}
-          error={errors.territory_key}
-          description="Only territories assigned to you are available."
-        >
-          <option value="">Select territory</option>
-          {territoryOptions.map((territory) => (
-            <option key={territory.key} value={territory.key}>{territory.label}</option>
-          ))}
-        </Select>
+        {territoryOptions.length > 1 ? (
+          <Select
+            label="Customer sublocation"
+            value={form.territory_key}
+            onChange={(event) => update('territory_key', event.target.value)}
+            error={errors.territory_key}
+            description="Choose one of the salesman's assigned sublocations."
+            required
+          >
+            <option value="">Select sublocation</option>
+            {territoryOptions.map((territory) => (
+              <option key={territory.key} value={territory.key}>{territory.label}</option>
+            ))}
+          </Select>
+        ) : territoryOptions.length === 1 ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-ink-400">Customer sublocation</p>
+            <p className="mt-1 text-sm font-medium text-ink-100">{territoryOptions[0].label}</p>
+            <p className="mt-1 text-xs text-ink-400">Assigned automatically from the salesman.</p>
+          </div>
+        ) : null}
 
         {!territoryOptions.length && (
           <p className="rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-sm text-amber-100">
-            You do not have an active territory assignment yet. Ask a manager to assign a location before creating POS customers.
+            This salesman has no active sublocation assignment yet. Ask a manager to assign a sublocation before creating customers.
           </p>
         )}
 

@@ -111,62 +111,66 @@ function UnitFormModal({ open, onClose, unit, baseUnits }) {
       }
     >
       <form id="unit-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Name"
-            value={form.name}
-            onChange={(event) => handleChange('name', event.target.value)}
-            error={errors.name}
-            required
-          />
-          <Input
-            label="Symbol"
-            value={form.symbol}
-            onChange={(event) => handleChange('symbol', event.target.value)}
-            error={errors.symbol}
-            required
-          />
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Select
-            label="Unit type"
-            value={form.unit_type}
-            onChange={(event) => handleChange('unit_type', event.target.value)}
-            error={errors.unit_type}
-          >
-            {UNIT_TYPES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-          <Select
-            label="Base unit"
-            value={form.base_unit_id || ''}
-            onChange={(event) => handleChange('base_unit_id', event.target.value)}
-            error={errors.base_unit_id}
-            description="Optional. Set when this unit derives from another."
-          >
-            <option value="">None</option>
-            {baseUnits
-              .filter((u) => u.id !== unit?.id)
-              .map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.name} ({option.symbol})
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={(event) => handleChange('name', event.target.value)}
+              error={errors.name}
+              required
+              placeholder="e.g. Kilogram"
+            />
+            <Input
+              label="Symbol"
+              value={form.symbol}
+              onChange={(event) => handleChange('symbol', event.target.value)}
+              error={errors.symbol}
+              required
+              placeholder="e.g. kg"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Select
+              label="Unit type"
+              value={form.unit_type}
+              onChange={(event) => handleChange('unit_type', event.target.value)}
+              error={errors.unit_type}
+            >
+              {UNIT_TYPES.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
-          </Select>
+            </Select>
+            <Select
+              label="Base unit"
+              value={form.base_unit_id || ''}
+              onChange={(event) => handleChange('base_unit_id', event.target.value)}
+              error={errors.base_unit_id}
+              description="Optional. Set when this unit derives from another."
+            >
+              <option value="">None (Standard base unit)</option>
+              {baseUnits
+                .filter((u) => u.id !== unit?.id)
+                .map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name} ({option.symbol})
+                  </option>
+                ))}
+            </Select>
+          </div>
+          <Input
+            label="Conversion to base"
+            type="number"
+            step="any"
+            min="0"
+            value={form.conversion_to_base}
+            onChange={(event) => handleChange('conversion_to_base', event.target.value)}
+            error={errors.conversion_to_base}
+            description="How many of this unit equal one base unit. Default 1."
+          />
         </div>
-        <Input
-          label="Conversion to base"
-          type="number"
-          step="any"
-          min="0"
-          value={form.conversion_to_base}
-          onChange={(event) => handleChange('conversion_to_base', event.target.value)}
-          error={errors.conversion_to_base}
-          description="How many of this unit equal one base unit. Default 1."
-        />
       </form>
     </Modal>
   );

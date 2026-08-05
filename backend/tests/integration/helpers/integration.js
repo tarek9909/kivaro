@@ -100,7 +100,7 @@ async function createWarehouseFixture(token, prefix = 'fixture') {
 function itemPayload(prefix, category, options = {}) {
   const itemKind = options.item_kind || 'normal';
   const stockMode = options.stock_mode || 'piece';
-  const isWeight = stockMode === 'weight' || stockMode === 'carton_weight';
+  const isWeight = stockMode === 'weight';
   return {
     category_id: category.id,
     base_unit_id: options.base_unit_id || (isWeight ? 1 : 2),
@@ -108,13 +108,10 @@ function itemPayload(prefix, category, options = {}) {
     code: options.code || suffix(`${prefix}_item_code`),
     item_kind: itemKind,
     stock_mode: stockMode,
-    kg_per_carton: stockMode === 'carton_weight' ? (options.kg_per_carton || 12) : undefined,
-    loose_units_per_carton: stockMode === 'carton_weight' ? (options.loose_units_per_carton || 30) : undefined,
+    kg_per_carton: stockMode === 'carton' ? (options.kg_per_carton || 12) : undefined,
     max_content_weight_kg: itemKind === 'packaging' ? (options.max_content_weight_kg ?? 0) : undefined,
     default_cost: options.default_cost ?? 2,
     default_selling_price: options.default_selling_price ?? 5,
-    carton_selling_price: options.carton_selling_price ?? (stockMode === 'carton_weight' ? 20 : undefined),
-    loose_unit_selling_price: options.loose_unit_selling_price ?? (stockMode === 'carton_weight' ? 1 : undefined),
     reorder_level: options.reorder_level ?? 0
   };
 }
@@ -128,7 +125,7 @@ async function receiveFixtureStock(token, fixture, data = {}) {
     item_id: item.id,
     notes: data.notes || 'Integration fixture stock'
   };
-  if (stockMode === 'carton_weight') {
+  if (stockMode === 'carton') {
     body.carton_count = data.carton_count ?? 1;
     body.cost_per_carton = data.cost_per_carton ?? 24;
   } else {
@@ -159,17 +156,15 @@ async function createPackagingFixture(token, prefix = 'packaging') {
   const raw = await createInventoryFixture(token, `${prefix}_raw`, {
     category,
     warehouse,
-    stock_mode: 'carton_weight',
-    kg_per_carton: 12,
-    loose_units_per_carton: 30,
-    initial_stock: { carton_count: 5, cost_per_carton: 24 }
+    stock_mode: 'weight',
+    initial_stock: { quantity: 60, unit_cost: 2 }
   });
   const outer = await createInventoryFixture(token, `${prefix}_outer`, {
     category,
     warehouse,
     item_kind: 'packaging',
     stock_mode: 'piece',
-    max_content_weight_kg: 0,
+    max_content_weight_kg: 6,
     initial_stock: { quantity: 5, unit_cost: 1 }
   });
   const inner = await createInventoryFixture(token, `${prefix}_inner`, {
@@ -234,12 +229,25 @@ async function createLocationFixture(token, prefix = 'fixture') {
       code: suffix(`${prefix}_sub`)
     })
     .expect(201);
+  const ruleResponse = await authRequest(token)
+    .post('/api/commission-rules')
+    .send({
+      name: suffix(`${prefix}_commission_rule`),
+      target_period: 'monthly',
+      below_target_rate: 5,
+      at_target_rate: 10,
+      above_target_extra_rate: 1,
+      applies_from: '2026-01-01'
+    })
+    .expect(201);
   const salesmanResponse = await authRequest(token)
     .post('/api/salesmen')
     .send({
       full_name: suffix(`${prefix}_salesman`),
       email: `${suffix(prefix)}@example.com`,
-      joined_at: '2026-05-01'
+      joined_at: '2026-05-01',
+      commission_rule_id: ruleResponse.body.data.commission_rule.id,
+      password: 'FixturePass123!'
     })
     .expect(201);
   await authRequest(token)
@@ -258,6 +266,7 @@ async function createLocationFixture(token, prefix = 'fixture') {
   return {
     location: locationResponse.body.data.location,
     sublocation: sublocationResponse.body.data.sublocation,
+    commission_rule: ruleResponse.body.data.commission_rule,
     salesman: salesmanResponse.body.data.salesman,
     customer: customerResponse.body.data.customer
   };

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useParams } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell.jsx';
 import { useAuthStore } from '@/app/stores/authStore.js';
@@ -42,8 +42,7 @@ import {
 import LocationsLayout from '@/pages/locations/LocationsLayout.jsx';
 import LocationsTab from '@/pages/locations/LocationsTab.jsx';
 import SublocationsTab from '@/pages/locations/SublocationsTab.jsx';
-import SalesmenTab from '@/pages/locations/SalesmenTab.jsx';
-import TargetsTab from '@/pages/locations/TargetsTab.jsx';
+import SalesmenPage from '@/pages/locations/SalesmenPage.jsx';
 import {
   LOCATIONS_PARENT_PERMISSIONS,
   LOCATIONS_PERMISSIONS,
@@ -53,7 +52,6 @@ import CustomersPage from '@/pages/customers/CustomersPage.jsx';
 import { CUSTOMERS_PARENT_PERMISSIONS } from '@/pages/customers/customers.config.js';
 import SalesPage from '@/pages/sales/SalesPage.jsx';
 import PosPage from '@/pages/pos/PosPage.jsx';
-import SalesmanWorkspacePage from '@/pages/pos/SalesmanWorkspacePage.jsx';
 import DispatchLayout from '@/pages/dispatch/DispatchLayout.jsx';
 import DispatchRequestsPage from '@/pages/dispatch/DispatchRequestsPage.jsx';
 import {
@@ -84,11 +82,11 @@ import {
 import CommissionsLayout from '@/pages/commissions/CommissionsLayout.jsx';
 import CommissionRulesTab from '@/pages/commissions/CommissionRulesTab.jsx';
 import CommissionsCalculationsTab from '@/pages/commissions/CommissionsCalculationsTab.jsx';
+import CommissionPayrollTab from '@/pages/commissions/CommissionPayrollTab.jsx';
 import {
   COMMISSIONS_PARENT_PERMISSIONS,
   pickFirstAllowedCommissionsTab
 } from '@/pages/commissions/commissions.config.js';
-import ReportsLayout from '@/pages/reports/ReportsLayout.jsx';
 import SuperadminDashboard from '@/pages/superadmin/SuperadminDashboard.jsx';
 import {
   REPORTS_PARENT_PERMISSIONS,
@@ -99,13 +97,14 @@ import {
 } from '@/pages/reports/reports.config.js';
 
 const PLACEHOLDER_ROUTES = [];
+const ReportsLayout = lazy(() => import('@/pages/reports/ReportsLayout.jsx'));
 
 const ADMIN_ROUTES = [
   { path: 'users', element: <UsersPage />, anyOfPermissions: ['users.view'], moduleKey: 'users' },
   { path: 'roles', element: <RolesPage />, anyOfPermissions: ['roles.manage'], moduleKey: 'roles' },
   { path: 'settings', element: <SettingsPage />, anyOfPermissions: ['settings.manage'], moduleKey: 'settings' },
   { path: 'audit-logs', element: <AuditLogsPage />, anyOfPermissions: ['audit_logs.view'], moduleKey: 'audit_logs' },
-  { path: 'notifications', element: <NotificationsPage />, anyOfPermissions: ['dashboard.view'], moduleKey: 'notifications' }
+  { path: 'notifications', element: <NotificationsPage />, anyOfPermissions: ['dashboard.view', 'salesman_workspace.view'], moduleKey: 'notifications' }
 ];
 
 function InventoryIndexRedirect() {
@@ -195,7 +194,9 @@ function ReportRoute() {
   const moduleKey = reportKey ? `reports.${REPORTS_REGISTRY[reportKey].id}` : undefined;
   return (
     <ProtectedRoute anyOfPermissions={[REPORTS_PERMISSIONS.view]} moduleKey={moduleKey}>
-      <ReportsLayout />
+      <Suspense fallback={<div className="p-6 text-sm text-ink-300">Loading report…</div>}>
+        <ReportsLayout />
+      </Suspense>
     </ProtectedRoute>
   );
 }
@@ -312,7 +313,7 @@ export default function App() {
           <Route
             path="items"
             element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.items">
+              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]} moduleKey="inventory.items">
                 <ItemsTab />
               </ProtectedRoute>
             }
@@ -328,7 +329,7 @@ export default function App() {
           <Route
             path="categories"
             element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.categories">
+              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]} moduleKey="inventory.categories">
                 <CategoriesTab />
               </ProtectedRoute>
             }
@@ -336,7 +337,7 @@ export default function App() {
           <Route
             path="units"
             element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.units">
+              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]} moduleKey="inventory.units">
                 <UnitsTab />
               </ProtectedRoute>
             }
@@ -344,7 +345,7 @@ export default function App() {
           <Route
             path="warehouses"
             element={
-              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.warehouses">
+              <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete]} moduleKey="inventory.warehouses">
                 <WarehousesTab />
               </ProtectedRoute>
             }
@@ -384,7 +385,7 @@ export default function App() {
         <Route
           path="packaging"
           element={
-            <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view]} moduleKey="inventory.packaging">
+            <ProtectedRoute anyOfPermissions={[INVENTORY_PERMISSIONS.view, INVENTORY_PERMISSIONS.create, INVENTORY_PERMISSIONS.update, INVENTORY_PERMISSIONS.delete, INVENTORY_PERMISSIONS.adjust]} moduleKey="inventory.packaging">
               <PackagingPage />
             </ProtectedRoute>
           }
@@ -458,19 +459,11 @@ export default function App() {
           />
           <Route
             path="salesmen"
-            element={
-              <ProtectedRoute anyOfPermissions={[LOCATIONS_PERMISSIONS.salesmen]} moduleKey="locations.salesmen">
-                <SalesmenTab />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/salesmen?tab=directory" replace />}
           />
           <Route
             path="targets"
-            element={
-              <ProtectedRoute anyOfPermissions={[LOCATIONS_PERMISSIONS.targets]} moduleKey="locations.targets">
-                <TargetsTab />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/salesmen?tab=targets" replace />}
           />
         </Route>
 
@@ -497,9 +490,9 @@ export default function App() {
           element={
             <ProtectedRoute
               anyOfPermissions={[
-                'pos.own_orders',
-                'pos.review',
-                'pos.accept',
+                'pos.create_own',
+                'pos.create_for_salesman',
+                'dispatch.create',
                 'salesman_workspace.view'
               ]}
               moduleKey="pos"
@@ -511,12 +504,21 @@ export default function App() {
 
         <Route
           path="salesman-workspace"
+          element={<Navigate to="/salesmen?tab=workspace" replace />}
+        />
+
+        <Route
+          path="salesmen"
           element={
             <ProtectedRoute
-              anyOfPermissions={['salesman_workspace.view']}
-              moduleKey="salesman_workspace"
+              anyOfPermissions={[
+                'salesmen.manage',
+                'targets.manage',
+                'salesman_workspace.view',
+                'pos.create_for_salesman'
+              ]}
             >
-              <SalesmanWorkspacePage />
+              <SalesmenPage />
             </ProtectedRoute>
           }
         />
@@ -553,10 +555,7 @@ export default function App() {
             path="expense-categories"
             element={
               <ProtectedRoute
-                anyOfPermissions={[
-                  ACCOUNTING_PERMISSIONS.view,
-                  ACCOUNTING_PERMISSIONS.manage
-                ]}
+                anyOfPermissions={[ACCOUNTING_PERMISSIONS.view]}
                 moduleKey="accounting.expense-categories"
               >
                 <ExpenseCategoriesTab />
@@ -581,10 +580,7 @@ export default function App() {
             path="cash-accounts"
             element={
               <ProtectedRoute
-                anyOfPermissions={[
-                  ACCOUNTING_PERMISSIONS.view,
-                  ACCOUNTING_PERMISSIONS.manage
-                ]}
+                anyOfPermissions={[ACCOUNTING_PERMISSIONS.view]}
                 moduleKey="accounting.cash-accounts"
               >
                 <CashAccountsTab />
@@ -644,7 +640,11 @@ export default function App() {
             path="customer-credits"
             element={
               <ProtectedRoute
-                anyOfPermissions={[PAYMENTS_PERMISSIONS.accountingView]}
+                anyOfPermissions={[
+                  PAYMENTS_PERMISSIONS.debts,
+                  PAYMENTS_PERMISSIONS.accountingView,
+                  PAYMENTS_PERMISSIONS.accountingManage
+                ]}
                 moduleKey="payments.customer-credits"
               >
                 <CustomerCreditsTab />
@@ -654,7 +654,7 @@ export default function App() {
           <Route
             path="receipts"
             element={
-              <ProtectedRoute anyOfPermissions={[PAYMENTS_PERMISSIONS.receiptsPrint]} moduleKey="payments.receipts">
+              <ProtectedRoute anyOfPermissions={[PAYMENTS_PERMISSIONS.receiptsPrint, PAYMENTS_PERMISSIONS.debts, PAYMENTS_PERMISSIONS.accountingView, PAYMENTS_PERMISSIONS.accountingManage]} moduleKey="payments.receipts">
                 <ReceiptsTab />
               </ProtectedRoute>
             }
@@ -683,6 +683,14 @@ export default function App() {
             element={
               <ProtectedRoute anyOfPermissions={COMMISSIONS_PARENT_PERMISSIONS} moduleKey="commissions.calculations">
                 <CommissionsCalculationsTab />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="payroll"
+            element={
+              <ProtectedRoute anyOfPermissions={COMMISSIONS_PARENT_PERMISSIONS} moduleKey="commissions.payroll">
+                <CommissionPayrollTab />
               </ProtectedRoute>
             }
           />

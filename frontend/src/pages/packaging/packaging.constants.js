@@ -17,8 +17,7 @@ export const COMPONENT_ROLES = [
 ];
 
 export const CATALOG_ENTRY_TYPES = [
-  { value: 'normal_carton', label: 'Normal carton', target: 'item', stockMode: 'carton_weight' },
-  { value: 'normal_loose_unit', label: 'Normal loose unit', target: 'item', stockMode: 'carton_weight' },
+  { value: 'normal_carton', label: 'Normal carton', target: 'item', stockMode: 'carton' },
   { value: 'normal_weight', label: 'Normal weight', target: 'item', stockMode: 'weight' },
   { value: 'normal_piece', label: 'Normal piece', target: 'item', stockMode: 'piece' },
   { value: 'ready_outer_carton', label: 'Ready outer carton', target: 'group' },
@@ -59,6 +58,25 @@ export function packagingItemLabel(item) {
     ? 'capacity not set'
     : `${capacity} kg capacity`;
   return `${item?.name || 'Unnamed item'}${item?.code ? ` (${item.code})` : ''} — ${capacityLabel}`;
+}
+
+function capacityKg(item) {
+  const capacity = Number(item?.max_content_weight_kg);
+  return Number.isFinite(capacity) && capacity > 0 ? capacity : null;
+}
+
+export function innerQuantityPerOuter(outerItem, innerItem) {
+  const outerCapacity = capacityKg(outerItem);
+  const innerCapacity = capacityKg(innerItem);
+  if (!outerCapacity || !innerCapacity) return null;
+
+  const quantity = outerCapacity / innerCapacity;
+  const wholeQuantity = Math.round(quantity);
+  return Math.abs(quantity - wholeQuantity) < 1e-9 && wholeQuantity > 0 ? wholeQuantity : null;
+}
+
+export function compatibleInnerPackagingItems(outerItem, packagingItems = []) {
+  return packagingItems.filter((item) => innerQuantityPerOuter(outerItem, item) !== null);
 }
 
 export function itemLabel(item) {

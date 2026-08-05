@@ -23,14 +23,15 @@ describe('dispatch API module', () => {
   it('exposes the item-based dispatch, document, invoice, and settlement contracts', () => {
     const api = createDispatchApi(buildClientStub());
     expect(Object.keys(api.requests).sort()).toEqual([
-      'addCustomer', 'approve', 'cancel', 'create', 'createCloseout', 'createFromPos',
+      'addCustomer', 'approve', 'cancel', 'create', 'createCloseout',
       'createReturn', 'dispatchStock', 'get', 'list', 'rework', 'settlements', 'submit', 'update'
     ]);
     expect(Object.keys(api.customers)).toEqual(['addItem']);
     expect(Object.keys(api.items).sort()).toEqual(['remove', 'update']);
-    expect(Object.keys(api.documents).sort()).toEqual(['customerTablePdf', 'quantityTablePdf']);
+    expect(Object.keys(api.documents).sort()).toEqual(['customerTablePdf', 'deliveryDocumentPdf']);
     expect(Object.keys(api.invoices).sort()).toEqual(['get', 'list', 'pdf']);
-    expect(Object.keys(api.settlements).sort()).toEqual(['get', 'post']);
+    expect(Object.keys(api.returnCreditNotes).sort()).toEqual(['get', 'pdf']);
+    expect(Object.keys(api.settlements).sort()).toEqual(['get', 'post', 'reopen']);
   });
 
   it('uses catalog-backed dispatch line and lifecycle endpoints', async () => {
@@ -70,12 +71,14 @@ describe('dispatch API module', () => {
     const client = buildClientStub();
     const api = createDispatchApi(client);
     await api.documents.customerTablePdf(7);
-    await api.documents.quantityTablePdf(7);
+    await api.documents.deliveryDocumentPdf(7, 12);
     await api.invoices.pdf(14);
+    await api.returnCreditNotes.pdf(15);
     expect(client.calls).toEqual([
       { method: 'get', path: '/dispatch-requests/7/documents/customer-table', rest: [{ responseType: 'blob' }] },
-      { method: 'get', path: '/dispatch-requests/7/documents/quantity-table', rest: [{ responseType: 'blob' }] },
-      { method: 'get', path: '/invoices/14/pdf', rest: [{ responseType: 'blob' }] }
+      { method: 'get', path: '/dispatch-requests/7/customers/12/delivery-document-pdf', rest: [{ responseType: 'blob' }] },
+      { method: 'get', path: '/invoices/14/pdf', rest: [{ responseType: 'blob' }] },
+      { method: 'get', path: '/return-credit-notes/15/pdf', rest: [{ responseType: 'blob' }] }
     ]);
   });
 });

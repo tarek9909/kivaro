@@ -11,6 +11,8 @@
     "db:migrate": "node scripts/db/migrate.js",
     "db:migrate:check": "node scripts/db/migrate.js --check",
     "db:reset": "node scripts/db/reset.js",
+    "commissions:process-due": "node scripts/run-due-commissions.js",
+    "commissions:scheduler": "node scripts/commission-scheduler.js",
     "dev": "nodemon src/server.js",
     "migrate": "node scripts/db/migrate.js",
     "seed:demo": "node scripts/db/seed-demo.js",
@@ -29,14 +31,18 @@
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^8.5.2",
+    "express-rate-limit": "^8.6.2",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "morgan": "^1.10.0",
+    "morgan": "^1.11.0",
     "mysql2": "^3.11.0",
     "pdfkit": "^0.18.0",
     "swagger-ui-express": "^5.0.1",
     "zod": "^3.23.8"
+  },
+  "overrides": {
+    "body-parser": "1.20.6",
+    "ip-address": "10.4.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

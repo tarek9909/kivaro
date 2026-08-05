@@ -1,6 +1,8 @@
 const { z } = require('zod');
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
+const salesmanIdParam = z.object({ salesmanId: z.coerce.number().int().positive() });
+const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-01$/, 'Expected a calendar month in YYYY-MM-01 format');
 const listSchema = z.object({
   query: z.object({
     page: z.coerce.number().int().positive().optional(),
@@ -31,12 +33,23 @@ const ruleBody = z.object({
 module.exports = {
   calculateSchema: z.object({
     body: z.object({
-      salesman_target_id: z.coerce.number().int().positive(),
-      commission_rule_id: z.coerce.number().int().positive().optional()
+      salesman_target_id: z.coerce.number().int().positive()
     })
   }),
   idSchema: z.object({ params: idParam }),
   listSchema,
+  payrollListSchema: z.object({ query: z.object({ period_month: month.optional(), store_id: z.coerce.number().int().positive().optional() }) }),
+  payrollPaySchema: z.object({
+    params: salesmanIdParam,
+    body: z.object({
+      period_month: month,
+      payment_date: z.string().trim().min(1),
+      payment_method: z.enum(['cash', 'bank_transfer', 'cheque', 'other']).default('cash'),
+      reference_number: z.string().trim().optional().nullable(),
+      cash_account_id: z.coerce.number().int().positive(),
+      notes: z.string().trim().optional().nullable()
+    })
+  }),
   paySchema: z.object({
     params: idParam,
     body: z.object({

@@ -8,7 +8,7 @@ export function createRolesApi(client) {
   return {
     ...roles,
     permissions: {
-      list: (options) => client.get('/permissions', options)
+      list: (params, options) => client.get('/permissions', { ...options, params })
     },
     replacePermissions: (id, payload, options) => client.put(`/roles/${id}/permissions`, payload, options)
   };

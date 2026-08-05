@@ -21,6 +21,19 @@ export function useCashAccountsList(enabled = true, params = {}) {
   });
 }
 
+export function useIncomingCashAccountOptions(enabled = true) {
+  return useCashAccountPaymentOptions('incoming', enabled);
+}
+
+export function useCashAccountPaymentOptions(direction, enabled = true) {
+  return useQuery({
+    queryKey: ['accounting', 'options', 'cash-account-payment-options', direction],
+    queryFn: () => api.accounting.paymentOptions.list({ direction }),
+    staleTime: 60_000,
+    enabled
+  });
+}
+
 export function useCustomersList(enabled = true) {
   return useQuery({
     queryKey: ['accounting', 'options', 'customers'],

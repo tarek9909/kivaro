@@ -213,7 +213,7 @@ export function PurchaseOrderHeaderEditModal({ open, onClose, purchaseOrder }) {
               value={form.cash_account_id}
               onChange={(event) => handleChange('cash_account_id', event.target.value)}
               error={errors.cash_account_id}
-              description="Used for the automatic supplier payment on approval."
+              description="Default account used when recording supplier payments."
             >
               <option value="">Select cash account</option>
               {cashAccounts.map((account) => (

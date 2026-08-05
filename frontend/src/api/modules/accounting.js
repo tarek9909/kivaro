@@ -16,6 +16,9 @@ export function createAccountingApi(client) {
       create: (payload, options) => client.post('/cash-accounts', payload, options),
       update: (id, payload, options) => client.patch(`/cash-accounts/${id}`, payload, options)
     },
+    paymentOptions: {
+      list: (params, options) => client.get('/cash-accounts/payment-options', { ...options, params })
+    },
     financialTransactions: {
       list: (params, options) => client.get('/financial-transactions', { ...options, params })
     },

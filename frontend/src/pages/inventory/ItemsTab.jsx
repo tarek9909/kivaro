@@ -21,12 +21,13 @@ import { formatNumber } from '@/lib/formatters.js';
 import {
   INVENTORY_PERMISSIONS,
   ITEM_KINDS,
+  ITEM_KIND_TABS,
   STATUSES,
   STOCK_MODE_LABELS,
   STOCK_MODES
 } from './inventory.config.js';
 import { useCategoriesOptions, useUnitsOptions, useWarehousesOptions } from './useInventoryOptions.js';
-import { formatStockQuantity, getEntryUnitLabel } from './stockUnits.js';
+import { formatCartonStockSummary, formatStockQuantity, getEntryUnitLabel } from './stockUnits.js';
 
 const STATUS_OPTIONS = [{ value: '', label: 'All statuses' }, ...STATUSES];
 const ITEM_KIND_OPTIONS = [{ value: '', label: 'All item kinds' }, ...ITEM_KINDS];
@@ -51,7 +52,6 @@ function emptyForm(item) {
     item_kind: itemKind,
     stock_mode: itemKind === 'packaging' ? 'piece' : inferStockMode(item),
     kg_per_carton: item?.kg_per_carton ?? '',
-    loose_units_per_carton: item?.loose_units_per_carton ?? '',
     max_content_weight_kg: item?.max_content_weight_kg ?? '',
     description: item?.description ?? '',
     default_cost: item?.default_cost ?? 0,
@@ -69,7 +69,7 @@ function emptyForm(item) {
 }
 
 function requiredUnitType(form) {
-  return form.item_kind === 'packaging' || form.stock_mode === 'piece'
+  return form.item_kind === 'packaging' || ['piece', 'carton'].includes(form.stock_mode)
     ? 'quantity'
     : 'weight';
 }
@@ -91,10 +91,9 @@ function itemConfigurationLabel(item) {
       ? 'Piece stock'
       : `${formatNumber(capacity, { maximumFractionDigits: 4 })} kg capacity`;
   }
-  if (stockMode === 'carton_weight') {
+  if (stockMode === 'carton') {
     const kgPerCarton = formatNumber(item.kg_per_carton, { maximumFractionDigits: 4 });
-    const looseUnits = formatNumber(item.loose_units_per_carton, { maximumFractionDigits: 0 });
-    return `${kgPerCarton} kg/carton · ${looseUnits} loose units`;
+    return `${kgPerCarton} kg/carton`;
   }
   return stockMode === 'weight' ? 'Stocked in kg' : 'Whole pieces only';
 }
@@ -112,13 +111,9 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     [form.item_kind, unitType, units]
   );
   const selectedBaseUnit = units.find((unit) => String(unit.id) === String(form.base_unit_id));
-  const isCartonWeight = form.item_kind === 'normal' && form.stock_mode === 'carton_weight';
+  const isCartonWeight = form.item_kind === 'normal' && form.stock_mode === 'carton';
   const isPieceStock = unitType === 'quantity';
   const entryUnitLabel = isCartonWeight ? 'carton' : getEntryUnitLabel(selectedBaseUnit || {});
-  const looseUnitWeight =
-    isCartonWeight && Number(form.kg_per_carton) > 0 && Number(form.loose_units_per_carton) > 0
-      ? Number(form.kg_per_carton) / Number(form.loose_units_per_carton)
-      : null;
 
   useEffect(() => {
     if (!open) return;
@@ -149,7 +144,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
         next.stock_mode = value === 'packaging' ? 'piece' : 'weight';
         next.base_unit_id = '';
         next.kg_per_carton = '';
-        next.loose_units_per_carton = '';
         next.carton_selling_price = '';
         next.loose_unit_selling_price = '';
       }
@@ -159,9 +153,8 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
         next.initial_unit_cost = '';
         next.initial_cartons = '';
         next.initial_cost_per_carton = '';
-        if (value !== 'carton_weight') {
+        if (value !== 'carton') {
           next.kg_per_carton = '';
-          next.loose_units_per_carton = '';
           next.carton_selling_price = '';
           next.loose_unit_selling_price = '';
         }
@@ -186,9 +179,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     if (isCartonWeight) {
       if (!form.kg_per_carton || Number(form.kg_per_carton) <= 0) {
         next.kg_per_carton = 'Kg per carton must be greater than zero.';
-      }
-      if (!form.loose_units_per_carton || !Number.isInteger(Number(form.loose_units_per_carton)) || Number(form.loose_units_per_carton) <= 0) {
-        next.loose_units_per_carton = 'Loose units per carton must be a whole number greater than zero.';
       }
     }
     if (form.item_kind === 'packaging' && (form.max_content_weight_kg === '' || Number(form.max_content_weight_kg) < 0)) {
@@ -250,9 +240,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     };
     if (isCartonWeight) {
       payload.kg_per_carton = Number(form.kg_per_carton);
-      payload.loose_units_per_carton = Number(form.loose_units_per_carton);
-      payload.carton_selling_price = numberOrNull(form.carton_selling_price);
-      payload.loose_unit_selling_price = numberOrNull(form.loose_unit_selling_price);
     }
     if (form.item_kind === 'packaging') {
       payload.max_content_weight_kg = Number(form.max_content_weight_kg);
@@ -292,103 +279,113 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
       }
     >
       <form id="item-form" onSubmit={handleSubmit} className="space-y-4" noValidate>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input
-            label="Name"
-            value={form.name}
-            onChange={(event) => handleChange('name', event.target.value)}
-            error={errors.name}
-            required
-          />
-          <Input
-            label="Code"
-            value={form.code}
-            onChange={(event) => handleChange('code', event.target.value)}
-            error={errors.code}
-            required
-          />
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Select
-            label="Category"
-            value={form.category_id || ''}
-            onChange={(event) => handleChange('category_id', event.target.value)}
-            error={errors.category_id}
-            required
-          >
-            <option value="">Select category</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            label="Item kind"
-            value={form.item_kind}
-            onChange={(event) => handleChange('item_kind', event.target.value)}
-            error={errors.item_kind}
-            disabled={isEdit}
-            description={isEdit ? 'Item kind is fixed after creation.' : 'Packaging items are always stocked as pieces.'}
-          >
-            {ITEM_KINDS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <Select
-            label="Stock mode"
-            value={form.stock_mode}
-            onChange={(event) => handleChange('stock_mode', event.target.value)}
-            error={errors.stock_mode}
-            disabled={form.item_kind === 'packaging' || isEdit}
-            description={
-              form.item_kind === 'packaging'
-                ? 'Packaging materials are always counted as whole pieces.'
-                : isEdit
-                  ? 'Stock mode is fixed after creation to preserve inventory history.'
-                  : stockModeHelp(form.stock_mode)
-            }
-          >
-            {form.item_kind === 'packaging' ? (
-              <option value="piece">Piece</option>
-            ) : (
-              STOCK_MODES.map((option) => (
+        {/* Basic Identity Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Basic Information</h4>
+            <span className="text-[10px] text-ink-400">Required fields marked</span>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Input
+              label="Name"
+              value={form.name}
+              onChange={(event) => handleChange('name', event.target.value)}
+              error={errors.name}
+              required
+            />
+            <Input
+              label="Code"
+              value={form.code}
+              onChange={(event) => handleChange('code', event.target.value)}
+              error={errors.code}
+              required
+            />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              label="Category"
+              value={form.category_id || ''}
+              onChange={(event) => handleChange('category_id', event.target.value)}
+              error={errors.category_id}
+              required
+            >
+              <option value="">Select category</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="Item kind"
+              value={form.item_kind}
+              onChange={(event) => handleChange('item_kind', event.target.value)}
+              error={errors.item_kind}
+              disabled={isEdit}
+              description={isEdit ? 'Item kind is fixed after creation.' : 'Packaging items are always stocked as pieces.'}
+            >
+              {ITEM_KINDS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
-              ))
-            )}
-          </Select>
-          <Select
-            label="Base unit"
-            value={form.base_unit_id || ''}
-            onChange={(event) => handleChange('base_unit_id', event.target.value)}
-            error={errors.base_unit_id}
-            required
-            description={form.item_kind === 'packaging' ? 'Packaging materials must use the pc unit.' : `Choose a ${unitType} unit compatible with this stock mode.`}
-          >
-            <option value="">Select unit</option>
-            {compatibleUnits.map((unit) => (
-              <option key={unit.id} value={unit.id}>
-                {unit.name} ({unit.symbol})
-              </option>
-            ))}
-          </Select>
+              ))}
+            </Select>
+          </div>
         </div>
 
-        {isCartonWeight && (
-          <div className="rounded-xl border border-brand-400/20 bg-brand-500/5 p-4">
-            <p className="text-sm font-medium text-ink-100">Carton configuration</p>
-            <p className="mt-1 text-xs text-ink-300">
-              Loose stock is consumed before the next sealed carton is opened.
-            </p>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
+        {/* Stocking & Unit Configuration Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Measurement & Stock Mode</h4>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              label="Stock mode"
+              value={form.stock_mode}
+              onChange={(event) => handleChange('stock_mode', event.target.value)}
+              error={errors.stock_mode}
+              disabled={form.item_kind === 'packaging' || isEdit}
+              description={
+                form.item_kind === 'packaging'
+                  ? 'Packaging materials are always counted as whole pieces.'
+                  : isEdit
+                    ? 'Stock mode is fixed after creation to preserve inventory history.'
+                    : stockModeHelp(form.stock_mode)
+              }
+            >
+              {form.item_kind === 'packaging' ? (
+                <option value="piece">Piece</option>
+              ) : (
+                STOCK_MODES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              )}
+            </Select>
+            <Select
+              label="Base unit"
+              value={form.base_unit_id || ''}
+              onChange={(event) => handleChange('base_unit_id', event.target.value)}
+              error={errors.base_unit_id}
+              required
+              description={form.item_kind === 'packaging' ? 'Packaging materials must use the pc unit.' : `Choose a ${unitType} unit compatible with this stock mode.`}
+            >
+              <option value="">Select unit</option>
+              {compatibleUnits.map((unit) => (
+                <option key={unit.id} value={unit.id}>
+                  {unit.name} ({unit.symbol})
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {isCartonWeight && (
+            <div className="rounded-xl border border-brand-400/20 bg-brand-500/5 p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-ink-100 uppercase tracking-wider">Carton Weight Configuration</p>
+                <span className="text-[10px] text-brand-300 font-medium">Cartons stored as whole units</span>
+              </div>
               <Input
                 label="Kg per carton"
                 type="number"
@@ -399,117 +396,111 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
                 error={errors.kg_per_carton}
                 required
               />
-              <Input
-                label="Loose units per carton"
-                type="number"
-                min="1"
-                step="1"
-                value={form.loose_units_per_carton}
-                onChange={(event) => handleChange('loose_units_per_carton', event.target.value)}
-                error={errors.loose_units_per_carton}
-                required
-              />
             </div>
-            {looseUnitWeight !== null && (
-              <p className="mt-3 text-xs text-brand-100">
-                Derived loose-unit weight: {formatNumber(looseUnitWeight, { maximumFractionDigits: 4 })} kg.
-              </p>
-            )}
-          </div>
-        )}
+          )}
 
-        {form.item_kind === 'packaging' && (
-          <Input
-            label="Maximum content weight (kg)"
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.max_content_weight_kg}
-            onChange={(event) => handleChange('max_content_weight_kg', event.target.value)}
-            error={errors.max_content_weight_kg}
-            description="Use 0 for packaging with no intrinsic capacity, such as an outer carton."
-            required
-          />
-        )}
-
-        <div className={`grid gap-4 ${isCartonWeight ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
-          <Input
-            label={isCartonWeight || form.stock_mode === 'weight' ? 'Default cost per kg' : 'Default cost per piece'}
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.default_cost}
-            onChange={(event) => handleChange('default_cost', event.target.value)}
-            error={errors.default_cost}
-          />
-          {form.item_kind === 'normal' && !isCartonWeight && (
+          {form.item_kind === 'packaging' && (
             <Input
-              label="Default sale price"
+              label="Maximum content weight (kg)"
               type="number"
               min="0"
               step="0.0001"
-              value={form.default_selling_price ?? ''}
-              onChange={(event) => handleChange('default_selling_price', event.target.value)}
-              error={errors.default_selling_price}
-              description="Default price per base unit; a sale offer can override it."
+              value={form.max_content_weight_kg}
+              onChange={(event) => handleChange('max_content_weight_kg', event.target.value)}
+              error={errors.max_content_weight_kg}
+              description="Use 0 for packaging with no intrinsic capacity, such as an outer carton."
+              required
             />
           )}
-          <Input
-            label={isCartonWeight || form.stock_mode === 'weight' ? 'Reorder level (kg)' : 'Reorder level (pieces)'}
-            type="number"
-            min="0"
-            step={isPieceStock ? '1' : '0.0001'}
-            value={form.reorder_level}
-            onChange={(event) => handleChange('reorder_level', event.target.value)}
-            error={errors.reorder_level}
-          />
         </div>
 
-        {isCartonWeight && (
-          <div className="grid gap-4 rounded-xl border border-sky-400/20 bg-sky-500/5 p-4 md:grid-cols-2">
+        {/* Financials & Reorder Parameters Card */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+          <div className="border-b border-white/5 pb-2.5">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Financials & Reorder Levels</h4>
+          </div>
+          <div className={`grid gap-4 ${isCartonWeight ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
             <Input
-              label="Default sealed-carton sale price"
+              label={isCartonWeight || form.stock_mode === 'weight' ? 'Default cost per kg' : 'Default cost per piece'}
               type="number"
               min="0"
               step="0.0001"
-              value={form.carton_selling_price ?? ''}
-              onChange={(event) => handleChange('carton_selling_price', event.target.value)}
-              error={errors.carton_selling_price}
-              description="Used as the configured price for a whole sealed-carton offer."
+              value={form.default_cost}
+              onChange={(event) => handleChange('default_cost', event.target.value)}
+              error={errors.default_cost}
             />
+            {form.item_kind === 'normal' && !isCartonWeight && (
+              <Input
+                label="Default sale price"
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.default_selling_price ?? ''}
+                onChange={(event) => handleChange('default_selling_price', event.target.value)}
+                error={errors.default_selling_price}
+                description="Default price per base unit; a sale offer can override it."
+              />
+            )}
             <Input
-              label="Default loose-unit sale price"
+              label={isCartonWeight || form.stock_mode === 'weight' ? 'Reorder level (kg)' : 'Reorder level (pieces)'}
               type="number"
               min="0"
-              step="0.0001"
-              value={form.loose_unit_selling_price ?? ''}
-              onChange={(event) => handleChange('loose_unit_selling_price', event.target.value)}
-              error={errors.loose_unit_selling_price}
-              description="Used as the configured price for an individual loose-unit offer."
+              step={isPieceStock ? '1' : '0.0001'}
+              value={form.reorder_level}
+              onChange={(event) => handleChange('reorder_level', event.target.value)}
+              error={errors.reorder_level}
             />
           </div>
-        )}
 
-        <Select
-          label="Status"
-          value={form.status}
-          onChange={(event) => handleChange('status', event.target.value)}
-          error={errors.status}
-        >
-          {STATUSES.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
+          {isCartonWeight && (
+            <div className="grid gap-4 rounded-xl border border-sky-400/20 bg-sky-500/5 p-3.5 md:grid-cols-2">
+              <Input
+                label="Default sealed-carton sale price"
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.carton_selling_price ?? ''}
+                onChange={(event) => handleChange('carton_selling_price', event.target.value)}
+                error={errors.carton_selling_price}
+                description="Used as configured price for a whole sealed-carton offer."
+              />
+              <Input
+                label="Default loose-unit sale price"
+                type="number"
+                min="0"
+                step="0.0001"
+                value={form.loose_unit_selling_price ?? ''}
+                onChange={(event) => handleChange('loose_unit_selling_price', event.target.value)}
+                error={errors.loose_unit_selling_price}
+                description="Used as configured price for an individual loose-unit offer."
+              />
+            </div>
+          )}
 
+          <Select
+            label="Status"
+            value={form.status}
+            onChange={(event) => handleChange('status', event.target.value)}
+            error={errors.status}
+          >
+            {STATUSES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        {/* Opening Stock (Create mode only) */}
         {!isEdit && (
-          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-            <p className="text-sm font-medium text-ink-100">Optional opening stock</p>
-            <p className="mt-1 text-xs text-ink-400">
-              Leave this empty to receive stock later through purchases or an adjustment.
-            </p>
-            <div className="mt-3 grid gap-4 md:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-300">Optional Opening Stock</h4>
+              <p className="mt-0.5 text-xs text-ink-400">
+                Leave empty to receive stock later via purchases or stock adjustments.
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
               <Select
                 label="Opening warehouse"
                 value={form.warehouse_id || ''}
@@ -558,12 +549,15 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
           </div>
         )}
 
-        <Textarea
-          label="Description"
-          value={form.description || ''}
-          onChange={(event) => handleChange('description', event.target.value)}
-          rows={3}
-        />
+        <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <Textarea
+            label="Description"
+            value={form.description || ''}
+            onChange={(event) => handleChange('description', event.target.value)}
+            rows={3}
+            placeholder="Additional notes or specifications..."
+          />
+        </div>
       </form>
     </Modal>
   );
@@ -686,7 +680,9 @@ export default function ItemsTab() {
         align: 'right',
         cell: (row) => (
           <span className="font-mono text-sm text-ink-100">
-            {formatStockQuantity(row.quantity_on_hand ?? row.item_quantity_on_hand ?? 0, row)}
+            {inferStockMode(row) === 'carton'
+              ? formatCartonStockSummary(row.quantity_on_hand ?? row.item_quantity_on_hand ?? 0, row)
+              : formatStockQuantity(row.quantity_on_hand ?? row.item_quantity_on_hand ?? 0, row)}
           </span>
         )
       },
@@ -743,7 +739,22 @@ export default function ItemsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex w-full gap-1 rounded-xl border border-white/10 bg-ink-950/40 p-1 sm:w-fit">
+          {ITEM_KIND_TABS.map((tab) => (
+            <Button
+              key={tab.id}
+              size="sm"
+              variant={itemKind === tab.value ? 'primary' : 'ghost'}
+              onClick={() => {
+                setItemKind(tab.value);
+                setPage(1);
+              }}
+            >
+              {tab.label}
+            </Button>
+          ))}
+        </div>
         <Button leftIcon={Plus} onClick={() => setCreating(true)} disabled={!canCreate}>
           New item
         </Button>
