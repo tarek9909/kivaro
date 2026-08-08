@@ -19,6 +19,11 @@ router.get(
   asyncHandler(controller.listCatalog)
 );
 router.get(
+  '/pos/warehouses',
+  requireAnyPermission(...POS_ACCESS),
+  asyncHandler(controller.listWarehouses)
+);
+router.get(
   '/pos/territories',
   requireAnyPermission(...POS_ACCESS),
   validate(schemas.listTerritoriesSchema),

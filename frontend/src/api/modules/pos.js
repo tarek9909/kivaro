@@ -9,6 +9,9 @@ export function createPosApi(client) {
     catalog: {
       list: (params, options) => client.get('/pos/catalog', { ...options, params })
     },
+    warehouses: {
+      list: (params, options) => client.get('/pos/warehouses', { ...options, params })
+    },
     territories: {
       list: (params, options) => client.get('/pos/territories', { ...options, params })
     },

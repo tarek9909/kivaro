@@ -182,11 +182,17 @@ async function listCatalog(input = {}, actor = {}) {
   return { ...result, rows, meta: { ...result.meta, availableTotal: rows.length } };
 }
 
+async function listOwnWarehouses(input = {}, actor = {}) {
+  const { storeId } = await getLinkedSalesman(actor, input);
+  return model.listActiveWarehouses(storeId);
+}
+
 module.exports = {
   createOwnCustomer,
   getLinkedSalesman,
   getOwnWorkspace,
   listCatalog,
+  listOwnWarehouses,
   listOwnCustomers,
   listOwnTerritories,
   _private: { offerAvailability }

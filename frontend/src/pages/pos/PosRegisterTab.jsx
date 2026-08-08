@@ -23,7 +23,7 @@ import {
 import { api } from '@/api/index.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import { formatCurrency } from '@/lib/formatters.js';
-import { Badge, Button, Input, Select } from '@/components/ui/index.js';
+import { Badge, Button, Input, Modal, Select } from '@/components/ui/index.js';
 import { cn } from '@/lib/cn.js';
 import { POS_ENTRY_TYPES } from './pos.constants.js';
 import {
@@ -31,6 +31,7 @@ import {
   isWholeQuantity,
   lineTotal,
   orderPayloadFromForm,
+  splitPromotionalLine,
   todayInputValue
 } from './pos.utils.js';
 import {
@@ -102,6 +103,8 @@ export function PosRegisterTab({
   const [orderNotes, setOrderNotes] = useState('');
   const [cart, setCart] = useState([]);
   const [errors, setErrors] = useState({});
+  const [promotionModal, setPromotionModal] = useState(null);
+  const [promotionForm, setPromotionForm] = useState({ giftQuantity: '', paidUnitPrice: '' });
 
   // Store customer map for multi-customer draft orders: customerId -> customer, lines, and discount.
   const [draftCustomersMap, setDraftCustomersMap] = useState({});
@@ -358,6 +361,7 @@ export function PosRegisterTab({
     setCart([]);
     setDraftCustomersMap({});
     setErrors({});
+    setPromotionModal(null);
     clearPosRegisterDraft(draftStorageKey);
   }
 
@@ -466,7 +470,9 @@ export function PosRegisterTab({
 
   // Cart Management Actions
   function handleAddToCart(offer) {
-    const existingIndex = cart.findIndex((line) => line.sale_catalog_entry_id === String(offer.id));
+    const existingIndex = cart.findIndex((line) => (
+      line.sale_catalog_entry_id === String(offer.id) && line.line_type !== 'free_gift'
+    ));
     if (existingIndex >= 0) {
       const currentQty = Number(cart[existingIndex].quantity || 0);
       updateLineQuantity(existingIndex, currentQty + 1);
@@ -486,14 +492,61 @@ export function PosRegisterTab({
     );
   }
 
-  function toggleLineType(index) {
-    setCart((prev) =>
-      prev.map((line, idx) => {
-        if (idx !== index) return line;
-        const nextType = line.line_type === 'sale' ? 'free_gift' : 'sale';
-        return { ...line, line_type: nextType };
-      })
-    );
+  function openPromotionModal(index, mode) {
+    const line = cart[index];
+    if (!line || line.line_type === 'free_gift') return;
+    setPromotionModal({ index, mode, totalQuantity: Number(line.quantity || 0) });
+    setPromotionForm({
+      giftQuantity: mode === 'gift' ? '' : '',
+      paidUnitPrice: String(line.unit_price ?? '')
+    });
+  }
+
+  function closePromotionModal() {
+    setPromotionModal(null);
+    setPromotionForm({ giftQuantity: '', paidUnitPrice: '' });
+  }
+
+  function applyPromotion(event) {
+    event.preventDefault();
+    if (!promotionModal) return;
+
+    const line = cart[promotionModal.index];
+    const totalQuantity = Number(promotionModal.totalQuantity);
+    const giftQuantity = Number(promotionForm.giftQuantity || 0);
+    const paidUnitPrice = Number(promotionForm.paidUnitPrice);
+    const nextErrors = {};
+
+    if (!line || line.line_type === 'free_gift') {
+      closePromotionModal();
+      return;
+    }
+    const whole = isWholeQuantity(line);
+    if (!Number.isFinite(giftQuantity) || giftQuantity < 0 || giftQuantity > totalQuantity) {
+      nextErrors.giftQuantity = 'Gift quantity must be between zero and the total quantity.';
+    } else if (whole && !Number.isInteger(giftQuantity)) {
+      nextErrors.giftQuantity = 'Gift quantity must be a whole number.';
+    }
+    if (promotionModal.mode === 'offer'
+      && (promotionForm.paidUnitPrice === '' || !Number.isFinite(paidUnitPrice) || paidUnitPrice < 0)) {
+      nextErrors.paidUnitPrice = 'Enter a non-negative price for the paid quantity.';
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors((current) => ({ ...current, promotion: nextErrors }));
+      return;
+    }
+
+    const nextLines = splitPromotionalLine(line, {
+      giftQuantity,
+      paidUnitPrice: promotionModal.mode === 'offer' ? paidUnitPrice : Number(line.unit_price || 0)
+    });
+    setCart((prev) => [
+      ...prev.slice(0, promotionModal.index),
+      ...nextLines,
+      ...prev.slice(promotionModal.index + 1)
+    ]);
+    setErrors((current) => ({ ...current, promotion: undefined }));
+    closePromotionModal();
   }
 
   function updateLineNote(index, note) {
@@ -509,6 +562,7 @@ export function PosRegisterTab({
   function handleClearCart() {
     setCart([]);
     setErrors({});
+    closePromotionModal();
   }
 
   function validate() {
@@ -1053,22 +1107,33 @@ export function PosRegisterTab({
                         </button>
                       </div>
 
-                      {/* Gift Toggle Button */}
-                      {canRequestGifts && (
-                        <button
-                          type="button"
-                          onClick={() => toggleLineType(index)}
-                          className={cn(
-                            'flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border transition',
-                            isGift
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                              : 'bg-white/5 text-ink-300 border-white/10 hover:bg-white/10'
-                          )}
-                          title="Toggle Gift Request"
-                        >
+                      {canRequestGifts && !isGift && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openPromotionModal(index, 'offer')}
+                            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-sky-400/30 bg-sky-500/10 text-sky-300 transition hover:bg-sky-500/20"
+                            title="Create a mixed-price offer"
+                          >
+                            <Tag className="h-3 w-3" />
+                            <span>Offer</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openPromotionModal(index, 'gift')}
+                            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-amber-400/30 bg-amber-500/10 text-amber-300 transition hover:bg-amber-500/20"
+                            title="Choose gift quantity"
+                          >
+                            <Gift className="h-3 w-3" />
+                            <span>Gift</span>
+                          </button>
+                        </div>
+                      )}
+                      {isGift && (
+                        <span className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-amber-400/30 bg-amber-500/10 text-amber-300">
                           <Gift className="h-3 w-3" />
-                          <span>{isGift ? 'Gift' : 'Sale'}</span>
-                        </button>
+                          Gifted quantity
+                        </span>
                       )}
 
                       {/* Total */}
@@ -1134,6 +1199,61 @@ export function PosRegisterTab({
           </div>
         </div>
       </div>
+
+      <Modal
+        open={Boolean(promotionModal)}
+        onClose={closePromotionModal}
+        size="sm"
+        title={promotionModal?.mode === 'offer' ? 'Create offer' : 'Choose gift quantity'}
+        description={promotionModal?.mode === 'offer'
+          ? 'Keep part of the quantity as a paid sale at a special price and issue the rest as a free gift.'
+          : 'Choose how much of this line should be issued as a free gift. The remaining quantity keeps its current sale price.'}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={closePromotionModal}>Cancel</Button>
+            <Button type="submit" form="pos-promotion-form">
+              Apply {promotionModal?.mode === 'offer' ? 'Offer' : 'Gift'}
+            </Button>
+          </>
+        )}
+      >
+        <form id="pos-promotion-form" onSubmit={applyPromotion} className="space-y-4" noValidate>
+          <Input
+            label="Total quantity"
+            type="number"
+            value={promotionModal?.totalQuantity ?? ''}
+            readOnly
+            description="This is the quantity currently on the cart line."
+          />
+          <Input
+            label="Free gift quantity"
+            type="number"
+            min="0"
+            max={promotionModal?.totalQuantity}
+            step={promotionModal && promotionModal.index !== undefined && isWholeQuantity(cart[promotionModal.index]) ? '1' : '0.0001'}
+            inputMode="decimal"
+            value={promotionForm.giftQuantity}
+            onChange={(event) => setPromotionForm((current) => ({ ...current, giftQuantity: event.target.value }))}
+            error={errors.promotion?.giftQuantity}
+            required
+            description="The remaining quantity stays as a paid sale."
+          />
+          {promotionModal?.mode === 'offer' && (
+            <Input
+              label="Price per paid unit"
+              type="number"
+              min="0"
+              step="0.0001"
+              inputMode="decimal"
+              value={promotionForm.paidUnitPrice}
+              onChange={(event) => setPromotionForm((current) => ({ ...current, paidUnitPrice: event.target.value }))}
+              error={errors.promotion?.paidUnitPrice}
+              required
+              description="Applied only to the remaining paid quantity."
+            />
+          )}
+        </form>
+      </Modal>
     </div>
   );
 }

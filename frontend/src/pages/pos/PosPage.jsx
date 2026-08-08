@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ShoppingBag, UserPlus } from 'lucide-react';
 import { api } from '@/api/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
-import { useWarehousesOptions } from '@/pages/inventory/useInventoryOptions.js';
 import { Button, EmptyState, GlassPanel, GlassPanelBody, PageHeader } from '@/components/ui/index.js';
 import { PosCustomerModal } from './PosCustomerModal.jsx';
 import { PosRegisterTab } from './PosRegisterTab.jsx';
@@ -43,7 +42,12 @@ export default function PosPage() {
 
   const editingDispatch = editDispatchQuery.data?.data?.dispatch_request || null;
 
-  const warehousesQuery = useWarehousesOptions(canRegister);
+  const warehousesQuery = useQuery({
+    queryKey: ['pos', 'warehouses'],
+    queryFn: () => api.pos.warehouses.list(),
+    enabled: canRegister,
+    staleTime: 60_000
+  });
   const territoriesQuery = useQuery({
     queryKey: ['pos', 'territories', selectedSalesmanId || 'self'],
     queryFn: () => api.pos.territories.list(

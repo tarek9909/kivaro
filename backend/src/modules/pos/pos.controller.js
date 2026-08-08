@@ -10,6 +10,14 @@ async function listCatalog(req, res) {
   });
 }
 
+async function listWarehouses(req, res) {
+  const warehouses = await service.listOwnWarehouses(req.query, req.user);
+  successResponse(res, {
+    message: 'Mini POS warehouses fetched',
+    data: { warehouses }
+  });
+}
+
 async function listTerritories(req, res) {
   const territories = await service.listOwnTerritories(req.query, req.user);
   successResponse(res, {
@@ -48,6 +56,7 @@ module.exports = {
   createCustomer,
   getWorkspace,
   listCatalog,
+  listWarehouses,
   listCustomers,
   listTerritories
 };

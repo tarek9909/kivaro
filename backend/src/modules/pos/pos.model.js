@@ -40,6 +40,13 @@ async function findWarehouseById(id, connection = null) {
   return rows[0] || null;
 }
 
+async function listActiveWarehouses(storeId, connection = null) {
+  return execute(connection, `SELECT id, name, code, status
+    FROM warehouses
+    WHERE store_id = ? AND status = 'active'
+    ORDER BY name ASC, id ASC`, [storeId]);
+}
+
 async function findSaleCatalogEntryById(id, connection = null) {
   const rows = await execute(connection, `SELECT sce.*, item.name AS item_name, item.item_kind, item.stock_mode,
       item.kg_per_carton, item.status AS item_status, pg.name AS packaging_group_name,
@@ -152,5 +159,6 @@ async function listSalesmanWorkspaceTargets(input = {}, connection = null) {
 }
 
 module.exports = { findSaleCatalogEntryById, findSalesmanById, findSalesmanByUserId, findWarehouseById,
+  listActiveWarehouses,
   listActiveSalesmen, listPosCatalogEntries, listSalesmanTerritories, listSalesmanWorkspaceCommissions,
   listSalesmanWorkspaceDebts, listSalesmanWorkspaceDispatches, listSalesmanWorkspaceTargets, getSalesmanWorkspaceSummary };

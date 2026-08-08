@@ -22,12 +22,14 @@ describe('Mini POS API module', () => {
     const client = buildClientStub();
     const pos = createPosApi(client);
 
+    await pos.warehouses.list();
     await pos.catalog.list({ warehouse_id: 7 });
     await pos.territories.list();
     await pos.customers.create({ name: 'New customer', location_id: 1, sublocation_id: 2 });
     await pos.workspace.get({ limit: 20 });
 
     expect(client.calls).toEqual([
+      { method: 'get', path: '/pos/warehouses', rest: [{ params: undefined }] },
       { method: 'get', path: '/pos/catalog', rest: [{ params: { warehouse_id: 7 } }] },
       { method: 'get', path: '/pos/territories', rest: [{ params: undefined }] },
       {

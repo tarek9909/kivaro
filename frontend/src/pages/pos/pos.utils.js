@@ -41,6 +41,35 @@ export function buildLineFromOrder(line) {
   };
 }
 
+export function splitPromotionalLine(line, { giftQuantity, paidUnitPrice }) {
+  const totalQuantity = Number(line.quantity || 0);
+  const freeQuantity = Number(giftQuantity || 0);
+  const paidQuantity = totalQuantity - freeQuantity;
+  const lines = [];
+
+  if (paidQuantity > 0) {
+    lines.push({
+      ...line,
+      line_type: 'sale',
+      quantity: String(paidQuantity),
+      unit_price: paidUnitPrice
+    });
+  }
+
+  if (freeQuantity > 0) {
+    lines.push({
+      ...line,
+      _key: createLineKey(),
+      line_type: 'free_gift',
+      quantity: String(freeQuantity),
+      unit_price: 0,
+      vat_rate: 0
+    });
+  }
+
+  return lines;
+}
+
 export function isWholeQuantity(line) {
   return WHOLE_QUANTITY_ENTRY_TYPES.has(line.entry_type);
 }
