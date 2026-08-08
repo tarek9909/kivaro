@@ -9,6 +9,7 @@ import { PosCustomerModal } from './PosCustomerModal.jsx';
 import { PosRegisterTab } from './PosRegisterTab.jsx';
 import { SalesmanOrdersTab } from './SalesmanOrdersTab.jsx';
 import { POS_PERMISSIONS } from './pos.constants.js';
+import { positiveIntegerId } from './pos.utils.js';
 
 export default function PosPage() {
   const navigate = useNavigate();
@@ -35,6 +36,7 @@ export default function PosPage() {
   const canRequestGifts = hasPermission(POS_PERMISSIONS.requestGifts);
   const [customerModalOpen, setCustomerModalOpen] = useState(false);
   const [selectedSalesmanId, setSelectedSalesmanId] = useState('');
+  const numericSelectedSalesmanId = positiveIntegerId(selectedSalesmanId);
 
   const editDispatchQuery = useQuery({
     queryKey: ['dispatch', 'request', editDispatchId],
@@ -53,7 +55,7 @@ export default function PosPage() {
   const territoriesQuery = useQuery({
     queryKey: ['pos', 'territories', selectedSalesmanId || 'self'],
     queryFn: () => api.pos.territories.list(
-      selectedSalesmanId ? { salesman_id: Number(selectedSalesmanId) } : undefined
+      numericSelectedSalesmanId ? { salesman_id: numericSelectedSalesmanId } : undefined
     ),
     enabled: canRegister && canCreateCustomers,
     staleTime: 60_000

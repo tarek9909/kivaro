@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/index.js';
 import { getErrorMessage, mapFieldErrors } from '@/lib/errors.js';
 import { Button, Input, Modal, Select, Textarea } from '@/components/ui/index.js';
+import { positiveIntegerId } from './pos.utils.js';
 
 function emptyForm() {
   return {
@@ -72,16 +73,18 @@ export function PosCustomerModal({ open, onClose, territories = [], salesmanId =
   function submit(event) {
     event.preventDefault();
     const territory = territoryOptions.find((option) => option.key === form.territory_key);
+    const numericSalesmanId = positiveIntegerId(salesmanId);
     const nextErrors = {};
     if (!form.name.trim()) nextErrors.name = 'Customer name is required.';
     if (!territory) nextErrors.territory_key = 'Choose one of your assigned territories.';
+    if (salesmanId && !numericSalesmanId) nextErrors.salesman_id = 'Select a valid salesman.';
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
 
     mutation.mutate({
       customer_code: form.customer_code.trim() || null,
       name: form.name.trim(),
-      ...(salesmanId ? { salesman_id: Number(salesmanId) } : {}),
+      ...(numericSalesmanId ? { salesman_id: numericSalesmanId } : {}),
       phone: form.phone.trim() || null,
       secondary_phone: form.secondary_phone.trim() || null,
       location_id: Number(territory.location_id),

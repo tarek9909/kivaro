@@ -47,6 +47,24 @@ function StatusBadge({ status }) {
   return <Badge tone={tone}>{label}</Badge>;
 }
 
+function isSalesmanOnly(hasPermission) {
+  const managerPermissions = [
+    'salesmen.manage',
+    'pos.create_for_salesman',
+    'dispatch.view',
+    'dispatch.create',
+    'dispatch.approve',
+    'dispatch.settle',
+    'delivery.release',
+    'delivery.dispatch',
+    'delivery.record_returns',
+    'delivery.closeout',
+    'finance.settle_deliveries'
+  ];
+  return !managerPermissions.some((permission) => hasPermission(permission))
+    && (hasPermission('salesman_workspace.view') || hasPermission('pos.create_own'));
+}
+
 export default function CustomersPage() {
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canView = hasPermission(CUSTOMERS_PERMISSIONS.view);
@@ -56,6 +74,7 @@ export default function CustomersPage() {
   const canExport = canView && hasPermission('reports.export');
   const canPickLocations = hasPermission(LOCATIONS_PERMISSIONS.locations);
   const canPickSalesmen = hasPermission(LOCATIONS_PERMISSIONS.salesmen);
+  const ownSalesmanOnly = isSalesmanOnly(hasPermission);
   const queryClient = useQueryClient();
 
   const [search, setSearch] = useState('');
@@ -81,9 +100,9 @@ export default function CustomersPage() {
     if (status) params.status = status;
     if (locationId) params.location_id = locationId;
     if (sublocationId) params.sublocation_id = sublocationId;
-    if (salesmanId) params.salesman_id = salesmanId;
+    if (salesmanId && !ownSalesmanOnly) params.salesman_id = salesmanId;
     return params;
-  }, [debouncedSearch, status, locationId, sublocationId, salesmanId, page, limit]);
+  }, [debouncedSearch, status, locationId, sublocationId, salesmanId, ownSalesmanOnly, page, limit]);
 
   // GET /customers requires customers.view; do not call it for users that
   // only have create/update/delete.
@@ -226,7 +245,9 @@ export default function CustomersPage() {
         title="Customers"
         description={
           canView
-            ? 'Customer directory with location, salesman, and history. Open a customer to review their receipts, debts, and payments.'
+            ? ownSalesmanOnly
+              ? 'Customers assigned to your salesman account, with access to their receipts, debts, and payments.'
+              : 'Customer directory with location, salesman, and history. Open a customer to review their receipts, debts, and payments.'
             : 'You can add new customers here. Browsing the directory or opening a customer for history requires the view permission.'
         }
         actions={
@@ -366,7 +387,7 @@ export default function CustomersPage() {
                 description="Numeric only."
               />
             )}
-            {canPickSalesmen ? (
+            {ownSalesmanOnly ? null : canPickSalesmen ? (
               <Select
                 value={salesmanId}
                 onChange={(event) => {
@@ -408,7 +429,9 @@ export default function CustomersPage() {
             empty={{
               icon: Users,
               title: 'No customers match the filters',
-              description: canCreate
+              description: ownSalesmanOnly
+                ? 'Customers assigned to your salesman account will appear here.'
+                : canCreate
                 ? 'Adjust your filters or add a new customer to start serving them.'
                 : 'Adjust your filters to find existing customers.'
             }}

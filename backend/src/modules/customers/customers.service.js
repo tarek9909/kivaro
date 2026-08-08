@@ -3,10 +3,57 @@ const { assertRowInScope, assertSameStore, scopedData, scopedQuery } = require('
 const locationModel = require('../locations/locations.model');
 const model = require('./customers.model');
 
+const MANAGER_PERMISSIONS = [
+  'salesmen.manage',
+  'pos.create_for_salesman',
+  'dispatch.view',
+  'dispatch.create',
+  'dispatch.approve',
+  'dispatch.settle',
+  'delivery.release',
+  'delivery.dispatch',
+  'delivery.record_returns',
+  'delivery.closeout',
+  'finance.settle_deliveries'
+];
+
+function hasPermission(actor = {}, permission) {
+  if (actor.is_superadmin) return true;
+  const permissions = new Set(actor.permissions || []);
+  return permissions.has('*') || permissions.has(permission);
+}
+
+function isSalesmanOnly(actor = {}) {
+  if (actor.is_superadmin || hasPermission(actor, '*')) return false;
+  const canManageOthers = MANAGER_PERMISSIONS.some((permission) => hasPermission(actor, permission));
+  return !canManageOthers && (
+    hasPermission(actor, 'salesman_workspace.view') || hasPermission(actor, 'pos.create_own')
+  );
+}
+
+async function getOwnSalesmanId(actor = {}) {
+  if (!isSalesmanOnly(actor)) return null;
+  const salesman = await locationModel.findSalesmanByUserId(actor.id);
+  if (!salesman || salesman.status !== 'active' || Number(salesman.store_id) !== Number(actor.store_id)) {
+    throw ApiError.forbidden('An active salesman link is required to access customers');
+  }
+  return salesman.id;
+}
+
+async function scopedCustomerQuery(input, actor = {}) {
+  const scoped = scopedQuery(input, actor);
+  const salesmanId = await getOwnSalesmanId(actor);
+  return salesmanId ? { ...scoped, salesman_id: salesmanId } : scoped;
+}
+
 async function getCustomer(id, actor = {}) {
   const customer = await model.findCustomerById(id);
-
-  return assertRowInScope(customer, actor, 'Customer not found');
+  assertRowInScope(customer, actor, 'Customer not found');
+  const salesmanId = await getOwnSalesmanId(actor);
+  if (salesmanId && Number(customer.assigned_salesman_id) !== Number(salesmanId)) {
+    throw ApiError.notFound('Customer not found');
+  }
+  return customer;
 }
 
 async function validateCustomerRefs(data, storeId) {
@@ -54,6 +101,8 @@ async function validateCustomerRefs(data, storeId) {
 
 async function createCustomer(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
+  const salesmanId = await getOwnSalesmanId(actor);
+  if (salesmanId) scoped.assigned_salesman_id = salesmanId;
   await validateCustomerRefs(scoped, scoped.store_id);
   return model.createCustomer({ ...scoped, created_by: userId });
 }
@@ -61,6 +110,8 @@ async function createCustomer(data, userId, actor = {}) {
 async function updateCustomer(id, data, actor = {}) {
   const current = await getCustomer(id, actor);
   const { store_id, ...updates } = data;
+  const salesmanId = await getOwnSalesmanId(actor);
+  if (salesmanId) updates.assigned_salesman_id = salesmanId;
   await validateCustomerRefs({
     ...current,
     ...updates
@@ -82,8 +133,8 @@ async function deleteCustomer(id, actor = {}) {
 module.exports = {
   createCustomer,
   deleteCustomer,
-  exportCustomers: (query, actor = {}) => model.exportCustomers(scopedQuery(query, actor)),
+  exportCustomers: (query, actor = {}) => scopedCustomerQuery(query, actor).then((scoped) => model.exportCustomers(scoped)),
   getCustomer,
-  listCustomers: (query, actor = {}) => model.listCustomers(scopedQuery(query, actor)),
+  listCustomers: (query, actor = {}) => scopedCustomerQuery(query, actor).then((scoped) => model.listCustomers(scoped)),
   updateCustomer
 };

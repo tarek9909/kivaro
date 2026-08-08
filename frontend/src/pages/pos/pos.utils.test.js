@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildLineFromOffer, lineTotal, splitPromotionalLine } from './pos.utils.js';
+import { buildLineFromOffer, lineTotal, positiveIntegerId, splitPromotionalLine } from './pos.utils.js';
+
+it('positiveIntegerId rejects empty and invalid salesman values', () => {
+  expect(positiveIntegerId('')).toBeNull();
+  expect(positiveIntegerId('NaN')).toBeNull();
+  expect(positiveIntegerId('7')).toBe(7);
+});
 
 const offer = {
   id: 7,

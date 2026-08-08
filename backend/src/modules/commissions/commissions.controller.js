@@ -27,8 +27,14 @@ async function listCommissions(req, res) {
 }
 
 async function listPayroll(req, res) {
-  const payroll = await service.listMonthlyPayroll(req.query, req.user);
-  successResponse(res, { message: 'Monthly payroll fetched', data: { payroll } });
+  const result = await service.listMonthlyPayroll(req.query, req.user);
+  successResponse(res, {
+    message: 'Monthly payroll fetched',
+    data: {
+      period_month: result.period_month,
+      payroll: result.payroll
+    }
+  });
 }
 
 async function payPayroll(req, res) {

@@ -31,6 +31,7 @@ import {
   isWholeQuantity,
   lineTotal,
   orderPayloadFromForm,
+  positiveIntegerId,
   splitPromotionalLine,
   todayInputValue
 } from './pos.utils.js';
@@ -105,6 +106,7 @@ export function PosRegisterTab({
   const [errors, setErrors] = useState({});
   const [promotionModal, setPromotionModal] = useState(null);
   const [promotionForm, setPromotionForm] = useState({ giftQuantity: '', paidUnitPrice: '' });
+  const numericSelectedSalesmanId = positiveIntegerId(selectedSalesmanId);
 
   // Store customer map for multi-customer draft orders: customerId -> customer, lines, and discount.
   const [draftCustomersMap, setDraftCustomersMap] = useState({});
@@ -243,9 +245,9 @@ export function PosRegisterTab({
       page: 1,
       limit: 50,
       ...(customerSearch.trim() ? { search: customerSearch.trim() } : {}),
-      ...(canManageOthers ? { salesman_id: Number(selectedSalesmanId) } : {})
+      ...(canManageOthers && numericSelectedSalesmanId ? { salesman_id: numericSelectedSalesmanId } : {})
     }),
-    enabled: !canManageOthers || Boolean(selectedSalesmanId)
+    enabled: !canManageOthers || Boolean(numericSelectedSalesmanId)
   });
 
   const catalogueQuery = useQuery({
@@ -567,7 +569,7 @@ export function PosRegisterTab({
 
   function validate() {
     const newErrors = {};
-    if (canManageOthers && !selectedSalesmanId) newErrors.salesman_id = 'Select the salesman who will own this order.';
+    if (canManageOthers && !numericSelectedSalesmanId) newErrors.salesman_id = 'Select a valid salesman who will own this order.';
     if (!hasWarehouse) newErrors.warehouse_id = 'Please select a warehouse.';
     if (!selectedCustomerId) newErrors.customer_id = 'Please select a customer.';
     if (!orderDate) newErrors.order_date = 'Order date is required.';
@@ -602,7 +604,7 @@ export function PosRegisterTab({
     const activeCustomers = Object.values(mergedMap).filter((c) => Array.isArray(c.lines) && c.lines.length > 0);
 
     const newErrors = {};
-    if (canManageOthers && !selectedSalesmanId) newErrors.salesman_id = 'Select the salesman who will own this order.';
+    if (canManageOthers && !numericSelectedSalesmanId) newErrors.salesman_id = 'Select a valid salesman who will own this order.';
     if (!hasWarehouse) newErrors.warehouse_id = 'Please select a warehouse.';
     if (!orderDate) newErrors.order_date = 'Order date is required.';
     if (activeCustomers.length === 0) newErrors.cart = 'Add at least one customer with product items to the order.';
@@ -613,7 +615,7 @@ export function PosRegisterTab({
     }
 
     const payload = {
-      ...(canManageOthers ? { salesman_id: Number(selectedSalesmanId) } : {}),
+      ...(canManageOthers ? { salesman_id: numericSelectedSalesmanId } : {}),
       warehouse_id: Number(selectedWarehouseId),
       request_date: orderDate,
       notes: orderNotes,

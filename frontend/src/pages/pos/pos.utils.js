@@ -11,6 +11,11 @@ export function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
 
+export function positiveIntegerId(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
 export function buildLineFromOffer(offer) {
   return {
     _key: createLineKey(),
@@ -84,8 +89,9 @@ export function lineTotal(line) {
 }
 
 export function orderPayloadFromForm(form) {
+  const salesmanId = positiveIntegerId(form.salesman_id);
   return {
-    ...(form.salesman_id ? { salesman_id: Number(form.salesman_id) } : {}),
+    ...(salesmanId ? { salesman_id: salesmanId } : {}),
     warehouse_id: Number(form.warehouse_id),
     customer_id: Number(form.customer_id),
     order_date: form.order_date,

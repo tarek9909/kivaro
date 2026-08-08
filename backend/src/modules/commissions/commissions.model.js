@@ -296,7 +296,7 @@ async function listMonthlyPayroll(input) {
      ) payroll ON payroll.salesman_id = s.id
      WHERE s.store_id = ?
      ORDER BY s.full_name ASC, s.id ASC`,
-    [input.next_period_month, input.period_month, input.period_month, input.store_id, input.period_month, input.store_id, input.period_month, input.next_period_month, input.store_id]
+    [input.next_period_month, input.period_month, input.period_month, input.store_id, input.period_month, input.next_period_month, input.store_id, input.period_month, input.store_id]
   );
   return rows;
 }
