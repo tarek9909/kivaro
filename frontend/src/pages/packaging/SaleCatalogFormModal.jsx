@@ -23,7 +23,6 @@ function emptyForm(entry) {
 function configuredItemPrice(item, entryType) {
   if (!item) return '';
   if (entryType === 'normal_carton') return item.carton_selling_price ?? '';
-  if (entryType === 'normal_loose_unit') return item.loose_unit_selling_price ?? '';
   return item.default_selling_price ?? '';
 }
 

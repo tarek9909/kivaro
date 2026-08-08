@@ -208,7 +208,6 @@ async function ensureItem(db, data) {
       default_cost: data.defaultCost,
       default_selling_price: data.defaultSellingPrice ?? null,
       carton_selling_price: data.cartonSellingPrice ?? null,
-      loose_unit_selling_price: data.looseUnitSellingPrice ?? null,
       reorder_level: data.reorderLevel,
       status: 'active',
       created_by: data.createdBy
@@ -226,7 +225,6 @@ async function ensureItem(db, data) {
       'default_cost',
       'default_selling_price',
       'carton_selling_price',
-      'loose_unit_selling_price',
       'reorder_level',
       'status',
       'created_by'

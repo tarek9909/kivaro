@@ -130,7 +130,6 @@ const itemFields = z.object({
   initial_quantity: nonNegativeNumber.optional(),
   initial_unit_cost: nonNegativeNumber.optional().nullable(),
   initial_cartons: z.coerce.number().int().nonnegative().optional(),
-  initial_cost_per_carton: nonNegativeNumber.optional().nullable(),
   store_id: z.coerce.number().int().positive().optional()
 });
 
@@ -145,8 +144,7 @@ const updateItemSchema = z.object({
     warehouse_id: true,
     initial_quantity: true,
     initial_unit_cost: true,
-    initial_cartons: true,
-    initial_cost_per_carton: true
+    initial_cartons: true
   }).partial().superRefine((data, ctx) => itemConfigurationIssues(data, ctx, { partial: true })).refine(
     (body) => Object.keys(body).length > 0,
     { message: 'At least one field is required' }

@@ -277,7 +277,6 @@ async function createItem(data, userId, actor = {}) {
     initial_quantity: initialQuantity,
     initial_unit_cost: initialUnitCost,
     initial_cartons: initialCartons,
-    initial_cost_per_carton: initialCostPerCarton,
     ...rawItemData
   } = scoped;
   const configuration = itemConfiguration(null, rawItemData);
@@ -309,7 +308,7 @@ async function createItem(data, userId, actor = {}) {
         itemId: item.id,
         item,
         cartonCount: initial.cartonCount,
-        costPerCarton: initialCostPerCarton,
+        costPerCarton: rawItemData.default_cost || 0,
         movementType: 'opening_balance',
         referenceType: 'item_opening_balance',
         referenceId: item.id,

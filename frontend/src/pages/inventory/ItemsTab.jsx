@@ -57,14 +57,12 @@ function emptyForm(item) {
     default_cost: item?.default_cost ?? 0,
     default_selling_price: item?.default_selling_price ?? '',
     carton_selling_price: item?.carton_selling_price ?? '',
-    loose_unit_selling_price: item?.loose_unit_selling_price ?? '',
     reorder_level: item?.reorder_level ?? 0,
     status: item?.status ?? 'active',
     warehouse_id: '',
     initial_quantity: '',
     initial_unit_cost: '',
-    initial_cartons: '',
-    initial_cost_per_carton: ''
+    initial_cartons: ''
   };
 }
 
@@ -145,18 +143,15 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
         next.base_unit_id = '';
         next.kg_per_carton = '';
         next.carton_selling_price = '';
-        next.loose_unit_selling_price = '';
       }
       if (field === 'stock_mode') {
         next.base_unit_id = '';
         next.initial_quantity = '';
         next.initial_unit_cost = '';
         next.initial_cartons = '';
-        next.initial_cost_per_carton = '';
         if (value !== 'carton') {
           next.kg_per_carton = '';
           next.carton_selling_price = '';
-          next.loose_unit_selling_price = '';
         }
       }
       return next;
@@ -193,9 +188,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
     if (isCartonWeight && form.carton_selling_price !== '' && Number(form.carton_selling_price) < 0) {
       next.carton_selling_price = 'Carton price cannot be negative.';
     }
-    if (isCartonWeight && form.loose_unit_selling_price !== '' && Number(form.loose_unit_selling_price) < 0) {
-      next.loose_unit_selling_price = 'Loose-unit price cannot be negative.';
-    }
     if (form.reorder_level !== '' && Number(form.reorder_level) < 0) {
       next.reorder_level = 'Reorder level cannot be negative.';
     }
@@ -209,9 +201,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
       }
       if (initialAmount > 0 && !form.warehouse_id) {
         next.warehouse_id = 'Warehouse is required when opening stock is greater than zero.';
-      }
-      if (isCartonWeight && form.initial_cost_per_carton !== '' && Number(form.initial_cost_per_carton) < 0) {
-        next.initial_cost_per_carton = 'Cost per carton cannot be negative.';
       }
       if (!isCartonWeight && form.initial_unit_cost !== '' && Number(form.initial_unit_cost) < 0) {
         next.initial_unit_cost = 'Opening unit cost cannot be negative.';
@@ -250,7 +239,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
         payload.warehouse_id = Number(form.warehouse_id);
         if (isCartonWeight) {
           payload.initial_cartons = initialAmount;
-          payload.initial_cost_per_carton = Number(form.initial_cost_per_carton) || 0;
         } else {
           payload.initial_quantity = initialAmount;
           payload.initial_unit_cost = Number(form.initial_unit_cost) || 0;
@@ -421,7 +409,7 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
           </div>
           <div className={`grid gap-4 ${isCartonWeight ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
             <Input
-              label={isCartonWeight || form.stock_mode === 'weight' ? 'Default cost per kg' : 'Default cost per piece'}
+              label={isCartonWeight ? 'Default cost per carton' : form.stock_mode === 'weight' ? 'Default cost per kg' : 'Default cost per piece'}
               type="number"
               min="0"
               step="0.0001"
@@ -453,7 +441,7 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
           </div>
 
           {isCartonWeight && (
-            <div className="grid gap-4 rounded-xl border border-sky-400/20 bg-sky-500/5 p-3.5 md:grid-cols-2">
+            <div className="grid gap-4 rounded-xl border border-sky-400/20 bg-sky-500/5 p-3.5 md:grid-cols-1">
               <Input
                 label="Default sealed-carton sale price"
                 type="number"
@@ -463,16 +451,6 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
                 onChange={(event) => handleChange('carton_selling_price', event.target.value)}
                 error={errors.carton_selling_price}
                 description="Used as configured price for a whole sealed-carton offer."
-              />
-              <Input
-                label="Default loose-unit sale price"
-                type="number"
-                min="0"
-                step="0.0001"
-                value={form.loose_unit_selling_price ?? ''}
-                onChange={(event) => handleChange('loose_unit_selling_price', event.target.value)}
-                error={errors.loose_unit_selling_price}
-                description="Used as configured price for an individual loose-unit offer."
               />
             </div>
           )}
@@ -529,9 +507,9 @@ function ItemFormModal({ open, onClose, item, categories, units, warehouses }) {
                   type="number"
                   min="0"
                   step="0.0001"
-                  value={form.initial_cost_per_carton}
-                  onChange={(event) => handleChange('initial_cost_per_carton', event.target.value)}
-                  error={errors.initial_cost_per_carton}
+                  value={form.default_cost}
+                  readOnly
+                  description="Automatically uses the default cost configured above."
                 />
               )}
               {!isCartonWeight && (
