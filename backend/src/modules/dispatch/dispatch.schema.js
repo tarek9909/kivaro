@@ -6,7 +6,7 @@ const dispatchStatus = z.enum([
 ]);
 const originEnum = z.enum(['direct']);
 const lifecycleStatus = z.enum(['pending', 'released', 'out_for_delivery', 'closeout_pending', 'settled', 'cancelled']);
-const workflowTab = z.enum(['all', 'orders', 'deliveries', 'completed']);
+const workflowTab = z.enum(['all', 'orders', 'deliveries', 'completed', 'salesman_orders']);
 const lineType = z.enum(['sale', 'free_gift']);
 const discountType = z.enum(['percent', 'fixed']);
 const optionalText = z.string().trim().optional().nullable();

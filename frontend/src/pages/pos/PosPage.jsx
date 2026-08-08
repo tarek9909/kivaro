@@ -7,12 +7,14 @@ import { useAuthStore } from '@/app/stores/authStore.js';
 import { Button, EmptyState, GlassPanel, GlassPanelBody, PageHeader } from '@/components/ui/index.js';
 import { PosCustomerModal } from './PosCustomerModal.jsx';
 import { PosRegisterTab } from './PosRegisterTab.jsx';
+import { SalesmanOrdersTab } from './SalesmanOrdersTab.jsx';
 import { POS_PERMISSIONS } from './pos.constants.js';
 
 export default function PosPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const editDispatchId = searchParams.get('edit_dispatch_id');
+  const showOrders = searchParams.get('view') === 'orders' && !editDispatchId;
 
   const hasPermission = useAuthStore((state) => state.hasPermission);
   const canCreateOwn = hasPermission(POS_PERMISSIONS.createOwn);
@@ -66,15 +68,29 @@ export default function PosPage() {
       <PageHeader
         eyebrow="Sales workflow"
         title="POS Terminal"
-        description="Use the register to create editable draft orders. Each checkout opens in Orders & deliveries immediately."
-        actions={canRegister && canCreateCustomers ? (
-          <Button variant="secondary" leftIcon={UserPlus} onClick={() => setCustomerModalOpen(true)}>
-            New POS customer
-          </Button>
-        ) : null}
+        description={showOrders
+          ? 'Review your assigned orders and continue editing eligible orders in Mini POS.'
+          : 'Use the register to create editable draft orders. Each checkout opens in Orders & deliveries immediately.'}
+        actions={(
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setSearchParams(showOrders ? {} : { view: 'orders' })}
+            >
+              {showOrders ? 'New order' : 'My orders'}
+            </Button>
+            {!showOrders && canRegister && canCreateCustomers && (
+              <Button variant="secondary" leftIcon={UserPlus} onClick={() => setCustomerModalOpen(true)}>
+                New POS customer
+              </Button>
+            )}
+          </div>
+        )}
       />
 
-      {canRegister ? (
+      {showOrders ? (
+        <SalesmanOrdersTab initialSalesmanId={searchParams.get('salesman_id')} />
+      ) : canRegister ? (
         <PosRegisterTab
           warehouses={warehouses}
           defaultWarehouseId={defaultWarehouseId}

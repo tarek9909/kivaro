@@ -282,6 +282,7 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
   const canPrint = hasPermission(DISPATCH_PERMISSIONS.print) || hasPermission('invoices.print');
   const queryClient = useQueryClient();
   const [confirmTarget, setConfirmTarget] = useState(null);
+  const [reworkForEdit, setReworkForEdit] = useState(false);
   const [editing, setEditing] = useState(false);
   const [returningStock, setReturningStock] = useState(false);
   const [openingCloseout, setOpeningCloseout] = useState(false);
@@ -318,7 +319,19 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
   });
   const reworkMutation = useMutation({
     mutationFn: () => api.dispatch.requests.rework(dispatchRequestId, {}),
-    onSuccess: () => { toast.success('Current invoices voided; order returned to draft'); setConfirmTarget(null); invalidate(); },
+    onSuccess: () => {
+      const shouldEdit = reworkForEdit;
+      setReworkForEdit(false);
+      setConfirmTarget(null);
+      invalidate();
+      if (shouldEdit) {
+        toast.success('Approved order returned to draft for editing');
+        onClose?.();
+        navigate(`/pos?edit_dispatch_id=${dispatchRequestId}`);
+      } else {
+        toast.success('Current invoices voided; order returned to draft');
+      }
+    },
     onError: (error) => toast.error(getErrorMessage(error, 'Could not return order to draft.'))
   });
   const approveMutation = useMutation({
@@ -400,9 +413,17 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
     });
   }
 
+  const approvedRework = dispatchRequest?.status === 'approved';
   const actionConfigs = {
     submit: { label: 'Submit order for approval', description: 'Issue one invoice per customer and lock the order until it is reworked.', mutation: submitMutation, confirmLabel: 'Submit order' },
-    rework: { label: 'Return order to draft', description: 'Void all current invoices and reset the document checklist. You can then correct the order and submit a new revision.', mutation: reworkMutation, confirmLabel: 'Return to draft' },
+    rework: {
+      label: approvedRework ? 'Edit approved order' : 'Return order to draft',
+      description: approvedRework
+        ? 'Release the reserved inventory, void the current invoices, and reopen this order in Mini POS for correction.'
+        : 'Void all current invoices and reset the document checklist. You can then correct the order and submit a new revision.',
+      mutation: reworkMutation,
+      confirmLabel: approvedRework ? 'Edit order' : 'Return to draft'
+    },
     approve: { label: 'Approve order', description: 'This reserves the available inventory for its delivery.', mutation: approveMutation, confirmLabel: 'Approve order' },
     dispatchStock: { label: 'Issue delivery', description: 'Consume the reserved cartons, shelf units, or ready containers from inventory. The customer and quantity list must be downloaded first.', mutation: dispatchMutation, confirmLabel: 'Issue delivery' },
     cancel: { label: `Cancel ${entityLabel.toLowerCase()}`, description: `Cancel this ${entityLabel.toLowerCase()}. Any reserved inventory is released.`, mutation: cancelMutation, confirmLabel: 'Cancel', tone: 'danger' }
@@ -462,7 +483,20 @@ export function DispatchRequestDrawer({ open, onClose, dispatchRequestId }) {
                 </Button>
               )}
               {availableActions.has('submit') && capabilities.can_submit && <Button size="sm" leftIcon={Send} onClick={() => setConfirmTarget('submit')} isLoading={submitMutation.isPending}>Submit order</Button>}
-              {availableActions.has('rework') && capabilities.can_rework && <Button variant="secondary" size="sm" leftIcon={RefreshCcw} onClick={() => setConfirmTarget('rework')} isLoading={reworkMutation.isPending}>Rework order</Button>}
+              {availableActions.has('rework') && capabilities.can_rework && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={approvedRework ? Pencil : RefreshCcw}
+                  onClick={() => {
+                    setReworkForEdit(approvedRework);
+                    setConfirmTarget('rework');
+                  }}
+                  isLoading={reworkMutation.isPending}
+                >
+                  {approvedRework ? 'Edit order' : 'Rework order'}
+                </Button>
+              )}
               {availableActions.has('approve') && capabilities.can_release && <Button size="sm" leftIcon={CheckCircle2} onClick={() => setConfirmTarget('approve')} isLoading={approveMutation.isPending}>Approve order</Button>}
               {availableActions.has('dispatchStock') && capabilities.can_dispatch && <Button size="sm" leftIcon={Truck} onClick={() => setConfirmTarget('dispatchStock')} isLoading={dispatchMutation.isPending} disabled={!checklist.ready_for_dispatch}>Issue delivery</Button>}
               {availableActions.has('createReturn') && capabilities.can_record_returns && !hasDraftCloseout && <Button variant="secondary" size="sm" leftIcon={RotateCcw} onClick={() => setReturningStock(true)}>Record return</Button>}

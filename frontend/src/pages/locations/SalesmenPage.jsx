@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { LayoutDashboard, Target, UsersRound } from 'lucide-react';
+import { ClipboardList, LayoutDashboard, Target, UsersRound } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, EmptyState, GlassPanel, GlassPanelBody, PageHeader } from '@/components/ui/index.js';
 import { useAuthStore } from '@/app/stores/authStore.js';
 import { SalesmanWorkspaceTab } from '@/pages/pos/SalesmanWorkspaceTab.jsx';
+import { SalesmanOrdersTab } from '@/pages/pos/SalesmanOrdersTab.jsx';
 import { LOCATIONS_PERMISSIONS } from './locations.config.js';
 import SalesmenTab from './SalesmenTab.jsx';
 import TargetsTab from './TargetsTab.jsx';
@@ -24,6 +25,7 @@ export default function SalesmenPage() {
   const tabs = useMemo(() => [
     canDirectory && { id: 'directory', label: 'Salesmen', icon: UsersRound },
     canWorkspace && { id: 'workspace', label: 'Workspace', icon: LayoutDashboard },
+    canWorkspace && { id: 'orders', label: 'Orders', icon: ClipboardList },
     canTargets && { id: 'targets', label: 'Targets', icon: Target }
   ].filter(Boolean), [canDirectory, canTargets, canWorkspace]);
 
@@ -40,7 +42,7 @@ export default function SalesmenPage() {
     setActiveTab(tabId);
     const next = new URLSearchParams(searchParams);
     next.set('tab', tabId);
-    if (tabId !== 'workspace') next.delete('salesman_id');
+    if (!['workspace', 'orders'].includes(tabId)) next.delete('salesman_id');
     setSearchParams(next, { replace: true });
   }
 
@@ -76,6 +78,9 @@ export default function SalesmenPage() {
           {activeTab === 'directory' && <SalesmenTab />}
           {activeTab === 'workspace' && (
             <SalesmanWorkspaceTab initialSalesmanId={searchParams.get('salesman_id')} />
+          )}
+          {activeTab === 'orders' && (
+            <SalesmanOrdersTab initialSalesmanId={searchParams.get('salesman_id')} />
           )}
           {activeTab === 'targets' && <TargetsTab />}
         </>

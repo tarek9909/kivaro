@@ -51,7 +51,8 @@ async function listDispatchRequests(input = {}) {
         all: null,
         orders: ['draft', 'pending_approval', 'cancelled'],
         deliveries: ['approved', 'delivery', 'partially_settled'],
-        completed: ['completed']
+        completed: ['completed'],
+        salesman_orders: ['draft', 'pending_approval', 'approved', 'delivery', 'completed']
       }
     },
     { key: 'lifecycle_status', column: 'dr.lifecycle_status' },
