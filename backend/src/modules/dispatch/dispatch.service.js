@@ -399,6 +399,13 @@ async function createCustomerLines(dispatch, customerPayload, dispatchCustomer, 
 
 async function createDispatchRequest(data, userId, actor = {}) {
   const scoped = scopedData(data, actor);
+  if (!scoped.salesman_id && isSalesmanWorkspaceOnly(actor)) {
+    const salesman = await model.findSalesmanByUserId(actor.id, scoped.store_id);
+    if (!salesman || salesman.status !== 'active') {
+      throw ApiError.forbidden('An active salesman link is required to create an order');
+    }
+    scoped.salesman_id = salesman.id;
+  }
   await assertDispatchCreateScope(scoped, actor);
   await validateSalesmanAndWarehouse(scoped, actor);
 

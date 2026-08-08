@@ -10,6 +10,12 @@ const workflowTab = z.enum(['all', 'orders', 'deliveries', 'completed', 'salesma
 const lineType = z.enum(['sale', 'free_gift']);
 const discountType = z.enum(['percent', 'fixed']);
 const optionalText = z.string().trim().optional().nullable();
+const optionalPositiveId = z.preprocess(
+  (value) => value === '' || value === null || (typeof value === 'number' && Number.isNaN(value))
+    ? undefined
+    : value,
+  z.coerce.number().int().positive().optional()
+);
 const pagination = {
   page: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().optional(),
@@ -52,7 +58,7 @@ module.exports = {
     body: z.object({
       dispatch_number: z.string().trim().max(100).optional(),
       origin: originEnum.optional().default('direct'),
-      salesman_id: z.coerce.number().int().positive(),
+      salesman_id: optionalPositiveId,
       warehouse_id: z.coerce.number().int().positive(),
       request_date: z.string().trim().min(1),
       notes: optionalText,
