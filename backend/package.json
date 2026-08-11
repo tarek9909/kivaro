@@ -16,6 +16,8 @@
     "dev": "nodemon src/server.js",
     "migrate": "node scripts/db/migrate.js",
     "seed:demo": "node scripts/db/seed-demo.js",
+    "seed:route-customers": "node scripts/db/seed-route-customers.js",
+    "seed:waed-routes": "node scripts/db/seed-waed-routes.js",
     "seed:owner": "node scripts/db/seed-owner.js",
     "seed:superadmin": "node scripts/db/seed-superadmin.js",
     "start": "node src/server.js",
